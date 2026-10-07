@@ -101,9 +101,13 @@ Environment variables, defaults, and precedence are in [docs/CONFIGURATION.md](d
 
 ## Security Tools Arsenal
 
-RedVector gives you one interface for the security tools supported by the current release. It does not bundle these tools; it runs the ones you have installed and returns their output in a consistent shape. The current release has **134 security-tool integrations** covering **114 unique underlying tools** (some tools are exposed through more than one integration, for example Nmap and the Impacket suite, and a few integrations are RedVector workflows built on top of these tools).
+**134 security-tool integrations covering 114 unique underlying tools**
 
-### Network Reconnaissance & Scanning
+RedVector runs the tools you have installed and returns their output in a consistent shape. Some tools are exposed through more than one integration (for example Nmap and the Impacket suite), and a few integrations are RedVector workflows built on top of these tools.
+
+<details>
+<summary>🔍 <strong>Network Reconnaissance & Scanning</strong></summary>
+
 - **arp-scan** - Layer-2 host discovery
 - **AutoRecon** - Multi-tool reconnaissance orchestration
 - **Masscan** - High-speed internet-scale port scanning
@@ -115,7 +119,11 @@ RedVector gives you one interface for the security tools supported by the curren
 - **TShark** - Packet capture and protocol analysis
 - **wafw00f** - Web application firewall detection
 
-### Web Application Security
+</details>
+
+<details>
+<summary>🌐 <strong>Web Application Security</strong></summary>
+
 - **anew** - Append-only new-line filtering for recon pipelines
 - **Arjun** - HTTP parameter discovery
 - **Browser agent** - Headless-browser page inspection
@@ -148,25 +156,41 @@ RedVector gives you one interface for the security tools supported by the curren
 - **x8** - Hidden parameter discovery
 - **XSSer** - Cross-site scripting testing
 
-### Vulnerability Scanning
+</details>
+
+<details>
+<summary>🛡️ <strong>Vulnerability Scanning</strong></summary>
+
 - **Nuclei** - Template-based vulnerability scanning
 - **SearchSploit** - Exploit-DB search
 - **Shodan** - Internet exposure search (API)
 
-### API Security
+</details>
+
+<details>
+<summary>🔌 <strong>API Security</strong></summary>
+
 - **API fuzzer** - API endpoint fuzzing
 - **API schema analyzer** - OpenAPI/schema review
 - **GraphQL scanner** - GraphQL introspection and testing
 - **JWT analyzer** - JSON Web Token inspection and weakness checks
 
-### Authentication & Password Security
+</details>
+
+<details>
+<summary>🔑 <strong>Authentication & Password Security</strong></summary>
+
 - **Hashcat** - GPU password hash cracking
 - **HashPump** - Hash length-extension attacks
 - **Hydra** - Network login brute forcing
 - **John the Ripper** - Password hash auditing and recovery
 - **Kerbrute** - Kerberos username and password testing
 
-### Exploitation & Post-Exploitation
+</details>
+
+<details>
+<summary>💥 <strong>Exploitation & Post-Exploitation</strong></summary>
+
 - **Chisel** - TCP/UDP tunneling
 - **Evil-WinRM** - WinRM remote shell
 - **Ligolo-ng** - Tunneling and network pivoting
@@ -182,7 +206,11 @@ RedVector gives you one interface for the security tools supported by the curren
 - **Reverse shell generator** - Reverse shell payload generation
 - **SSH tunneling** - SSH port forwarding
 
-### Privilege Escalation
+</details>
+
+<details>
+<summary>⬆️ <strong>Privilege Escalation</strong></summary>
+
 - **GTFOBins lookup** - Unix binary abuse reference
 - **LinPEAS** - Linux privilege-escalation enumeration
 - **Linux Exploit Suggester** - Kernel exploit suggestions
@@ -193,7 +221,11 @@ RedVector gives you one interface for the security tools supported by the curren
 - **Windows Exploit Suggester** - Missing-patch exploit suggestions
 - **WinPEAS** - Windows privilege-escalation enumeration
 
-### Active Directory & Windows Security
+</details>
+
+<details>
+<summary>🪟 <strong>Active Directory & Windows Security</strong></summary>
+
 - **BloodHound.py** - Active Directory data collection
 - **enum4linux** - SMB/Samba enumeration
 - **enum4linux-ng** - SMB/Samba enumeration (rewrite)
@@ -206,7 +238,11 @@ RedVector gives you one interface for the security tools supported by the curren
 - **rpcclient** - MS-RPC enumeration
 - **SMBMap** - SMB share enumeration
 
-### Binary Analysis & Reverse Engineering
+</details>
+
+<details>
+<summary>🧩 <strong>Binary Analysis & Reverse Engineering</strong></summary>
+
 - **angr** - Symbolic execution and analysis
 - **Binwalk** - Firmware and file carving analysis
 - **checksec** - Binary hardening checks
@@ -224,7 +260,11 @@ RedVector gives you one interface for the security tools supported by the curren
 - **strings** - Printable-string extraction
 - **xxd** - Hex dumps
 
-### CTF & Forensics
+</details>
+
+<details>
+<summary>🧪 <strong>CTF & Forensics</strong></summary>
+
 - **ExifTool** - Metadata extraction
 - **Foremost** - File carving and recovery
 - **LaZagne** - Local credential recovery
@@ -232,7 +272,11 @@ RedVector gives you one interface for the security tools supported by the curren
 - **Volatility** - Memory forensics
 - **Volatility 3** - Memory forensics (v3)
 
-### Cloud & Container Security
+</details>
+
+<details>
+<summary>☁️ <strong>Cloud & Container Security</strong></summary>
+
 - **Checkov** - Infrastructure-as-code scanning
 - **Clair** - Container image vulnerability scanning
 - **CloudMapper** - AWS environment analysis
@@ -246,7 +290,11 @@ RedVector gives you one interface for the security tools supported by the curren
 - **Terrascan** - Infrastructure-as-code scanning
 - **Trivy** - Container and filesystem vulnerability scanning
 
-### OSINT & Reconnaissance
+</details>
+
+<details>
+<summary>🕵️ <strong>OSINT & Reconnaissance</strong></summary>
+
 - **Amass** - Subdomain enumeration and mapping
 - **dnsenum** - DNS enumeration
 - **DNSRecon** - DNS reconnaissance
@@ -256,12 +304,18 @@ RedVector gives you one interface for the security tools supported by the curren
 - **theHarvester** - Email, host, and subdomain OSINT
 - **whois** - Domain registration lookup
 
-### CCTV & IoT Security
+</details>
+
+<details>
+<summary>📹 <strong>CCTV & IoT Security</strong></summary>
+
 - **CCTV config audit** - Camera configuration review
 - **CCTV default credentials** - Default-credential checks for cameras
 - **CCTV discovery** - Camera and NVR discovery
 - **CCTV firmware CVE** - Camera firmware CVE mapping
 - **CCTV RTSP probe** - RTSP stream probing
+
+</details>
 
 ## How tools run
 

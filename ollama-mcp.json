@@ -1,0 +1,48 @@
+{
+  "_comment": [
+    "RedVector AI v8.0 - Ollama MCP Configuration",
+    "Copy ONE of the methods below into your AI client's mcp.json.",
+    "",
+    "IMPORTANT: Start redvector_server.py FIRST before using Method 2 (SSE).",
+    "Method 1 (stdio) auto-starts everything via the launcher script."
+  ],
+
+  "_method_1_windows_stdio": {
+    "mcpServers": {
+      "redvector-ai": {
+        "command": "powershell",
+        "args": ["-ExecutionPolicy", "Bypass", "-File", "C:\\path\\to\\redvector-ai-master\\start_redvector.ps1"],
+        "env": {
+          "REDVECTOR_API_TOKEN": "redvector-dev-token"
+        }
+      }
+    }
+  },
+
+  "_method_1_linux_stdio": {
+    "mcpServers": {
+      "redvector-ai": {
+        "command": "bash",
+        "args": ["/path/to/redvector-ai-master/start_redvector.sh"],
+        "env": {
+          "REDVECTOR_API_TOKEN": "redvector-dev-token"
+        }
+      }
+    }
+  },
+
+  "_method_2_sse_any_os": {
+    "_instructions": [
+      "Step 1: Start Ollama:                ollama serve",
+      "Step 2: Pull a model:                ollama pull llama3",
+      "Step 3: Start RedVector backend:     python redvector_server.py",
+      "Step 4: Start MCP with SSE:          python redvector_mcp.py --transport sse --mcp-port 8889",
+      "Step 5: Add this config to your AI client's mcp.json"
+    ],
+    "mcpServers": {
+      "redvector-ai": {
+        "url": "http://127.0.0.1:8889/sse"
+      }
+    }
+  }
+}

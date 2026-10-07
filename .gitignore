@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+redvector-env/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage/
+
+# Logs / temp / backups
+*.log
+*.tmp
+*.bak
+temp/
+tmp/
+
+# Secrets / local config
+.env
+.env.*
+*.pem
+*.key
+
+# RedVector runtime state (never contains secrets, but machine-local)
+.redvector/
+redvector_ai_state.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

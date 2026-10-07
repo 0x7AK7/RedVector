@@ -1,0 +1,7201 @@
+{
+ "nmap": {
+  "tool_name": "nmap",
+  "path": "/api/tools/nmap",
+  "wrapper": "nmap",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "scan_type",
+    "required": false,
+    "default_repr": "'-sCV'"
+   },
+   {
+    "name": "ports",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "'-T4 -Pn'"
+   },
+   {
+    "name": "use_recovery",
+    "required": false,
+    "default_repr": "True"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "nmap",
+   "public_wrapper": "nmap",
+   "executable": "nmap",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "gobuster": {
+  "tool_name": "gobuster",
+  "path": "/api/tools/gobuster",
+  "wrapper": "gobuster",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "url",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "mode",
+    "required": false,
+    "default_repr": "'dir'"
+   },
+   {
+    "name": "wordlist",
+    "required": false,
+    "default_repr": "'/usr/share/wordlists/dirb/common.txt'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "use_recovery",
+    "required": false,
+    "default_repr": "True"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "gobuster",
+   "public_wrapper": "gobuster",
+   "executable": "gobuster",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "nuclei": {
+  "tool_name": "nuclei",
+  "path": "/api/tools/nuclei",
+  "wrapper": "nuclei",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "severity",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "tags",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "template",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "use_recovery",
+    "required": false,
+    "default_repr": "True"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "nuclei",
+   "public_wrapper": "nuclei",
+   "executable": "nuclei",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "prowler": {
+  "tool_name": "prowler",
+  "path": "/api/tools/prowler",
+  "wrapper": "prowler",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "provider",
+    "required": false,
+    "default_repr": "'aws'"
+   },
+   {
+    "name": "profile",
+    "required": false,
+    "default_repr": "'default'"
+   },
+   {
+    "name": "region",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "checks",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_dir",
+    "required": false,
+    "default_repr": "'/tmp/prowler_output'"
+   },
+   {
+    "name": "output_format",
+    "required": false,
+    "default_repr": "'json'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "prowler",
+   "public_wrapper": "prowler",
+   "executable": "prowler",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "prowler {0}",
+   "base_params": [
+    "provider"
+   ],
+   "segments": [
+    {
+     "condition": "profile",
+     "template": " --profile {0}",
+     "params": [
+      "profile"
+     ]
+    },
+    {
+     "condition": "region",
+     "template": " --region {0}",
+     "params": [
+      "region"
+     ]
+    },
+    {
+     "condition": "checks",
+     "template": " --checks {0}",
+     "params": [
+      "checks"
+     ]
+    },
+    {
+     "condition": null,
+     "template": " --output-directory {0}",
+     "params": [
+      "output_dir"
+     ]
+    },
+    {
+     "condition": null,
+     "template": " --output-format {0}",
+     "params": [
+      "output_format"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "trivy": {
+  "tool_name": "trivy",
+  "path": "/api/tools/trivy",
+  "wrapper": "trivy",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "scan_type",
+    "required": false,
+    "default_repr": "'image'"
+   },
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_format",
+    "required": false,
+    "default_repr": "'json'"
+   },
+   {
+    "name": "severity",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "trivy",
+   "public_wrapper": "trivy",
+   "executable": "trivy",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "trivy {0} {1}",
+   "base_params": [
+    "scan_type",
+    "target"
+   ],
+   "segments": [
+    {
+     "condition": "output_format",
+     "template": " --format {0}",
+     "params": [
+      "output_format"
+     ]
+    },
+    {
+     "condition": "severity",
+     "template": " --severity {0}",
+     "params": [
+      "severity"
+     ]
+    },
+    {
+     "condition": "output_file",
+     "template": " --output {0}",
+     "params": [
+      "output_file"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "scout-suite": {
+  "tool_name": "scout-suite",
+  "path": "/api/tools/scout-suite",
+  "wrapper": "scout_suite",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "provider",
+    "required": false,
+    "default_repr": "'aws'"
+   },
+   {
+    "name": "profile",
+    "required": false,
+    "default_repr": "'default'"
+   },
+   {
+    "name": "report_dir",
+    "required": false,
+    "default_repr": "'/tmp/scout-suite'"
+   },
+   {
+    "name": "services",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "exceptions",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "scout-suite",
+   "public_wrapper": "scout_suite",
+   "executable": "scout",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "cloudmapper": {
+  "tool_name": "cloudmapper",
+  "path": "/api/tools/cloudmapper",
+  "wrapper": "cloudmapper",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "action",
+    "required": false,
+    "default_repr": "'collect'"
+   },
+   {
+    "name": "account",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "config",
+    "required": false,
+    "default_repr": "'config.json'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "cloudmapper",
+   "public_wrapper": "cloudmapper",
+   "executable": "cloudmapper",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "cloudmapper {0}",
+   "base_params": [
+    "action"
+   ],
+   "segments": [
+    {
+     "condition": "account",
+     "template": " --account {0}",
+     "params": [
+      "account"
+     ]
+    },
+    {
+     "condition": "config",
+     "template": " --config {0}",
+     "params": [
+      "config"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "pacu": {
+  "tool_name": "pacu",
+  "path": "/api/tools/pacu",
+  "wrapper": "pacu",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "session_name",
+    "required": false,
+    "default_repr": "'redvector_session'"
+   },
+   {
+    "name": "modules",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "data_services",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "regions",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "pacu",
+   "public_wrapper": "pacu",
+   "executable": "pacu",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "kube-hunter": {
+  "tool_name": "kube-hunter",
+  "path": "/api/tools/kube-hunter",
+  "wrapper": "kube_hunter",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "remote",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "cidr",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "interface",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "active",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "report",
+    "required": false,
+    "default_repr": "'json'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "kube-hunter",
+   "public_wrapper": "kube_hunter",
+   "executable": "kube-hunter",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "kube-bench": {
+  "tool_name": "kube-bench",
+  "path": "/api/tools/kube-bench",
+  "wrapper": "kube_bench",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "targets",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "version",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "config_dir",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_format",
+    "required": false,
+    "default_repr": "'json'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "kube-bench",
+   "public_wrapper": "kube_bench",
+   "executable": "kube-bench",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "kube-bench",
+   "base_params": [],
+   "segments": [
+    {
+     "condition": "targets",
+     "template": " --targets {0}",
+     "params": [
+      "targets"
+     ]
+    },
+    {
+     "condition": "version",
+     "template": " --version {0}",
+     "params": [
+      "version"
+     ]
+    },
+    {
+     "condition": "config_dir",
+     "template": " --config-dir {0}",
+     "params": [
+      "config_dir"
+     ]
+    },
+    {
+     "condition": "output_format",
+     "template": " --outputfile /tmp/kube-bench-results.{0} --json",
+     "params": [
+      "output_format"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "docker-bench-security": {
+  "tool_name": "docker-bench-security",
+  "path": "/api/tools/docker-bench-security",
+  "wrapper": "docker_bench_security",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "checks",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "exclude",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_file",
+    "required": false,
+    "default_repr": "'/tmp/docker-bench-results.json'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "docker-bench-security",
+   "public_wrapper": "docker_bench_security",
+   "executable": "docker-bench-security",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "docker-bench-security",
+   "base_params": [],
+   "segments": [
+    {
+     "condition": "checks",
+     "template": " -c {0}",
+     "params": [
+      "checks"
+     ]
+    },
+    {
+     "condition": "exclude",
+     "template": " -e {0}",
+     "params": [
+      "exclude"
+     ]
+    },
+    {
+     "condition": "output_file",
+     "template": " -l {0}",
+     "params": [
+      "output_file"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "clair": {
+  "tool_name": "clair",
+  "path": "/api/tools/clair",
+  "wrapper": "clair",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "image",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "config",
+    "required": false,
+    "default_repr": "'/etc/clair/config.yaml'"
+   },
+   {
+    "name": "output_format",
+    "required": false,
+    "default_repr": "'json'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "clair",
+   "public_wrapper": "clair",
+   "executable": "clairctl",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "clairctl analyze {0}",
+   "base_params": [
+    "image"
+   ],
+   "segments": [
+    {
+     "condition": "config",
+     "template": " --config {0}",
+     "params": [
+      "config"
+     ]
+    },
+    {
+     "condition": "output_format",
+     "template": " --format {0}",
+     "params": [
+      "output_format"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "falco": {
+  "tool_name": "falco",
+  "path": "/api/tools/falco",
+  "wrapper": "falco",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "config_file",
+    "required": false,
+    "default_repr": "'/etc/falco/falco.yaml'"
+   },
+   {
+    "name": "rules_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_format",
+    "required": false,
+    "default_repr": "'json'"
+   },
+   {
+    "name": "duration",
+    "required": false,
+    "default_repr": "60"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "falco",
+   "public_wrapper": "falco",
+   "executable": "timeout",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "checkov": {
+  "tool_name": "checkov",
+  "path": "/api/tools/checkov",
+  "wrapper": "checkov",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "directory",
+    "required": false,
+    "default_repr": "'.'"
+   },
+   {
+    "name": "framework",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "check",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "skip_check",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_format",
+    "required": false,
+    "default_repr": "'json'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "checkov",
+   "public_wrapper": "checkov",
+   "executable": "checkov",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "checkov -d {0}",
+   "base_params": [
+    "directory"
+   ],
+   "segments": [
+    {
+     "condition": "framework",
+     "template": " --framework {0}",
+     "params": [
+      "framework"
+     ]
+    },
+    {
+     "condition": "check",
+     "template": " --check {0}",
+     "params": [
+      "check"
+     ]
+    },
+    {
+     "condition": "skip_check",
+     "template": " --skip-check {0}",
+     "params": [
+      "skip_check"
+     ]
+    },
+    {
+     "condition": "output_format",
+     "template": " --output {0}",
+     "params": [
+      "output_format"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "terrascan": {
+  "tool_name": "terrascan",
+  "path": "/api/tools/terrascan",
+  "wrapper": "terrascan",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "scan_type",
+    "required": false,
+    "default_repr": "'all'"
+   },
+   {
+    "name": "iac_dir",
+    "required": false,
+    "default_repr": "'.'"
+   },
+   {
+    "name": "policy_type",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_format",
+    "required": false,
+    "default_repr": "'json'"
+   },
+   {
+    "name": "severity",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "terrascan",
+   "public_wrapper": "terrascan",
+   "executable": "terrascan",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "terrascan scan -t {0} -d {1}",
+   "base_params": [
+    "scan_type",
+    "iac_dir"
+   ],
+   "segments": [
+    {
+     "condition": "policy_type",
+     "template": " -p {0}",
+     "params": [
+      "policy_type"
+     ]
+    },
+    {
+     "condition": "output_format",
+     "template": " -o {0}",
+     "params": [
+      "output_format"
+     ]
+    },
+    {
+     "condition": "severity",
+     "template": " --severity {0}",
+     "params": [
+      "severity"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "dirb": {
+  "tool_name": "dirb",
+  "path": "/api/tools/dirb",
+  "wrapper": "dirb",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "url",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "wordlist",
+    "required": false,
+    "default_repr": "'/usr/share/wordlists/dirb/common.txt'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "dirb",
+   "public_wrapper": "dirb",
+   "executable": "dirb",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "dirb {0} {1}",
+   "base_params": [
+    "url",
+    "wordlist"
+   ],
+   "segments": [
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "nikto": {
+  "tool_name": "nikto",
+  "path": "/api/tools/nikto",
+  "wrapper": "nikto",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "nikto",
+   "public_wrapper": "nikto",
+   "executable": "nikto",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "nikto -h {0}",
+   "base_params": [
+    "target"
+   ],
+   "segments": [
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "sqlmap": {
+  "tool_name": "sqlmap",
+  "path": "/api/tools/sqlmap",
+  "wrapper": "sqlmap",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "url",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "data",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "sqlmap",
+   "public_wrapper": "sqlmap",
+   "executable": "sqlmap",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "sqlmap -u {0} --batch",
+   "base_params": [
+    "url"
+   ],
+   "segments": [
+    {
+     "condition": "data",
+     "template": " --data=\"{0}\"",
+     "params": [
+      "data"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "metasploit": {
+  "tool_name": "metasploit",
+  "path": "/api/tools/metasploit",
+  "wrapper": "metasploit",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "module",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "options",
+    "required": false,
+    "default_repr": "{}"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "metasploit",
+   "public_wrapper": "metasploit",
+   "executable": "msfconsole",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "hydra": {
+  "tool_name": "hydra",
+  "path": "/api/tools/hydra",
+  "wrapper": "hydra",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "service",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "username",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "username_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "password",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "password_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "hydra",
+   "public_wrapper": "hydra",
+   "executable": "hydra",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "john": {
+  "tool_name": "john",
+  "path": "/api/tools/john",
+  "wrapper": "john",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "hash_file",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "wordlist",
+    "required": false,
+    "default_repr": "'/usr/share/wordlists/rockyou.txt'"
+   },
+   {
+    "name": "format",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "john",
+   "public_wrapper": "john",
+   "executable": "john",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "wpscan": {
+  "tool_name": "wpscan",
+  "path": "/api/tools/wpscan",
+  "wrapper": "wpscan",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "url",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "wpscan",
+   "public_wrapper": "wpscan",
+   "executable": "wpscan",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "wpscan --url {0}",
+   "base_params": [
+    "url"
+   ],
+   "segments": [
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "enum4linux": {
+  "tool_name": "enum4linux",
+  "path": "/api/tools/enum4linux",
+  "wrapper": "enum4linux",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "'-a'"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "enum4linux",
+   "public_wrapper": "enum4linux",
+   "executable": "enum4linux",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "enum4linux {0} {1}",
+   "base_params": [
+    "additional_args",
+    "target"
+   ],
+   "segments": []
+  },
+  "param_var": "params"
+ },
+ "ffuf": {
+  "tool_name": "ffuf",
+  "path": "/api/tools/ffuf",
+  "wrapper": "ffuf",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "url",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "wordlist",
+    "required": false,
+    "default_repr": "'/usr/share/wordlists/dirb/common.txt'"
+   },
+   {
+    "name": "mode",
+    "required": false,
+    "default_repr": "'directory'"
+   },
+   {
+    "name": "match_codes",
+    "required": false,
+    "default_repr": "'200,204,301,302,307,401,403'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "ffuf",
+   "public_wrapper": "ffuf",
+   "executable": "ffuf",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "netexec": {
+  "tool_name": "netexec",
+  "path": "/api/tools/netexec",
+  "wrapper": "netexec",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "protocol",
+    "required": false,
+    "default_repr": "'smb'"
+   },
+   {
+    "name": "username",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "password",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "hash",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "module",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "netexec",
+   "public_wrapper": "netexec",
+   "executable": "nxc",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "amass": {
+  "tool_name": "amass",
+  "path": "/api/tools/amass",
+  "wrapper": "amass",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "domain",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "mode",
+    "required": false,
+    "default_repr": "'enum'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "amass",
+   "public_wrapper": "amass",
+   "executable": "amass",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "hashcat": {
+  "tool_name": "hashcat",
+  "path": "/api/tools/hashcat",
+  "wrapper": "hashcat",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "hash_file",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "hash_type",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "attack_mode",
+    "required": false,
+    "default_repr": "'0'"
+   },
+   {
+    "name": "wordlist",
+    "required": false,
+    "default_repr": "'/usr/share/wordlists/rockyou.txt'"
+   },
+   {
+    "name": "mask",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "hashcat",
+   "public_wrapper": "hashcat",
+   "executable": "hashcat",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "subfinder": {
+  "tool_name": "subfinder",
+  "path": "/api/tools/subfinder",
+  "wrapper": "subfinder",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "domain",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "silent",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "all_sources",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "subfinder",
+   "public_wrapper": "subfinder",
+   "executable": "subfinder",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "subfinder -d {0}",
+   "base_params": [
+    "domain"
+   ],
+   "segments": [
+    {
+     "condition": "silent",
+     "template": " -silent",
+     "params": []
+    },
+    {
+     "condition": "all_sources",
+     "template": " -all",
+     "params": []
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "smbmap": {
+  "tool_name": "smbmap",
+  "path": "/api/tools/smbmap",
+  "wrapper": "smbmap",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "username",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "password",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "domain",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "smbmap",
+   "public_wrapper": "smbmap",
+   "executable": "smbmap",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "smbmap -H {0}",
+   "base_params": [
+    "target"
+   ],
+   "segments": [
+    {
+     "condition": "username",
+     "template": " -u {0}",
+     "params": [
+      "username"
+     ]
+    },
+    {
+     "condition": "password",
+     "template": " -p {0}",
+     "params": [
+      "password"
+     ]
+    },
+    {
+     "condition": "domain",
+     "template": " -d {0}",
+     "params": [
+      "domain"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "rustscan": {
+  "tool_name": "rustscan",
+  "path": "/api/tools/rustscan",
+  "wrapper": "rustscan",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "ports",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "ulimit",
+    "required": false,
+    "default_repr": "5000"
+   },
+   {
+    "name": "batch_size",
+    "required": false,
+    "default_repr": "4500"
+   },
+   {
+    "name": "timeout",
+    "required": false,
+    "default_repr": "1500"
+   },
+   {
+    "name": "scripts",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "rustscan",
+   "public_wrapper": "rustscan",
+   "executable": "rustscan",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "rustscan -a {0} --ulimit {1} -b {2} -t {3}",
+   "base_params": [
+    "target",
+    "ulimit",
+    "batch_size",
+    "timeout"
+   ],
+   "segments": [
+    {
+     "condition": "ports",
+     "template": " -p {0}",
+     "params": [
+      "ports"
+     ]
+    },
+    {
+     "condition": "scripts",
+     "template": " -- -sC -sV",
+     "params": []
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "masscan": {
+  "tool_name": "masscan",
+  "path": "/api/tools/masscan",
+  "wrapper": "masscan",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "ports",
+    "required": false,
+    "default_repr": "'1-65535'"
+   },
+   {
+    "name": "rate",
+    "required": false,
+    "default_repr": "1000"
+   },
+   {
+    "name": "interface",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "router_mac",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "source_ip",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "banners",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "masscan",
+   "public_wrapper": "masscan",
+   "executable": "masscan",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "masscan {0} -p{1} --rate={2}",
+   "base_params": [
+    "target",
+    "ports",
+    "rate"
+   ],
+   "segments": [
+    {
+     "condition": "interface",
+     "template": " -e {0}",
+     "params": [
+      "interface"
+     ]
+    },
+    {
+     "condition": "router_mac",
+     "template": " --router-mac {0}",
+     "params": [
+      "router_mac"
+     ]
+    },
+    {
+     "condition": "source_ip",
+     "template": " --source-ip {0}",
+     "params": [
+      "source_ip"
+     ]
+    },
+    {
+     "condition": "banners",
+     "template": " --banners",
+     "params": []
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "nmap-advanced": {
+  "tool_name": "nmap-advanced",
+  "path": "/api/tools/nmap-advanced",
+  "wrapper": "nmap_advanced",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "scan_type",
+    "required": false,
+    "default_repr": "'-sS'"
+   },
+   {
+    "name": "ports",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "timing",
+    "required": false,
+    "default_repr": "'T4'"
+   },
+   {
+    "name": "nse_scripts",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "os_detection",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "version_detection",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "aggressive",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "stealth",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "nmap-advanced",
+   "public_wrapper": "nmap_advanced",
+   "executable": "nmap",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "autorecon": {
+  "tool_name": "autorecon",
+  "path": "/api/tools/autorecon",
+  "wrapper": "autorecon",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_dir",
+    "required": false,
+    "default_repr": "'/tmp/autorecon'"
+   },
+   {
+    "name": "port_scans",
+    "required": false,
+    "default_repr": "'top-100-ports'"
+   },
+   {
+    "name": "service_scans",
+    "required": false,
+    "default_repr": "'default'"
+   },
+   {
+    "name": "heartbeat",
+    "required": false,
+    "default_repr": "60"
+   },
+   {
+    "name": "timeout",
+    "required": false,
+    "default_repr": "300"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "autorecon",
+   "public_wrapper": "autorecon",
+   "executable": "autorecon",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "enum4linux-ng": {
+  "tool_name": "enum4linux-ng",
+  "path": "/api/tools/enum4linux-ng",
+  "wrapper": "enum4linux_ng",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "username",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "password",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "domain",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "shares",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "users",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "groups",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "policy",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "enum4linux-ng",
+   "public_wrapper": "enum4linux_ng",
+   "executable": "enum4linux-ng",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "rpcclient": {
+  "tool_name": "rpcclient",
+  "path": "/api/tools/rpcclient",
+  "wrapper": "rpcclient",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "username",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "password",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "domain",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "commands",
+    "required": false,
+    "default_repr": "'enumdomusers;enumdomgroups;querydominfo'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "rpcclient",
+   "public_wrapper": "rpcclient",
+   "executable": "echo",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "nbtscan": {
+  "tool_name": "nbtscan",
+  "path": "/api/tools/nbtscan",
+  "wrapper": "nbtscan",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "verbose",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "timeout",
+    "required": false,
+    "default_repr": "2"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "nbtscan",
+   "public_wrapper": "nbtscan",
+   "executable": "nbtscan",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "nbtscan -t {0}",
+   "base_params": [
+    "timeout"
+   ],
+   "segments": [
+    {
+     "condition": "verbose",
+     "template": " -v",
+     "params": []
+    },
+    {
+     "condition": null,
+     "template": " {0}",
+     "params": [
+      "target"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "arp-scan": {
+  "tool_name": "arp-scan",
+  "path": "/api/tools/arp-scan",
+  "wrapper": "arp_scan",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "interface",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "local_network",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "timeout",
+    "required": false,
+    "default_repr": "500"
+   },
+   {
+    "name": "retry",
+    "required": false,
+    "default_repr": "3"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "arp-scan",
+   "public_wrapper": "arp_scan",
+   "executable": "arp-scan",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "responder": {
+  "tool_name": "responder",
+  "path": "/api/tools/responder",
+  "wrapper": "responder",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "interface",
+    "required": true,
+    "default_repr": "'eth0'"
+   },
+   {
+    "name": "analyze",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "wpad",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "force_wpad_auth",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "fingerprint",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "duration",
+    "required": false,
+    "default_repr": "300"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "responder",
+   "public_wrapper": "responder",
+   "executable": "timeout",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "timeout {0} responder -I {1}",
+   "base_params": [
+    "duration",
+    "interface"
+   ],
+   "segments": [
+    {
+     "condition": "analyze",
+     "template": " -A",
+     "params": []
+    },
+    {
+     "condition": "wpad",
+     "template": " -w",
+     "params": []
+    },
+    {
+     "condition": "force_wpad_auth",
+     "template": " -F",
+     "params": []
+    },
+    {
+     "condition": "fingerprint",
+     "template": " -f",
+     "params": []
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "volatility": {
+  "tool_name": "volatility",
+  "path": "/api/tools/volatility",
+  "wrapper": "volatility",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "memory_file",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "plugin",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "profile",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "volatility",
+   "public_wrapper": "volatility",
+   "executable": "volatility",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "volatility -f {0}",
+   "base_params": [
+    "memory_file"
+   ],
+   "segments": [
+    {
+     "condition": "profile",
+     "template": " --profile={0}",
+     "params": [
+      "profile"
+     ]
+    },
+    {
+     "condition": null,
+     "template": " {0}",
+     "params": [
+      "plugin"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "msfvenom": {
+  "tool_name": "msfvenom",
+  "path": "/api/tools/msfvenom",
+  "wrapper": "msfvenom",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "payload",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "format",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "encoder",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "iterations",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "msfvenom",
+   "public_wrapper": "msfvenom",
+   "executable": "msfvenom",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "gdb": {
+  "tool_name": "gdb",
+  "path": "/api/tools/gdb",
+  "wrapper": "gdb",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "binary",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "commands",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "script_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "gdb",
+   "public_wrapper": "gdb",
+   "executable": "gdb",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "radare2": {
+  "tool_name": "radare2",
+  "path": "/api/tools/radare2",
+  "wrapper": "radare2",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "binary",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "commands",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "radare2",
+   "public_wrapper": "radare2",
+   "executable": "r2",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "binwalk": {
+  "tool_name": "binwalk",
+  "path": "/api/tools/binwalk",
+  "wrapper": "binwalk",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "file_path",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "extract",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "binwalk",
+   "public_wrapper": "binwalk",
+   "executable": "binwalk",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "binwalk",
+   "base_params": [],
+   "segments": [
+    {
+     "condition": "extract",
+     "template": " -e",
+     "params": []
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    },
+    {
+     "condition": null,
+     "template": " {0}",
+     "params": [
+      "file_path"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "ropgadget": {
+  "tool_name": "ropgadget",
+  "path": "/api/tools/ropgadget",
+  "wrapper": "ropgadget",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "binary",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "gadget_type",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "ropgadget",
+   "public_wrapper": "ropgadget",
+   "executable": "ROPgadget",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "ROPgadget --binary {0}",
+   "base_params": [
+    "binary"
+   ],
+   "segments": [
+    {
+     "condition": "gadget_type",
+     "template": " --only '{0}'",
+     "params": [
+      "gadget_type"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "checksec": {
+  "tool_name": "checksec",
+  "path": "/api/tools/checksec",
+  "wrapper": "checksec",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "binary",
+    "required": true,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "checksec",
+   "public_wrapper": "checksec",
+   "executable": "checksec",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "checksec --file={0}",
+   "base_params": [
+    "binary"
+   ],
+   "segments": []
+  },
+  "param_var": "params"
+ },
+ "xxd": {
+  "tool_name": "xxd",
+  "path": "/api/tools/xxd",
+  "wrapper": "xxd",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "file_path",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "offset",
+    "required": false,
+    "default_repr": "'0'"
+   },
+   {
+    "name": "length",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "xxd",
+   "public_wrapper": "xxd",
+   "executable": "xxd",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "xxd -s {0}",
+   "base_params": [
+    "offset"
+   ],
+   "segments": [
+    {
+     "condition": "length",
+     "template": " -l {0}",
+     "params": [
+      "length"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    },
+    {
+     "condition": null,
+     "template": " {0}",
+     "params": [
+      "file_path"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "strings": {
+  "tool_name": "strings",
+  "path": "/api/tools/strings",
+  "wrapper": "strings",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "file_path",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "min_len",
+    "required": false,
+    "default_repr": "4"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "strings",
+   "public_wrapper": "strings",
+   "executable": "strings",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "strings -n {0}",
+   "base_params": [
+    "min_len"
+   ],
+   "segments": [
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    },
+    {
+     "condition": null,
+     "template": " {0}",
+     "params": [
+      "file_path"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "objdump": {
+  "tool_name": "objdump",
+  "path": "/api/tools/objdump",
+  "wrapper": "objdump",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "binary",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "disassemble",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "objdump",
+   "public_wrapper": "objdump",
+   "executable": "objdump",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "ghidra": {
+  "tool_name": "ghidra",
+  "path": "/api/tools/ghidra",
+  "wrapper": "ghidra",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "binary",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "project_name",
+    "required": false,
+    "default_repr": "'redvector_analysis'"
+   },
+   {
+    "name": "script_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "analysis_timeout",
+    "required": false,
+    "default_repr": "300"
+   },
+   {
+    "name": "output_format",
+    "required": false,
+    "default_repr": "'xml'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "ghidra",
+   "public_wrapper": "ghidra",
+   "executable": "analyzeHeadless",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "pwntools": {
+  "tool_name": "pwntools",
+  "path": "/api/tools/pwntools",
+  "wrapper": "pwntools",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "script_content",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "target_binary",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "target_host",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "target_port",
+    "required": false,
+    "default_repr": "0"
+   },
+   {
+    "name": "exploit_type",
+    "required": false,
+    "default_repr": "'local'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "pwntools",
+   "public_wrapper": "pwntools",
+   "executable": "python3",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "one-gadget": {
+  "tool_name": "one-gadget",
+  "path": "/api/tools/one-gadget",
+  "wrapper": "one_gadget",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "libc_path",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "level",
+    "required": false,
+    "default_repr": "1"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "one-gadget",
+   "public_wrapper": "one_gadget",
+   "executable": "one_gadget",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "one_gadget {0} --level {1}",
+   "base_params": [
+    "libc_path",
+    "level"
+   ],
+   "segments": [
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "libc-database": {
+  "tool_name": "libc-database",
+  "path": "/api/tools/libc-database",
+  "wrapper": "libc_database",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "action",
+    "required": false,
+    "default_repr": "'find'"
+   },
+   {
+    "name": "symbols",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "libc_id",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "libc-database",
+   "public_wrapper": "libc_database",
+   "executable": "{0}",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "gdb-peda": {
+  "tool_name": "gdb-peda",
+  "path": "/api/tools/gdb-peda",
+  "wrapper": "gdb_peda",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "binary",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "commands",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "attach_pid",
+    "required": false,
+    "default_repr": "0"
+   },
+   {
+    "name": "core_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "gdb-peda",
+   "public_wrapper": "gdb_peda",
+   "executable": "gdb",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "angr": {
+  "tool_name": "angr",
+  "path": "/api/tools/angr",
+  "wrapper": "angr",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "binary",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "script_content",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "find_address",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "avoid_addresses",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "analysis_type",
+    "required": false,
+    "default_repr": "'symbolic'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "angr",
+   "public_wrapper": "angr",
+   "executable": "python3",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "ropper": {
+  "tool_name": "ropper",
+  "path": "/api/tools/ropper",
+  "wrapper": "ropper",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "binary",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "gadget_type",
+    "required": false,
+    "default_repr": "'rop'"
+   },
+   {
+    "name": "quality",
+    "required": false,
+    "default_repr": "1"
+   },
+   {
+    "name": "arch",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "search_string",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "ropper",
+   "public_wrapper": "ropper",
+   "executable": "ropper",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "pwninit": {
+  "tool_name": "pwninit",
+  "path": "/api/tools/pwninit",
+  "wrapper": "pwninit",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "binary",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "libc",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "ld",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "template_type",
+    "required": false,
+    "default_repr": "'python'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "pwninit",
+   "public_wrapper": "pwninit",
+   "executable": "pwninit",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "pwninit --bin {0}",
+   "base_params": [
+    "binary"
+   ],
+   "segments": [
+    {
+     "condition": "libc",
+     "template": " --libc {0}",
+     "params": [
+      "libc"
+     ]
+    },
+    {
+     "condition": "ld",
+     "template": " --ld {0}",
+     "params": [
+      "ld"
+     ]
+    },
+    {
+     "condition": "template_type",
+     "template": " --template {0}",
+     "params": [
+      "template_type"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "feroxbuster": {
+  "tool_name": "feroxbuster",
+  "path": "/api/tools/feroxbuster",
+  "wrapper": "feroxbuster",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "url",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "wordlist",
+    "required": false,
+    "default_repr": "'/usr/share/wordlists/dirb/common.txt'"
+   },
+   {
+    "name": "threads",
+    "required": false,
+    "default_repr": "10"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "feroxbuster",
+   "public_wrapper": "feroxbuster",
+   "executable": "feroxbuster",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "feroxbuster -u {0} -w {1} -t {2}",
+   "base_params": [
+    "url",
+    "wordlist",
+    "threads"
+   ],
+   "segments": [
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "dotdotpwn": {
+  "tool_name": "dotdotpwn",
+  "path": "/api/tools/dotdotpwn",
+  "wrapper": "dotdotpwn",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "module",
+    "required": false,
+    "default_repr": "'http'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "dotdotpwn",
+   "public_wrapper": "dotdotpwn",
+   "executable": "dotdotpwn",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "dotdotpwn -m {0} -h {1}",
+   "base_params": [
+    "module",
+    "target"
+   ],
+   "segments": [
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    },
+    {
+     "condition": null,
+     "template": " -b",
+     "params": []
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "xsser": {
+  "tool_name": "xsser",
+  "path": "/api/tools/xsser",
+  "wrapper": "xsser",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "url",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "params",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "xsser",
+   "public_wrapper": "xsser",
+   "executable": "xsser",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "wfuzz": {
+  "tool_name": "wfuzz",
+  "path": "/api/tools/wfuzz",
+  "wrapper": "wfuzz",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "url",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "wordlist",
+    "required": false,
+    "default_repr": "'/usr/share/wordlists/dirb/common.txt'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "wfuzz",
+   "public_wrapper": "wfuzz",
+   "executable": "wfuzz",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "wfuzz -w {0} '{1}'",
+   "base_params": [
+    "wordlist",
+    "url"
+   ],
+   "segments": [
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "dirsearch": {
+  "tool_name": "dirsearch",
+  "path": "/api/tools/dirsearch",
+  "wrapper": "dirsearch",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "url",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "extensions",
+    "required": false,
+    "default_repr": "'php,html,js,txt,xml,json'"
+   },
+   {
+    "name": "wordlist",
+    "required": false,
+    "default_repr": "'/usr/share/wordlists/dirsearch/common.txt'"
+   },
+   {
+    "name": "threads",
+    "required": false,
+    "default_repr": "30"
+   },
+   {
+    "name": "recursive",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "dirsearch",
+   "public_wrapper": "dirsearch",
+   "executable": "dirsearch",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "dirsearch -u {0} -e {1} -w {2} -t {3}",
+   "base_params": [
+    "url",
+    "extensions",
+    "wordlist",
+    "threads"
+   ],
+   "segments": [
+    {
+     "condition": "recursive",
+     "template": " -r",
+     "params": []
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "katana": {
+  "tool_name": "katana",
+  "path": "/api/tools/katana",
+  "wrapper": "katana",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "url",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "depth",
+    "required": false,
+    "default_repr": "3"
+   },
+   {
+    "name": "js_crawl",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "form_extraction",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "output_format",
+    "required": false,
+    "default_repr": "'json'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "katana",
+   "public_wrapper": "katana",
+   "executable": "katana",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "gau": {
+  "tool_name": "gau",
+  "path": "/api/tools/gau",
+  "wrapper": "gau",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "domain",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "providers",
+    "required": false,
+    "default_repr": "'wayback,commoncrawl,otx,urlscan'"
+   },
+   {
+    "name": "include_subs",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "blacklist",
+    "required": false,
+    "default_repr": "'png,jpg,gif,jpeg,swf,woff,svg,pdf,css,ico'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "gau",
+   "public_wrapper": "gau",
+   "executable": "gau",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "waybackurls": {
+  "tool_name": "waybackurls",
+  "path": "/api/tools/waybackurls",
+  "wrapper": "waybackurls",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "domain",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "get_versions",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "no_subs",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "waybackurls",
+   "public_wrapper": "waybackurls",
+   "executable": "waybackurls",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "waybackurls {0}",
+   "base_params": [
+    "domain"
+   ],
+   "segments": [
+    {
+     "condition": "get_versions",
+     "template": " --get-versions",
+     "params": []
+    },
+    {
+     "condition": "no_subs",
+     "template": " --no-subs",
+     "params": []
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "arjun": {
+  "tool_name": "arjun",
+  "path": "/api/tools/arjun",
+  "wrapper": "arjun",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "url",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "method",
+    "required": false,
+    "default_repr": "'GET'"
+   },
+   {
+    "name": "wordlist",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "delay",
+    "required": false,
+    "default_repr": "0"
+   },
+   {
+    "name": "threads",
+    "required": false,
+    "default_repr": "25"
+   },
+   {
+    "name": "stable",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "arjun",
+   "public_wrapper": "arjun",
+   "executable": "arjun",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "paramspider": {
+  "tool_name": "paramspider",
+  "path": "/api/tools/paramspider",
+  "wrapper": "paramspider",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "domain",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "level",
+    "required": false,
+    "default_repr": "2"
+   },
+   {
+    "name": "exclude",
+    "required": false,
+    "default_repr": "'png,jpg,gif,jpeg,swf,woff,svg,pdf,css,ico'"
+   },
+   {
+    "name": "output",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "paramspider",
+   "public_wrapper": "paramspider",
+   "executable": "paramspider",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "paramspider -d {0} -l {1}",
+   "base_params": [
+    "domain",
+    "level"
+   ],
+   "segments": [
+    {
+     "condition": "exclude",
+     "template": " --exclude {0}",
+     "params": [
+      "exclude"
+     ]
+    },
+    {
+     "condition": "output",
+     "template": " -o {0}",
+     "params": [
+      "output"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "x8": {
+  "tool_name": "x8",
+  "path": "/api/tools/x8",
+  "wrapper": "x8",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "url",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "wordlist",
+    "required": false,
+    "default_repr": "'/usr/share/wordlists/x8/params.txt'"
+   },
+   {
+    "name": "method",
+    "required": false,
+    "default_repr": "'GET'"
+   },
+   {
+    "name": "body",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "headers",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "x8",
+   "public_wrapper": "x8",
+   "executable": "x8",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "x8 -u {0} -w {1} -X {2}",
+   "base_params": [
+    "url",
+    "wordlist",
+    "method"
+   ],
+   "segments": [
+    {
+     "condition": "body",
+     "template": " -b '{0}'",
+     "params": [
+      "body"
+     ]
+    },
+    {
+     "condition": "headers",
+     "template": " -H '{0}'",
+     "params": [
+      "headers"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "jaeles": {
+  "tool_name": "jaeles",
+  "path": "/api/tools/jaeles",
+  "wrapper": "jaeles",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "url",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "signatures",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "config",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "threads",
+    "required": false,
+    "default_repr": "20"
+   },
+   {
+    "name": "timeout",
+    "required": false,
+    "default_repr": "20"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "jaeles",
+   "public_wrapper": "jaeles",
+   "executable": "jaeles",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "jaeles scan -u {0} -c {1} --timeout {2}",
+   "base_params": [
+    "url",
+    "threads",
+    "timeout"
+   ],
+   "segments": [
+    {
+     "condition": "signatures",
+     "template": " -s {0}",
+     "params": [
+      "signatures"
+     ]
+    },
+    {
+     "condition": "config",
+     "template": " --config {0}",
+     "params": [
+      "config"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "dalfox": {
+  "tool_name": "dalfox",
+  "path": "/api/tools/dalfox",
+  "wrapper": "dalfox",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "url",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "pipe_mode",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "blind",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "mining_dom",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "mining_dict",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "custom_payload",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "dalfox",
+   "public_wrapper": "dalfox",
+   "executable": "dalfox",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "httpx": {
+  "tool_name": "httpx",
+  "path": "/api/tools/httpx",
+  "wrapper": "httpx",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "probe",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "tech_detect",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "status_code",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "content_length",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "title",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "web_server",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "threads",
+    "required": false,
+    "default_repr": "50"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "httpx",
+   "public_wrapper": "httpx",
+   "executable": "httpx",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "httpx -l {0} -t {1}",
+   "base_params": [
+    "target",
+    "threads"
+   ],
+   "segments": [
+    {
+     "condition": "probe",
+     "template": " -probe",
+     "params": []
+    },
+    {
+     "condition": "tech_detect",
+     "template": " -tech-detect",
+     "params": []
+    },
+    {
+     "condition": "status_code",
+     "template": " -sc",
+     "params": []
+    },
+    {
+     "condition": "content_length",
+     "template": " -cl",
+     "params": []
+    },
+    {
+     "condition": "title",
+     "template": " -title",
+     "params": []
+    },
+    {
+     "condition": "web_server",
+     "template": " -server",
+     "params": []
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "anew": {
+  "tool_name": "anew",
+  "path": "/api/tools/anew",
+  "wrapper": "anew",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "input_data",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "anew",
+   "public_wrapper": "anew",
+   "executable": "echo",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "qsreplace": {
+  "tool_name": "qsreplace",
+  "path": "/api/tools/qsreplace",
+  "wrapper": "qsreplace",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "urls",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "replacement",
+    "required": false,
+    "default_repr": "'FUZZ'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "qsreplace",
+   "public_wrapper": "qsreplace",
+   "executable": "echo",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "echo '{0}' | qsreplace '{1}'",
+   "base_params": [
+    "urls",
+    "replacement"
+   ],
+   "segments": [
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "uro": {
+  "tool_name": "uro",
+  "path": "/api/tools/uro",
+  "wrapper": "uro",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "urls",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "whitelist",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "blacklist",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "uro",
+   "public_wrapper": "uro",
+   "executable": "echo",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "echo '{0}' | uro",
+   "base_params": [
+    "urls"
+   ],
+   "segments": [
+    {
+     "condition": "whitelist",
+     "template": " --whitelist {0}",
+     "params": [
+      "whitelist"
+     ]
+    },
+    {
+     "condition": "blacklist",
+     "template": " --blacklist {0}",
+     "params": [
+      "blacklist"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "http-framework": {
+  "tool_name": "http-framework",
+  "path": "/api/tools/http-framework",
+  "wrapper": "http_framework_endpoint",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "action",
+    "required": false,
+    "default_repr": "'request'"
+   },
+   {
+    "name": "url",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "method",
+    "required": false,
+    "default_repr": "'GET'"
+   },
+   {
+    "name": "data",
+    "required": false,
+    "default_repr": "{}"
+   },
+   {
+    "name": "headers",
+    "required": false,
+    "default_repr": "{}"
+   },
+   {
+    "name": "cookies",
+    "required": false,
+    "default_repr": "{}"
+   },
+   {
+    "name": "max_depth",
+    "required": false,
+    "default_repr": "3"
+   },
+   {
+    "name": "max_pages",
+    "required": false,
+    "default_repr": "100"
+   },
+   {
+    "name": "rules",
+    "required": false,
+    "default_repr": "[]"
+   },
+   {
+    "name": "host",
+    "required": false,
+    "default_repr": null
+   },
+   {
+    "name": "include_subdomains",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "request",
+    "required": false,
+    "default_repr": null
+   },
+   {
+    "name": "location",
+    "required": false,
+    "default_repr": "'query'"
+   },
+   {
+    "name": "params",
+    "required": false,
+    "default_repr": "[]"
+   },
+   {
+    "name": "payloads",
+    "required": false,
+    "default_repr": "[]"
+   },
+   {
+    "name": "base_data",
+    "required": false,
+    "default_repr": "{}"
+   },
+   {
+    "name": "max_requests",
+    "required": false,
+    "default_repr": "100"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "http-framework",
+   "public_wrapper": "http_framework_endpoint",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "browser-agent": {
+  "tool_name": "browser-agent",
+  "path": "/api/tools/browser-agent",
+  "wrapper": "browser_agent_endpoint",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "action",
+    "required": false,
+    "default_repr": "'navigate'"
+   },
+   {
+    "name": "url",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "headless",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "wait_time",
+    "required": false,
+    "default_repr": "5"
+   },
+   {
+    "name": "proxy_port",
+    "required": false,
+    "default_repr": null
+   },
+   {
+    "name": "active_tests",
+    "required": false,
+    "default_repr": "False"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "browser-agent",
+   "public_wrapper": "browser_agent_endpoint",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "burpsuite-alternative": {
+  "tool_name": "burpsuite-alternative",
+  "path": "/api/tools/burpsuite-alternative",
+  "wrapper": "burpsuite_alternative",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "scan_type",
+    "required": false,
+    "default_repr": "'comprehensive'"
+   },
+   {
+    "name": "headless",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "max_depth",
+    "required": false,
+    "default_repr": "3"
+   },
+   {
+    "name": "max_pages",
+    "required": false,
+    "default_repr": "50"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "burpsuite-alternative",
+   "public_wrapper": "burpsuite_alternative",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "zap": {
+  "tool_name": "zap",
+  "path": "/api/tools/zap",
+  "wrapper": "zap",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "scan_type",
+    "required": false,
+    "default_repr": "'baseline'"
+   },
+   {
+    "name": "api_key",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "daemon",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "port",
+    "required": false,
+    "default_repr": "'8090'"
+   },
+   {
+    "name": "host",
+    "required": false,
+    "default_repr": "'0.0.0.0'"
+   },
+   {
+    "name": "format",
+    "required": false,
+    "default_repr": "'xml'"
+   },
+   {
+    "name": "output_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "zap",
+   "public_wrapper": "zap",
+   "executable": "zaproxy",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "wafw00f": {
+  "tool_name": "wafw00f",
+  "path": "/api/tools/wafw00f",
+  "wrapper": "wafw00f",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "wafw00f",
+   "public_wrapper": "wafw00f",
+   "executable": "wafw00f",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "wafw00f {0}",
+   "base_params": [
+    "target"
+   ],
+   "segments": [
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "fierce": {
+  "tool_name": "fierce",
+  "path": "/api/tools/fierce",
+  "wrapper": "fierce",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "domain",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "dns_server",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "fierce",
+   "public_wrapper": "fierce",
+   "executable": "fierce",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "fierce --domain {0}",
+   "base_params": [
+    "domain"
+   ],
+   "segments": [
+    {
+     "condition": "dns_server",
+     "template": " --dns-servers {0}",
+     "params": [
+      "dns_server"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "dnsenum": {
+  "tool_name": "dnsenum",
+  "path": "/api/tools/dnsenum",
+  "wrapper": "dnsenum",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "domain",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "dns_server",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "wordlist",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "dnsenum",
+   "public_wrapper": "dnsenum",
+   "executable": "dnsenum",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "dnsenum {0}",
+   "base_params": [
+    "domain"
+   ],
+   "segments": [
+    {
+     "condition": "dns_server",
+     "template": " --dnsserver {0}",
+     "params": [
+      "dns_server"
+     ]
+    },
+    {
+     "condition": "wordlist",
+     "template": " --file {0}",
+     "params": [
+      "wordlist"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "api_fuzzer": {
+  "tool_name": "api_fuzzer",
+  "path": "/api/tools/api_fuzzer",
+  "wrapper": "api_fuzzer",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "base_url",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "endpoints",
+    "required": false,
+    "default_repr": "[]"
+   },
+   {
+    "name": "methods",
+    "required": false,
+    "default_repr": "['GET', 'POST', 'PUT', 'DELETE']"
+   },
+   {
+    "name": "wordlist",
+    "required": false,
+    "default_repr": "'/usr/share/wordlists/api/api-endpoints.txt'"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "api_fuzzer",
+   "public_wrapper": "api_fuzzer",
+   "executable": "ffuf",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "graphql_scanner": {
+  "tool_name": "graphql_scanner",
+  "path": "/api/tools/graphql_scanner",
+  "wrapper": "graphql_scanner",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "endpoint",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "introspection",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "query_depth",
+    "required": false,
+    "default_repr": "10"
+   },
+   {
+    "name": "test_mutations",
+    "required": false,
+    "default_repr": "True"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "graphql_scanner",
+   "public_wrapper": "graphql_scanner",
+   "executable": "curl",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "jwt_analyzer": {
+  "tool_name": "jwt_analyzer",
+  "path": "/api/tools/jwt_analyzer",
+  "wrapper": "jwt_analyzer",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "jwt_token",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "target_url",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "jwt_analyzer",
+   "public_wrapper": "jwt_analyzer",
+   "executable": "curl",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "api_schema_analyzer": {
+  "tool_name": "api_schema_analyzer",
+  "path": "/api/tools/api_schema_analyzer",
+  "wrapper": "api_schema_analyzer",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "schema_url",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "schema_type",
+    "required": false,
+    "default_repr": "'openapi'"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "api_schema_analyzer",
+   "public_wrapper": "api_schema_analyzer",
+   "executable": "curl",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "curl -s '{0}'",
+   "base_params": [
+    "schema_url"
+   ],
+   "segments": []
+  },
+  "param_var": "params"
+ },
+ "volatility3": {
+  "tool_name": "volatility3",
+  "path": "/api/tools/volatility3",
+  "wrapper": "volatility3",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "memory_file",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "plugin",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "volatility3",
+   "public_wrapper": "volatility3",
+   "executable": "vol.py",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "vol.py -f {0} {1}",
+   "base_params": [
+    "memory_file",
+    "plugin"
+   ],
+   "segments": [
+    {
+     "condition": "output_file",
+     "template": " -o {0}",
+     "params": [
+      "output_file"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "foremost": {
+  "tool_name": "foremost",
+  "path": "/api/tools/foremost",
+  "wrapper": "foremost",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "input_file",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_dir",
+    "required": false,
+    "default_repr": "'/tmp/foremost_output'"
+   },
+   {
+    "name": "file_types",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "foremost",
+   "public_wrapper": "foremost",
+   "executable": "foremost",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "foremost -o {0}",
+   "base_params": [
+    "output_dir"
+   ],
+   "segments": [
+    {
+     "condition": "file_types",
+     "template": " -t {0}",
+     "params": [
+      "file_types"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    },
+    {
+     "condition": null,
+     "template": " {0}",
+     "params": [
+      "input_file"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "steghide": {
+  "tool_name": "steghide",
+  "path": "/api/tools/steghide",
+  "wrapper": "steghide",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "action",
+    "required": false,
+    "default_repr": "'extract'"
+   },
+   {
+    "name": "cover_file",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "embed_file",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "passphrase",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "steghide",
+   "public_wrapper": "steghide",
+   "executable": "steghide",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "exiftool": {
+  "tool_name": "exiftool",
+  "path": "/api/tools/exiftool",
+  "wrapper": "exiftool",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "file_path",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_format",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "tags",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "exiftool",
+   "public_wrapper": "exiftool",
+   "executable": "exiftool",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "exiftool",
+   "base_params": [],
+   "segments": [
+    {
+     "condition": "output_format",
+     "template": " -{0}",
+     "params": [
+      "output_format"
+     ]
+    },
+    {
+     "condition": "tags",
+     "template": " -{0}",
+     "params": [
+      "tags"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    },
+    {
+     "condition": null,
+     "template": " {0}",
+     "params": [
+      "file_path"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "hashpump": {
+  "tool_name": "hashpump",
+  "path": "/api/tools/hashpump",
+  "wrapper": "hashpump",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "signature",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "data",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "key_length",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "append_data",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "hashpump",
+   "public_wrapper": "hashpump",
+   "executable": "hashpump",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "hashpump -s {0} -d '{1}' -k {2} -a '{3}'",
+   "base_params": [
+    "signature",
+    "data",
+    "key_length",
+    "append_data"
+   ],
+   "segments": [
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "hakrawler": {
+  "tool_name": "hakrawler",
+  "path": "/api/tools/hakrawler",
+  "wrapper": "hakrawler",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "url",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "depth",
+    "required": false,
+    "default_repr": "2"
+   },
+   {
+    "name": "forms",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "robots",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "sitemap",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "wayback",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "hakrawler",
+   "public_wrapper": "hakrawler",
+   "executable": "echo",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "linpeas": {
+  "tool_name": "linpeas",
+  "path": "/api/tools/linpeas",
+  "wrapper": "linpeas",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "check_type",
+    "required": false,
+    "default_repr": "'all'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "linpeas",
+   "public_wrapper": "linpeas",
+   "executable": "linpeas.sh",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "winpeas": {
+  "tool_name": "winpeas",
+  "path": "/api/tools/winpeas",
+  "wrapper": "winpeas",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "output_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "check_type",
+    "required": false,
+    "default_repr": "'all'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "winpeas",
+   "public_wrapper": "winpeas",
+   "executable": "winPEASx64.exe",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "linux-exploit-suggester": {
+  "tool_name": "linux-exploit-suggester",
+  "path": "/api/tools/linux-exploit-suggester",
+  "wrapper": "linux_exploit_suggester",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "kernel_version",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "uname_output",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "linux-exploit-suggester",
+   "public_wrapper": "linux_exploit_suggester",
+   "executable": "linux-exploit-suggester.sh",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "linux-exploit-suggester.sh",
+   "base_params": [],
+   "segments": [
+    {
+     "condition": "kernel_version",
+     "template": " -k {0}",
+     "params": [
+      "kernel_version"
+     ]
+    },
+    {
+     "condition": "uname_output",
+     "template": " -u '{0}'",
+     "params": [
+      "uname_output"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "windows-exploit-suggester": {
+  "tool_name": "windows-exploit-suggester",
+  "path": "/api/tools/windows-exploit-suggester",
+  "wrapper": "windows_exploit_suggester",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "systeminfo_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "database",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "windows-exploit-suggester",
+   "public_wrapper": "windows_exploit_suggester",
+   "executable": "windows-exploit-suggester.py",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "windows-exploit-suggester.py",
+   "base_params": [],
+   "segments": [
+    {
+     "condition": "database",
+     "template": " --database {0}",
+     "params": [
+      "database"
+     ]
+    },
+    {
+     "condition": "systeminfo_file",
+     "template": " --systeminfo {0}",
+     "params": [
+      "systeminfo_file"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "gtfobins-lookup": {
+  "tool_name": "gtfobins-lookup",
+  "path": "/api/tools/gtfobins-lookup",
+  "wrapper": "gtfobins_lookup",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "binary",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "function_type",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "list_all",
+    "required": false,
+    "default_repr": "False"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "gtfobins-lookup",
+   "public_wrapper": "gtfobins_lookup",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "lolbas-lookup": {
+  "tool_name": "lolbas-lookup",
+  "path": "/api/tools/lolbas-lookup",
+  "wrapper": "lolbas_lookup",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "binary",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "category",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "list_all",
+    "required": false,
+    "default_repr": "False"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "lolbas-lookup",
+   "public_wrapper": "lolbas_lookup",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "pspy": {
+  "tool_name": "pspy",
+  "path": "/api/tools/pspy",
+  "wrapper": "pspy",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "duration",
+    "required": false,
+    "default_repr": "60"
+   },
+   {
+    "name": "output_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "color",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "pspy",
+   "public_wrapper": "pspy",
+   "executable": "pspy64",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "sudo-check": {
+  "tool_name": "sudo-check",
+  "path": "/api/tools/sudo-check",
+  "wrapper": "sudo_check",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "check_type",
+    "required": false,
+    "default_repr": "'list'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "sudo-check",
+   "public_wrapper": "sudo_check",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "suid-finder": {
+  "tool_name": "suid-finder",
+  "path": "/api/tools/suid-finder",
+  "wrapper": "suid_finder",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "search_type",
+    "required": false,
+    "default_repr": "'all'"
+   },
+   {
+    "name": "path",
+    "required": false,
+    "default_repr": "'/'"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "suid-finder",
+   "public_wrapper": "suid_finder",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "impacket-psexec": {
+  "tool_name": "impacket-psexec",
+  "path": "/api/tools/impacket-psexec",
+  "wrapper": "impacket_psexec",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "username",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "password",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "hashes",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "domain",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "command",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "impacket-psexec",
+   "public_wrapper": "impacket_psexec",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "impacket-wmiexec": {
+  "tool_name": "impacket-wmiexec",
+  "path": "/api/tools/impacket-wmiexec",
+  "wrapper": "impacket_wmiexec",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "username",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "password",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "hashes",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "domain",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "command",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "impacket-wmiexec",
+   "public_wrapper": "impacket_wmiexec",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "impacket-smbexec": {
+  "tool_name": "impacket-smbexec",
+  "path": "/api/tools/impacket-smbexec",
+  "wrapper": "impacket_smbexec",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "username",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "password",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "hashes",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "domain",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "command",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "impacket-smbexec",
+   "public_wrapper": "impacket_smbexec",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "impacket-secretsdump": {
+  "tool_name": "impacket-secretsdump",
+  "path": "/api/tools/impacket-secretsdump",
+  "wrapper": "impacket_secretsdump",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "username",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "password",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "hashes",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "domain",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "just_dc",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "just_dc_ntlm",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "output_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "impacket-secretsdump",
+   "public_wrapper": "impacket_secretsdump",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "evil-winrm": {
+  "tool_name": "evil-winrm",
+  "path": "/api/tools/evil-winrm",
+  "wrapper": "evil_winrm",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "username",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "password",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "hash",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "ssl",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "scripts_path",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "executables_path",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "command",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "evil-winrm",
+   "public_wrapper": "evil_winrm",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "bloodhound-python": {
+  "tool_name": "bloodhound-python",
+  "path": "/api/tools/bloodhound-python",
+  "wrapper": "bloodhound_python",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "domain",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "username",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "password",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "dc_ip",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "collection_method",
+    "required": false,
+    "default_repr": "'All'"
+   },
+   {
+    "name": "output_dir",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "bloodhound-python",
+   "public_wrapper": "bloodhound_python",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "kerbrute": {
+  "tool_name": "kerbrute",
+  "path": "/api/tools/kerbrute",
+  "wrapper": "kerbrute",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "domain",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "dc_ip",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "action",
+    "required": false,
+    "default_repr": "'userenum'"
+   },
+   {
+    "name": "userlist",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "passwordlist",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "username",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "password",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "kerbrute",
+   "public_wrapper": "kerbrute",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "chisel": {
+  "tool_name": "chisel",
+  "path": "/api/tools/chisel",
+  "wrapper": "chisel",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "mode",
+    "required": false,
+    "default_repr": "'client'"
+   },
+   {
+    "name": "server",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "port",
+    "required": false,
+    "default_repr": "'8080'"
+   },
+   {
+    "name": "remote",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "reverse",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "socks5",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "chisel",
+   "public_wrapper": "chisel",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "ligolo-ng": {
+  "tool_name": "ligolo-ng",
+  "path": "/api/tools/ligolo-ng",
+  "wrapper": "ligolo_ng",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "mode",
+    "required": false,
+    "default_repr": "'proxy'"
+   },
+   {
+    "name": "listen_addr",
+    "required": false,
+    "default_repr": "'0.0.0.0:11601'"
+   },
+   {
+    "name": "selfcert",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "connect_to",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "ligolo-ng",
+   "public_wrapper": "ligolo_ng",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "proxychains": {
+  "tool_name": "proxychains",
+  "path": "/api/tools/proxychains",
+  "wrapper": "proxychains_exec",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "command",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "config_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "quiet",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "proxychains",
+   "public_wrapper": "proxychains_exec",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "ssh-tunnel": {
+  "tool_name": "ssh-tunnel",
+  "path": "/api/tools/ssh-tunnel",
+  "wrapper": "ssh_tunnel",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "username",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "tunnel_type",
+    "required": false,
+    "default_repr": "'local'"
+   },
+   {
+    "name": "local_port",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "remote_host",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "remote_port",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "key_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "dynamic_port",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "ssh-tunnel",
+   "public_wrapper": "ssh_tunnel",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "mimikatz": {
+  "tool_name": "mimikatz",
+  "path": "/api/tools/mimikatz",
+  "wrapper": "mimikatz",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "command",
+    "required": false,
+    "default_repr": "'sekurlsa::logonpasswords'"
+   },
+   {
+    "name": "module",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "mimikatz",
+   "public_wrapper": "mimikatz",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "persistence-manager": {
+  "tool_name": "persistence-manager",
+  "path": "/api/tools/persistence-manager",
+  "wrapper": "persistence_manager",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "technique",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "platform",
+    "required": false,
+    "default_repr": "'linux'"
+   },
+   {
+    "name": "payload",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "name",
+    "required": false,
+    "default_repr": "'system-update'"
+   },
+   {
+    "name": "schedule",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "action",
+    "required": false,
+    "default_repr": "'install'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "persistence-manager",
+   "public_wrapper": "persistence_manager",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "reverse-shell-generator": {
+  "tool_name": "reverse-shell-generator",
+  "path": "/api/tools/reverse-shell-generator",
+  "wrapper": "reverse_shell_generator",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "lhost",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "lport",
+    "required": false,
+    "default_repr": "'4444'"
+   },
+   {
+    "name": "shell_type",
+    "required": false,
+    "default_repr": "'bash'"
+   },
+   {
+    "name": "encoding",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "list_types",
+    "required": false,
+    "default_repr": "False"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "reverse-shell-generator",
+   "public_wrapper": "reverse_shell_generator",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "theharvester": {
+  "tool_name": "theharvester",
+  "path": "/api/tools/theharvester",
+  "wrapper": "theharvester",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "domain",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "source",
+    "required": false,
+    "default_repr": "'all'"
+   },
+   {
+    "name": "limit",
+    "required": false,
+    "default_repr": "500"
+   },
+   {
+    "name": "start",
+    "required": false,
+    "default_repr": "0"
+   },
+   {
+    "name": "output_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "theharvester",
+   "public_wrapper": "theharvester",
+   "executable": "theHarvester",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "theHarvester -d {0} -b {1} -l {2} -S {3}",
+   "base_params": [
+    "domain",
+    "source",
+    "limit",
+    "start"
+   ],
+   "segments": [
+    {
+     "condition": "output_file",
+     "template": " -f {0}",
+     "params": [
+      "output_file"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "whois": {
+  "tool_name": "whois",
+  "path": "/api/tools/whois",
+  "wrapper": "whois_lookup",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "whois",
+   "public_wrapper": "whois_lookup",
+   "executable": "whois",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "whois {0}",
+   "base_params": [
+    "target"
+   ],
+   "segments": [
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "dnsrecon": {
+  "tool_name": "dnsrecon",
+  "path": "/api/tools/dnsrecon",
+  "wrapper": "dnsrecon",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "domain",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "scan_type",
+    "required": false,
+    "default_repr": "'std'"
+   },
+   {
+    "name": "nameserver",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "wordlist",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "dnsrecon",
+   "public_wrapper": "dnsrecon",
+   "executable": "dnsrecon",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "dnsrecon -d {0} -t {1}",
+   "base_params": [
+    "domain",
+    "scan_type"
+   ],
+   "segments": [
+    {
+     "condition": "nameserver",
+     "template": " -n {0}",
+     "params": [
+      "nameserver"
+     ]
+    },
+    {
+     "condition": "wordlist",
+     "template": " -D {0}",
+     "params": [
+      "wordlist"
+     ]
+    },
+    {
+     "condition": "output_file",
+     "template": " --xml {0}",
+     "params": [
+      "output_file"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "shodan": {
+  "tool_name": "shodan",
+  "path": "/api/tools/shodan",
+  "wrapper": "shodan_search",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "action",
+    "required": false,
+    "default_repr": "'host'"
+   },
+   {
+    "name": "query",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "facets",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "limit",
+    "required": false,
+    "default_repr": "100"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "shodan",
+   "public_wrapper": "shodan_search",
+   "executable": "shodan",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "sherlock": {
+  "tool_name": "sherlock",
+  "path": "/api/tools/sherlock",
+  "wrapper": "sherlock",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "username",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "site",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "timeout",
+    "required": false,
+    "default_repr": "60"
+   },
+   {
+    "name": "print_all",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "sherlock",
+   "public_wrapper": "sherlock",
+   "executable": "sherlock",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "testssl": {
+  "tool_name": "testssl",
+  "path": "/api/tools/testssl",
+  "wrapper": "testssl",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "checks",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "severity",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "output_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "json_output",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "testssl",
+   "public_wrapper": "testssl",
+   "executable": "testssl.sh",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "commix": {
+  "tool_name": "commix",
+  "path": "/api/tools/commix",
+  "wrapper": "commix",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "url",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "data",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "cookie",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "level",
+    "required": false,
+    "default_repr": "1"
+   },
+   {
+    "name": "technique",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "os_cmd",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "batch",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "commix",
+   "public_wrapper": "commix",
+   "executable": "commix",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "commix --url=\"{0}\" --level={1}",
+   "base_params": [
+    "url",
+    "level"
+   ],
+   "segments": [
+    {
+     "condition": "data",
+     "template": " --data=\"{0}\"",
+     "params": [
+      "data"
+     ]
+    },
+    {
+     "condition": "cookie",
+     "template": " --cookie=\"{0}\"",
+     "params": [
+      "cookie"
+     ]
+    },
+    {
+     "condition": "technique",
+     "template": " --technique={0}",
+     "params": [
+      "technique"
+     ]
+    },
+    {
+     "condition": "os_cmd",
+     "template": " --os-cmd=\"{0}\"",
+     "params": [
+      "os_cmd"
+     ]
+    },
+    {
+     "condition": "batch",
+     "template": " --batch",
+     "params": []
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "nosqlmap": {
+  "tool_name": "nosqlmap",
+  "path": "/api/tools/nosqlmap",
+  "wrapper": "nosqlmap",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "url",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "form_data",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "dbtype",
+    "required": false,
+    "default_repr": "'MongoDB'"
+   },
+   {
+    "name": "attack",
+    "required": false,
+    "default_repr": "1"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "nosqlmap",
+   "public_wrapper": "nosqlmap",
+   "executable": "nosqlmap",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "nosqlmap -u \"{0}\"",
+   "base_params": [
+    "url"
+   ],
+   "segments": [
+    {
+     "condition": "form_data",
+     "template": " -p \"{0}\"",
+     "params": [
+      "form_data"
+     ]
+    },
+    {
+     "condition": "dbtype",
+     "template": " --dbtype {0}",
+     "params": [
+      "dbtype"
+     ]
+    },
+    {
+     "condition": "attack",
+     "template": " --attack {0}",
+     "params": [
+      "attack"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "searchsploit": {
+  "tool_name": "searchsploit",
+  "path": "/api/tools/searchsploit",
+  "wrapper": "searchsploit",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "query",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "exact",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "cve",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "title_only",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "exclude",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "json_output",
+    "required": false,
+    "default_repr": "True"
+   },
+   {
+    "name": "mirror",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "searchsploit",
+   "public_wrapper": "searchsploit",
+   "executable": "searchsploit",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "searchsploit",
+   "base_params": [],
+   "segments": [
+    {
+     "condition": "json_output",
+     "template": " --json",
+     "params": []
+    },
+    {
+     "condition": "exact",
+     "template": " --exact",
+     "params": []
+    },
+    {
+     "condition": "title_only",
+     "template": " -t",
+     "params": []
+    },
+    {
+     "condition": "exclude",
+     "template": " --exclude=\"{0}\"",
+     "params": [
+      "exclude"
+     ]
+    },
+    {
+     "condition": "cve",
+     "template": " --cve {0}",
+     "params": [
+      "cve"
+     ]
+    },
+    {
+     "condition": "mirror",
+     "template": " -m {0}",
+     "params": [
+      "mirror"
+     ]
+    },
+    {
+     "condition": "query",
+     "template": " {0}",
+     "params": [
+      "query"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "metasploit-search": {
+  "tool_name": "metasploit-search",
+  "path": "/api/tools/metasploit-search",
+  "wrapper": "metasploit_search",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "query",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "search_type",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "cve",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "platform",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "module_type",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "metasploit-search",
+   "public_wrapper": "metasploit_search",
+   "executable": "msfconsole",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "netexec-exec": {
+  "tool_name": "netexec-exec",
+  "path": "/api/tools/netexec-exec",
+  "wrapper": "netexec_exec",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "protocol",
+    "required": false,
+    "default_repr": "'smb'"
+   },
+   {
+    "name": "username",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "password",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "hashes",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "domain",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "command",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "ps_command",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "exec_method",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "module",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "module_options",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "netexec-exec",
+   "public_wrapper": "netexec_exec",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "payload-staging": {
+  "tool_name": "payload-staging",
+  "path": "/api/tools/payload-staging",
+  "wrapper": "payload_staging",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "payload_path",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "staging_method",
+    "required": true,
+    "default_repr": "'http'"
+   },
+   {
+    "name": "lhost",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "lport",
+    "required": false,
+    "default_repr": "'8080'"
+   },
+   {
+    "name": "target",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "delivery_command",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "payload-staging",
+   "public_wrapper": "payload_staging",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "lazagne": {
+  "tool_name": "lazagne",
+  "path": "/api/tools/lazagne",
+  "wrapper": "lazagne",
+  "handler_type": "declarative",
+  "parameters": [
+   {
+    "name": "module",
+    "required": false,
+    "default_repr": "'all'"
+   },
+   {
+    "name": "write_output",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "output_dir",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "lazagne",
+   "public_wrapper": "lazagne",
+   "executable": "lazagne",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  },
+  "command": {
+   "base_template": "lazagne {0}",
+   "base_params": [
+    "module"
+   ],
+   "segments": [
+    {
+     "condition": "write_output",
+     "template": " -w",
+     "params": []
+    },
+    {
+     "condition": "output_dir",
+     "template": " -oJ -output {0}",
+     "params": [
+      "output_dir"
+     ]
+    },
+    {
+     "condition": "additional_args",
+     "template": " {0}",
+     "params": [
+      "additional_args"
+     ]
+    }
+   ]
+  },
+  "param_var": "params"
+ },
+ "tshark": {
+  "tool_name": "tshark",
+  "path": "/api/tools/tshark",
+  "wrapper": "tshark",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "interface",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "capture_filter",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "display_filter",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "read_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "write_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "count",
+    "required": false,
+    "default_repr": "0"
+   },
+   {
+    "name": "duration",
+    "required": false,
+    "default_repr": "30"
+   },
+   {
+    "name": "fields",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "tshark",
+   "public_wrapper": "tshark",
+   "executable": "tshark",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "tcpdump": {
+  "tool_name": "tcpdump",
+  "path": "/api/tools/tcpdump",
+  "wrapper": "tcpdump",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "interface",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "filter",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "count",
+    "required": false,
+    "default_repr": "100"
+   },
+   {
+    "name": "write_file",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "verbose",
+    "required": false,
+    "default_repr": "False"
+   },
+   {
+    "name": "duration",
+    "required": false,
+    "default_repr": "30"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "tcpdump",
+   "public_wrapper": "tcpdump",
+   "executable": "tcpdump",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "powersploit": {
+  "tool_name": "powersploit",
+  "path": "/api/tools/powersploit",
+  "wrapper": "powersploit",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "module",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "function",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "target",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "arguments",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "script_path",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "powersploit",
+   "public_wrapper": "powersploit",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "cctv-discovery": {
+  "tool_name": "cctv-discovery",
+  "path": "/api/tools/cctv-discovery",
+  "wrapper": "cctv_discovery",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "ports",
+    "required": false,
+    "default_repr": "','.join((str(p) for p in CAMERA_COMMON_PORTS))"
+   },
+   {
+    "name": "scan_type",
+    "required": false,
+    "default_repr": "'quick'"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "cctv-discovery",
+   "public_wrapper": "cctv_discovery",
+   "executable": "nmap",
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "cctv-default-creds": {
+  "tool_name": "cctv-default-creds",
+  "path": "/api/tools/cctv-default-creds",
+  "wrapper": "cctv_default_creds",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "port",
+    "required": false,
+    "default_repr": "80"
+   },
+   {
+    "name": "protocol",
+    "required": false,
+    "default_repr": "'http'"
+   },
+   {
+    "name": "services",
+    "required": false,
+    "default_repr": "['http']"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "manufacturer",
+    "required": false,
+    "default_repr": "'generic'"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "cctv-default-creds",
+   "public_wrapper": "cctv_default_creds",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "cctv-rtsp-probe": {
+  "tool_name": "cctv-rtsp-probe",
+  "path": "/api/tools/cctv-rtsp-probe",
+  "wrapper": "cctv_rtsp_probe",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "port",
+    "required": false,
+    "default_repr": "554"
+   },
+   {
+    "name": "paths",
+    "required": false,
+    "default_repr": "[]"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "manufacturer",
+    "required": false,
+    "default_repr": "'generic'"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "cctv-rtsp-probe",
+   "public_wrapper": "cctv_rtsp_probe",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "cctv-firmware-cve": {
+  "tool_name": "cctv-firmware-cve",
+  "path": "/api/tools/cctv-firmware-cve",
+  "wrapper": "cctv_firmware_cve",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "firmware_version",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "port",
+    "required": false,
+    "default_repr": "80"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   },
+   {
+    "name": "manufacturer",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "cctv-firmware-cve",
+   "public_wrapper": "cctv_firmware_cve",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ },
+ "cctv-config-audit": {
+  "tool_name": "cctv-config-audit",
+  "path": "/api/tools/cctv-config-audit",
+  "wrapper": "cctv_config_audit",
+  "handler_type": "custom",
+  "parameters": [
+   {
+    "name": "target",
+    "required": true,
+    "default_repr": "''"
+   },
+   {
+    "name": "port",
+    "required": false,
+    "default_repr": "80"
+   },
+   {
+    "name": "additional_args",
+    "required": false,
+    "default_repr": "''"
+   }
+  ],
+  "provenance": {
+   "canonical_id": "cctv-config-audit",
+   "public_wrapper": "cctv_config_audit",
+   "executable": null,
+   "spec_source": "security_tool_specs.json",
+   "execution_adapter": "execute_command",
+   "result_policy": "passthrough"
+  }
+ }
+}

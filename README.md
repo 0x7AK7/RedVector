@@ -15,6 +15,8 @@
 
 ## Overview
 
+RedVector is an AI-assisted offensive security platform that connects AI clients such as Claude, ChatGPT, Cursor, and other MCP-compatible tools with a wide range of real-world cybersecurity tools for ethical hacking, penetration testing, red teaming, vulnerability discovery, security validation, and automated security workflows. RedVector also supports AI providers such as Ollama and DeepSeek through its provider integration layer.
+
 RedVector puts a large set of security tools behind one API. It runs a Flask backend that exposes each tool as a REST route, and an MCP server so an AI assistant can call those tools directly. RedVector does not replace the tools; it runs the ones you have installed, passes your arguments through, and returns their output in a consistent shape.
 
 Use it only against systems you are allowed to test.

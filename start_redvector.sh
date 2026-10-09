@@ -65,9 +65,14 @@ stored_hash=""
 [ -f "$HASH_FILE" ] && stored_hash="$(cat "$HASH_FILE" 2>/dev/null || true)"
 
 verify_deps() {
+    # Verify only the CORE backend runtime imports that requirements.txt reliably
+    # provides and that `python -m redvector` needs to start. The MCP SDK import
+    # (mcp.server.fastmcp) is validated when the MCP client starts, not here: it is
+    # not reliably provided by the pinned package on every distro, and gating on it
+    # would spuriously force a reinstall on every run even when the hash matches.
     "$VENV_PY" - <<'PYCHECK' >/dev/null 2>&1
 import importlib
-for m in ("flask", "requests", "psutil", "mcp.server.fastmcp"):
+for m in ("flask", "requests", "psutil"):
     importlib.import_module(m)
 PYCHECK
 }
@@ -91,7 +96,7 @@ if [ "$need_install" = true ]; then
         die "Dependency installation failed. Check your network and the pip output above."
     fi
 else
-    log "Dependencies unchanged"
+    log "Dependencies unchanged - skipping install"
 fi
 
 # ---- Phase 10: delegate setup commands to the shared Python layer ----

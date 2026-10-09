@@ -22,8 +22,18 @@ STOPPED = "STOPPED"
 STARTING = "STARTING"
 READY = "READY"
 FAILED = "FAILED"
+# Harness (not prerequisite) states for diagnostics/status:
+NOT_INSTALLED = "NOT_INSTALLED"
+INSTALLED_STOPPED = "INSTALLED_STOPPED"
 
 _VER_RE = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
+
+
+def _default_dsh_http(method: str, url: str, payload=None, timeout: int = 2) -> Dict[str, Any]:
+    import urllib.request
+    req = urllib.request.Request(url, method=method)
+    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 (localhost probe only)
+        return {"status": r.status}
 
 
 def _parse_node_version(text: str):
@@ -59,7 +69,9 @@ class DeepSeekHarnessManager:
                  http: Optional[Callable[..., Dict[str, Any]]] = None) -> None:
         self._which = which or shutil.which
         self._runner = runner or (lambda cmd: _run(cmd))
-        self._http = http
+        # Default to a real (short-timeout) endpoint probe so readiness/state reflect
+        # whether DSH is actually running, not merely whether Node is installed.
+        self._http = http if http is not None else _default_dsh_http
 
     # -- prerequisites --
     def node_version(self):
@@ -112,6 +124,22 @@ class DeepSeekHarnessManager:
                 "message": "DSH invoked via npx; probe readiness at %s." % self.DEFAULT_ENDPOINT,
                 "workspace": ws}
 
+    # -- DSH presence (independent of Node; Node/npm/npx are only prerequisites) --
+    def installed(self) -> bool:
+        """True only if the OFFICIAL DeepSeek Harness package (@deepseek-ai/dsh) is
+        globally installed. A bare 'dsh' binary is NOT used (it is commonly an
+        unrelated tool, e.g. dancer's/distributed shell). Node/npm/npx presence is
+        NEVER treated as proof of DSH presence; an npx-only invocation is not a
+        persistent install and correctly reports as not installed."""
+        if self._which("npm") is None:
+            return False
+        try:
+            res = self._runner(["npm", "ls", "-g", self.PACKAGE, "--depth=0"])
+        except Exception:
+            return False
+        out = (res.get("stdout", "") or "") + (res.get("stderr", "") or "")
+        return res.get("returncode", 1) == 0 and self.PACKAGE in out
+
     # -- readiness --
     def readiness(self, endpoint: Optional[str] = None) -> str:
         endpoint = endpoint or self.DEFAULT_ENDPOINT
@@ -122,6 +150,14 @@ class DeepSeekHarnessManager:
             return READY if resp.get("status", 0) and resp["status"] < 500 else FAILED
         except Exception:
             return STOPPED
+
+    def state(self, endpoint: Optional[str] = None) -> str:
+        """Observable DSH state: READY only when the endpoint actually responds;
+        INSTALLED_STOPPED when a DSH runtime exists but is not reachable; otherwise
+        NOT_INSTALLED. Never READY on the basis of Node/npm/npx alone."""
+        if self.readiness(endpoint) == READY:
+            return READY
+        return INSTALLED_STOPPED if self.installed() else NOT_INSTALLED
 
     # -- MCP capability (honest) --
     def mcp_capability(self) -> Dict[str, Any]:

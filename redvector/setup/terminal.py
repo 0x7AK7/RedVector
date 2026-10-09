@@ -27,6 +27,7 @@ _STATUS_COLOR = {
     "WARN": "yellow", "RESTART REQUIRED": "yellow", "MANUAL REQUIRED": "yellow",
     "NOT CONFIGURED": "yellow", "NOT INSTALLED": "yellow", "PREVIEW": "yellow",
     "PLATFORM DEPENDENT": "yellow", "UNVERIFIED": "yellow", "DEGRADED": "yellow",
+    "STARTING": "yellow", "INSTALLED / STOPPED": "yellow", "STOPPED": "yellow",
     "ERROR": "red", "FAILED": "red", "CRITICAL": "red", "INVALID": "red",
 }
 

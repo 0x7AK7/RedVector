@@ -70,7 +70,9 @@ $StoredHash = ""
 if (Test-Path $HashFile) { $StoredHash = (Get-Content $HashFile -Raw).Trim().ToLower() }
 
 function Verify-Deps {
-    & $VenvPy -c "import importlib; [importlib.import_module(m) for m in ('flask','requests','psutil','mcp.server.fastmcp')]" *> $null
+    # Verify only the CORE backend runtime imports (see start_redvector.sh for why
+    # the MCP SDK import is validated when the MCP client starts, not here).
+    & $VenvPy -c "import importlib; [importlib.import_module(m) for m in ('flask','requests','psutil')]" *> $null
     return ($LASTEXITCODE -eq 0)
 }
 
@@ -88,7 +90,7 @@ if ($NeedInstall) {
     Set-Content -Path $HashFile -Value $CurHash -NoNewline   # store only after a verified install
     Log "Dependencies ready"
 } else {
-    Log "Dependencies unchanged"
+    Log "Dependencies unchanged - skipping install"
 }
 
 # ---- Phase 10: delegate setup commands to the shared Python layer ----

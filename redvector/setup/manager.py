@@ -32,6 +32,10 @@ from redvector.setup import vendors
 START_REDVECTOR = 10   # launcher exit-code contract
 HANDLED = 0
 
+# DSH observable-state -> display tag (READY only when actually reachable).
+_DSH_TAG = {"READY": "READY", "INSTALLED_STOPPED": "INSTALLED / STOPPED",
+            "STARTING": "STARTING", "NOT_INSTALLED": "NOT INSTALLED"}
+
 
 def _project_root() -> str:
     # redvector/setup/manager.py -> project root is two levels up from the package
@@ -333,6 +337,8 @@ class AIIntegrationSetupManager:
         self.t.info("DeepSeek Harness (%s)%s" % (self.harness.PACKAGE,
                     " [developer preview]" if self.harness.PREVIEW else ""))
         self.t.hint("Repository: %s" % self.harness.REPO)
+        # Observable DSH state (independent of Node): never READY on Node presence alone.
+        self.t.status(_DSH_TAG.get(self.harness.state(), "NOT INSTALLED"), "DeepSeek Harness state")
         if not pre["node_present"]:
             self.t.status("NOT INSTALLED", "Node.js was not found. DSH needs Node %s." % pre["node_requirement"])
             self.t.hint("Install Node.js from the official source (https://nodejs.org), then re-run.")
@@ -376,6 +382,9 @@ class AIIntegrationSetupManager:
             tag = "READY" if p.get("active") else ("CONFIGURED" if p.get("credential_present")
                                                    or p.get("is_local") else "NOT CONFIGURED")
             self.t.status(tag, p["display_name"])
+        self.t.write()
+        self.t.write(self.t.colorize("AI Harnesses", "cyan"))
+        self.t.status(_DSH_TAG.get(self.harness.state(), "NOT INSTALLED"), "DeepSeek Harness")
         return {"backend": rec.to_dict()}
 
     def print_diagnostics(self) -> Dict[str, Any]:
@@ -407,8 +416,11 @@ class AIIntegrationSetupManager:
         h = data["harness"]["deepseek_harness"]
         self.t.write()
         self.t.write(self.t.colorize("AI Harnesses", "cyan"))
-        self.t.status("READY" if h["node_ok"] and h["npx_present"] else "NOT INSTALLED",
-                      "DeepSeek Harness (Node %s)" % (h["node_version"] or "absent"))
+        # Node.js is a PREREQUISITE shown separately; it NEVER implies DSH readiness.
+        node_tag = "READY" if h["node_ok"] else ("WARN" if h["node_present"] else "NOT INSTALLED")
+        self.t.status(node_tag, "Node.js %s (prerequisite; requires %s)" %
+                      (h["node_version"] or "absent", h["node_requirement"]))
+        self.t.status(_DSH_TAG.get(h.get("dsh_state", "NOT_INSTALLED"), "NOT INSTALLED"), "DeepSeek Harness")
         return data
 
     def _report_client_action(self, res: Dict[str, Any]) -> None:

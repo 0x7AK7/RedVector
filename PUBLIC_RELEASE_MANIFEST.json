@@ -191,18 +191,18 @@
   },
   {
    "path": "redvector/setup/diagnostics.py",
-   "sha256": "590dd397de54dd58dbc466cb70308896952dd1846c239f1b953e3af7c702c164",
-   "bytes": 4773
+   "sha256": "70cdd65e503331d7783b3189a85e835facd6634fbda6bc36d7c5b4e5c0fe0378",
+   "bytes": 4975
   },
   {
    "path": "redvector/setup/harness.py",
-   "sha256": "f3d2024738dcda3b848d6322b9e9ab4ad6526151a435433e1495fbc84e4a7efd",
-   "bytes": 5899
+   "sha256": "1df4b3ff638d577eceea2d0a37565d9a8cd0da573f9e30b2fd3abf212c0afdb3",
+   "bytes": 7860
   },
   {
    "path": "redvector/setup/manager.py",
-   "sha256": "d01aef5726ecd5ee9731837e1ac3a18ccb072cff37e8192bf8fd837fe1dfd080",
-   "bytes": 19993
+   "sha256": "8cebbf37fb5bf0f5b584ca4984f949387787a87570d4b19630f968d12875aecd",
+   "bytes": 20858
   },
   {
    "path": "redvector/setup/platform_probe.py",
@@ -221,8 +221,8 @@
   },
   {
    "path": "redvector/setup/terminal.py",
-   "sha256": "a799b1014199275090590b59a1cc31187f249297f009a76a0906df8eb11e2841",
-   "bytes": 4899
+   "sha256": "6b9107c79e98c03351fe1835bdd3fb4da5be5a841234ff9d640551f497bbc3bb",
+   "bytes": 4979
   },
   {
    "path": "redvector/setup/vendors.py",
@@ -251,13 +251,13 @@
   },
   {
    "path": "start_redvector.ps1",
-   "sha256": "1917537104d778a483b800e823ca557991eb8909bf5c769897877427bed72ab4",
-   "bytes": 6121
+   "sha256": "5685f9dc822609e2ec0791fe2ff911654dbe29533e3a0e52abd08f6ed95bbefb",
+   "bytes": 6279
   },
   {
    "path": "start_redvector.sh",
-   "sha256": "d1f095f3ad07c9e3b50d079e783aa567fa7cfdee7f7e4046ee152dc0745c47fe",
-   "bytes": 5694
+   "sha256": "4d5cc93130fe544ec1e1e9faebca31ea21bfe2618dc16842c7c3c9d101ae98b7",
+   "bytes": 6104
   }
  ]
 }

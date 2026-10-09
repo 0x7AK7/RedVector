@@ -103,6 +103,9 @@ class Diagnostics:
                 "node_present": pre["node_present"], "node_version": pre["node_version"],
                 "node_ok": pre["node_ok"], "npx_present": pre["npx_present"],
                 "node_requirement": pre["node_requirement"],
+                # Observable DSH state - independent of Node (Node is only a prerequisite).
+                "dsh_state": self.harness.state(),
+                "dsh_installed": self.harness.installed(),
             }},
             "read_only": True,
         }

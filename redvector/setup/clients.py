@@ -11,9 +11,12 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, Optional
+import re
+import shutil
+from typing import Any, Callable, Dict, Optional
 
 from redvector import ai_integration as _ai
+from redvector.setup import status as S
 
 # Normalized Phase 10 client states (strings; we do not mutate the shared enum).
 NOT_INSTALLED = "NOT_INSTALLED"
@@ -34,8 +37,16 @@ def _read_json(path: str) -> Optional[dict]:
 
 
 class ClientSetup:
-    def __init__(self, manager: Optional[_ai.MCPClientManager] = None) -> None:
+    def __init__(self, manager: Optional[_ai.MCPClientManager] = None,
+                 which: Optional[Callable[[str], Optional[str]]] = None,
+                 runner: Optional[Callable[[list], Dict[str, Any]]] = None) -> None:
         self.manager = manager or _ai.MCPClientManager()
+        self._which = which or shutil.which
+        import subprocess
+        self._runner = runner or (lambda cmd: {
+            "returncode": 0,
+            "stdout": (lambda p: p.stdout or "")(subprocess.run(list(cmd), capture_output=True,
+                                                                text=True, shell=False))})  # noqa: S603
 
     # -- introspection --
     def _existing_entry(self, adapter) -> Optional[dict]:
@@ -156,6 +167,61 @@ class ClientSetup:
 
     def repair(self, client_id: str) -> Dict[str, Any]:
         return self.connect(client_id)
+
+    # -- unified three-dimension status (Phase 10.2) --
+    _CONFIG_MAP = {CONFIGURED: S.CONFIGURED, CONFIGURED_BUT_STALE: S.STALE,
+                   CONFIG_INVALID: S.INVALID, NOT_CONFIGURED: S.NOT_CONFIGURED,
+                   NOT_INSTALLED: S.NOT_CONFIGURED, SETUP_REQUIRED: S.SETUP_REQUIRED}
+
+    def app_installation(self, client_id: str) -> str:
+        """Detect whether the actual APP is installed (config presence is NOT used
+        as proof of installation). Claude Code (the `claude` CLI) is NEVER treated
+        as Claude Desktop."""
+        system = self.manager.system
+        if client_id == "claude_desktop":
+            if self._which("claude-desktop"):
+                return S.INSTALLED
+            return S.NOT_INSTALLED if system == "Linux" else S.UNKNOWN
+        if client_id == "cursor":
+            if self._which("cursor"):
+                return S.INSTALLED
+            return S.NOT_INSTALLED if system == "Linux" else S.UNKNOWN
+        if client_id == "chatgpt":
+            return S.NOT_APPLICABLE   # integrates via in-app connector, not a local install
+        return S.UNKNOWN
+
+    def unified(self, client_id: str) -> Dict[str, Any]:
+        st = self.status(client_id)
+        display = st.get("display_name", client_id)
+        if client_id == "chatgpt":
+            return {"client": client_id, "display_name": display,
+                    "installation": S.NOT_APPLICABLE, "configuration": S.SETUP_REQUIRED,
+                    "connection": S.NOT_OBSERVABLE,
+                    "note": "ChatGPT connects via an in-app MCP connector, not a local file."}
+        return {"client": client_id, "display_name": display,
+                "installation": self.app_installation(client_id),
+                "configuration": self._CONFIG_MAP.get(st["state"], S.NOT_CONFIGURED),
+                "connection": S.NOT_OBSERVABLE,   # desktop client owns its own session
+                "config_path": st.get("config_path"),
+                "note": st.get("note")}
+
+    def claude_code(self) -> Dict[str, Any]:
+        """Detect the Claude Code CLI (`claude`), which is DISTINCT from Claude
+        Desktop. Reports installation + version only; RedVector does not configure
+        Claude Code's MCP in this phase."""
+        path = self._which("claude")
+        if not path:
+            return {"client": "claude_code", "display_name": "Claude Code",
+                    "installation": S.NOT_INSTALLED, "version": None}
+        version = None
+        try:
+            out = self._runner(["claude", "--version"]).get("stdout", "") or ""
+            m = re.search(r"\d+\.\d+\.\d+", out)
+            version = m.group(0) if m else None
+        except Exception:
+            version = None
+        return {"client": "claude_code", "display_name": "Claude Code",
+                "installation": S.INSTALLED, "version": version, "path": path}
 
     def generic_example(self) -> Dict[str, Any]:
         """A copy-pasteable config for an arbitrary MCP client (no auto-edit)."""

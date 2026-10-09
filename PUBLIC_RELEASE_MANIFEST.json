@@ -26,8 +26,8 @@
   },
   {
    "path": "README.md",
-   "sha256": "abeb2a44b4a87aac5b82d38fd6055af64654215d4b9bcb86667cdec1a4cd80b0",
-   "bytes": 19967
+   "sha256": "433a06183466d731c80c1da4b5ba67ae09fcd5506df78a183dece3808cc3baab",
+   "bytes": 20361
   },
   {
    "path": "THIRD_PARTY_NOTICES.md",
@@ -51,8 +51,8 @@
   },
   {
    "path": "docs/AI_SETUP.md",
-   "sha256": "937793497b43352efb473927f27ec103041ddbf9fe8fef924fa27f533032a819",
-   "bytes": 7516
+   "sha256": "7b978cbbdbefff081241a6f74c39b04e55de46f1290671f646ca1cb5a6b92cb5",
+   "bytes": 8567
   },
   {
    "path": "docs/ARCHITECTURE.md",
@@ -186,23 +186,23 @@
   },
   {
    "path": "redvector/setup/clients.py",
-   "sha256": "b2c997494b02d4829918fcc1bc8f004500042973bfb558ac6fb1990deaede3a6",
-   "bytes": 8791
+   "sha256": "c8240ad5c9cc52860b9809e3d6a0d88a52b6dfd1b50d602f8427999e56db18b2",
+   "bytes": 12228
   },
   {
    "path": "redvector/setup/diagnostics.py",
-   "sha256": "70cdd65e503331d7783b3189a85e835facd6634fbda6bc36d7c5b4e5c0fe0378",
-   "bytes": 4975
+   "sha256": "e0d27f78837cd0cacb0bf80dab49140af34562880ab539e7bb328191449ab252",
+   "bytes": 5601
   },
   {
    "path": "redvector/setup/harness.py",
-   "sha256": "1df4b3ff638d577eceea2d0a37565d9a8cd0da573f9e30b2fd3abf212c0afdb3",
-   "bytes": 7860
+   "sha256": "f6fcd80d4b1e98ea2f960f49b10f487c5b917703560dc2ce303551dca3f97d73",
+   "bytes": 8957
   },
   {
    "path": "redvector/setup/manager.py",
-   "sha256": "8cebbf37fb5bf0f5b584ca4984f949387787a87570d4b19630f968d12875aecd",
-   "bytes": 20858
+   "sha256": "824555717e4022b5ba74a942fa6b447e311e20bf9a326ad9bf049e6b3e16376f",
+   "bytes": 20871
   },
   {
    "path": "redvector/setup/platform_probe.py",
@@ -211,8 +211,8 @@
   },
   {
    "path": "redvector/setup/providers.py",
-   "sha256": "2c69db71612bcbe1204fd90e99173419fb4d78a91432c3c96fec13016b25df71",
-   "bytes": 8954
+   "sha256": "10735e91c8f6b963ba38514c98fcf9a1fed10513d45f75060f26ccc8022c18f3",
+   "bytes": 10444
   },
   {
    "path": "redvector/setup/reconnect.py",
@@ -220,9 +220,14 @@
    "bytes": 1791
   },
   {
+   "path": "redvector/setup/status.py",
+   "sha256": "ad43f0dc7664ea8096fa3805aa632d852efeb3ce428c574cb881a6099e5e4094",
+   "bytes": 1490
+  },
+  {
    "path": "redvector/setup/terminal.py",
-   "sha256": "6b9107c79e98c03351fe1835bdd3fb4da5be5a841234ff9d640551f497bbc3bb",
-   "bytes": 4979
+   "sha256": "c086f9a42ed522603f23862ea9645f81d9d12486a945db6f8bbfc52335a24f6f",
+   "bytes": 5315
   },
   {
    "path": "redvector/setup/vendors.py",

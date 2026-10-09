@@ -84,6 +84,16 @@ DSH is an optional developer-preview harness, official package `@deepseek-ai/dsh
 
 `--status` prints a concise startup summary and performs bounded recovery for connections RedVector owns.
 
+## Status model (Installation / Configuration / Connection)
+
+`--diagnostics` and `--status` report every AI client, provider, and harness using three independent dimensions, so they are never conflated:
+
+- Installation: is the app or runtime actually present? A config file existing does not mean the app is installed.
+- Configuration: is RedVector's integration set up? An app being installed does not mean the config is complete.
+- Connection: is a live connection actually observed? A complete config does not mean it is connected.
+
+Claude Desktop and Claude Code are reported separately: the `claude` CLI (Claude Code) being installed is never treated as proof that the Claude Desktop app is installed. ChatGPT reports Installation as not applicable (it integrates via an in-app connector). Node.js is reported as its own prerequisite entity and never implies that DeepSeek Harness is ready. RedVector never fabricates `CONNECTED`; a desktop client that is configured but whose session RedVector cannot observe shows Connection `NOT OBSERVABLE`.
+
 ## Connection states and reconnect
 
 Client states: `NOT_INSTALLED`, `INSTALLED`, `NOT_CONFIGURED`, `CONFIGURED`, `CONFIGURED_BUT_STALE`, `CONFIG_INVALID`, and `CONNECTED` only when actually observable. For connections RedVector controls directly (its backend, Ollama endpoint, API providers), recovery is bounded: it probes, then waits 1s, 2s, 4s between retries, then stops with a final `READY`/`CONNECTED` or `FAILED`/`DEGRADED`. RedVector never retries forever, never busy-loops, and never repeatedly triggers paid API calls to maintain an artificial connection. Desktop clients own their own session, so RedVector verifies configuration and MCP viability but never fabricates a client connection.

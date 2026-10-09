@@ -159,6 +159,26 @@ class DeepSeekHarnessManager:
             return READY
         return INSTALLED_STOPPED if self.installed() else NOT_INSTALLED
 
+    # -- unified three-dimension status (Phase 10.2) --
+    def node_entity(self) -> Dict[str, Any]:
+        """Node.js as its own prerequisite entity (installation + version); never
+        conflated with DeepSeek Harness."""
+        from redvector.setup import status as S
+        pre = self.prerequisites()
+        return {"display_name": "Node.js",
+                "installation": S.INSTALLED if pre["node_present"] else S.NOT_INSTALLED,
+                "version": pre["node_version"], "requirement": pre["node_requirement"],
+                "satisfies_requirement": pre["node_ok"]}
+
+    def unified(self, endpoint: Optional[str] = None) -> Dict[str, Any]:
+        from redvector.setup import status as S
+        st = self.state(endpoint)
+        return {"display_name": "DeepSeek Harness",
+                "installation": S.INSTALLED if self.installed() else S.NOT_INSTALLED,
+                "configuration": S.NOT_CONFIGURED,   # RedVector does not configure DSH
+                "connection": S.READY if st == READY else S.NOT_RUNNING,
+                "state": st, "preview": self.PREVIEW}
+
     # -- MCP capability (honest) --
     def mcp_capability(self) -> Dict[str, Any]:
         return {

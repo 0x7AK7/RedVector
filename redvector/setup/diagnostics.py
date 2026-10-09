@@ -107,6 +107,18 @@ class Diagnostics:
                 "dsh_state": self.harness.state(),
                 "dsh_installed": self.harness.installed(),
             }},
+            # Phase 10.2 unified three-dimension model (installation/configuration/connection).
+            "ai_clients": {
+                "claude_desktop": self.client_setup.unified("claude_desktop"),
+                "claude_code": self.client_setup.claude_code(),
+                "cursor": self.client_setup.unified("cursor"),
+                "chatgpt": self.client_setup.unified("chatgpt"),
+            },
+            "ai_providers": self.provider_setup.unified(),
+            "ai_harnesses": {
+                "node": self.harness.node_entity(),
+                "deepseek_harness": self.harness.unified(),
+            },
             "read_only": True,
         }
 

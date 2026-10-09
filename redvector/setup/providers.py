@@ -147,6 +147,30 @@ class ProviderSetup:
     def status(self) -> Dict[str, Any]:
         return {"providers": self.manager.list_providers(), "active": self.manager.active()}
 
+    def unified(self) -> list:
+        """Three-dimension status per provider. Installation is N/A for cloud APIs.
+        Ollama connection is probed locally (free); cloud-API connection is only
+        CONNECTED when the provider is active (no passive paid test in diagnostics)."""
+        from redvector.setup import status as S
+        active = self.manager.active()
+        out = []
+        for p in self.manager.list_providers():
+            pid = p["id"]
+            if p.get("is_local"):   # Ollama
+                healthy = self.ollama.endpoint_healthy()
+                installation = S.INSTALLED if (self.ollama.installed() or healthy) else S.NOT_INSTALLED
+                is_active = active.get("active_provider") == pid and bool(active.get("active_model"))
+                out.append({"id": pid, "display_name": p["display_name"],
+                            "installation": installation,
+                            "configuration": S.CONFIGURED if is_active else S.NOT_CONFIGURED,
+                            "connection": S.CONNECTED if healthy else S.NOT_CONNECTED})
+            else:   # cloud API provider
+                out.append({"id": pid, "display_name": p["display_name"],
+                            "installation": S.NOT_APPLICABLE,
+                            "configuration": S.CONFIGURED if p.get("credential_present") else S.NOT_CONFIGURED,
+                            "connection": S.CONNECTED if p.get("active") else S.NOT_OBSERVABLE})
+        return out
+
     def test(self, provider_id: str, model: str = "") -> Dict[str, Any]:
         try:
             pid = _ai.AIProviderId(provider_id)

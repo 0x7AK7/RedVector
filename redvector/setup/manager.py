@@ -28,6 +28,7 @@ from redvector.setup.harness import DeepSeekHarnessManager
 from redvector.setup.diagnostics import Diagnostics
 from redvector.setup import reconnect as _reconnect
 from redvector.setup import vendors
+from redvector.setup import status as _S
 
 START_REDVECTOR = 10   # launcher exit-code contract
 HANDLED = 0
@@ -363,6 +364,21 @@ class AIIntegrationSetupManager:
     def print_provider_status(self) -> None:
         self.t.info(json.dumps(self.providers.status(), indent=1, default=str))
 
+    # -- unified three-dimension rendering (Phase 10.2) --
+    def _dims(self, entity: Dict[str, Any]) -> None:
+        """Render an entity's Installation / Configuration / Connection dimensions,
+        each on its own line with an explicit [TAG]. Omits a dimension only when the
+        entity does not carry it (e.g. Claude Code has installation + version only)."""
+        self.t.write("  %s" % self.t.colorize(entity.get("display_name", entity.get("client", "")), "cyan"))
+        if "installation" in entity:
+            self.t.write("    Installation:  %s" % self.t.tagged(_S.disp(entity["installation"])))
+        if entity.get("version"):
+            self.t.write("    Version:       %s" % entity["version"])
+        if "configuration" in entity:
+            self.t.write("    Configuration: %s" % self.t.tagged(_S.disp(entity["configuration"])))
+        if "connection" in entity:
+            self.t.write("    Connection:    %s" % self.t.tagged(_S.disp(entity["connection"])))
+
     def print_status(self) -> Dict[str, Any]:
         """Concise startup status (Step 37) with bounded backend recovery."""
         self.t.banner()
@@ -371,20 +387,8 @@ class AIIntegrationSetupManager:
         self.t.write(self.t.colorize("Core", "cyan"))
         self.t.status("READY" if rec.ok else "FAILED", "Backend")
         self.t.status("READY" if rec.ok else "DEGRADED", "MCP (viability depends on backend)")
-        self.t.write()
-        self.t.write(self.t.colorize("AI Clients", "cyan"))
-        for cid in ("claude_desktop", "cursor", "chatgpt"):
-            st = self.clients.status(cid)
-            self.t.status(st["state"].replace("_", " "), st.get("display_name", cid))
-        self.t.write()
-        self.t.write(self.t.colorize("AI Providers", "cyan"))
-        for p in self.providers.status()["providers"]:
-            tag = "READY" if p.get("active") else ("CONFIGURED" if p.get("credential_present")
-                                                   or p.get("is_local") else "NOT CONFIGURED")
-            self.t.status(tag, p["display_name"])
-        self.t.write()
-        self.t.write(self.t.colorize("AI Harnesses", "cyan"))
-        self.t.status(_DSH_TAG.get(self.harness.state(), "NOT INSTALLED"), "DeepSeek Harness")
+        data = self.diagnostics.collect()
+        self._render_ai_sections(data)
         return {"backend": rec.to_dict()}
 
     def print_diagnostics(self) -> Dict[str, Any]:
@@ -404,24 +408,26 @@ class AIIntegrationSetupManager:
         self.t.write("  Phase 8 meta-tools    %s" % cap["phase8_meta_tools"])
         self.t.write("  Live MCP              %s" % cap["live_mcp"])
         self.t.write("  Security integrations %s" % cap["security_integrations"])
+        self._render_ai_sections(data)
+        return data
+
+    def _render_ai_sections(self, data: Dict[str, Any]) -> None:
+        ai_clients = data["ai_clients"]
         self.t.write()
         self.t.write(self.t.colorize("AI Clients", "cyan"))
-        for cid, st in data["clients"].items():
-            self.t.status(st["state"].replace("_", " "), st.get("display_name", cid))
+        self._dims(ai_clients["claude_desktop"])
+        self._dims(ai_clients["claude_code"])
+        self._dims(ai_clients["cursor"])
+        self._dims(ai_clients["chatgpt"])
         self.t.write()
         self.t.write(self.t.colorize("AI Providers", "cyan"))
-        for p in data["providers"]["providers"]:
-            tag = "READY" if p.get("active") else ("CONFIGURED" if p.get("credential_present") else "NOT CONFIGURED")
-            self.t.status(tag, p["display_name"])
-        h = data["harness"]["deepseek_harness"]
+        for p in data["ai_providers"]:
+            self._dims(p)
         self.t.write()
         self.t.write(self.t.colorize("AI Harnesses", "cyan"))
-        # Node.js is a PREREQUISITE shown separately; it NEVER implies DSH readiness.
-        node_tag = "READY" if h["node_ok"] else ("WARN" if h["node_present"] else "NOT INSTALLED")
-        self.t.status(node_tag, "Node.js %s (prerequisite; requires %s)" %
-                      (h["node_version"] or "absent", h["node_requirement"]))
-        self.t.status(_DSH_TAG.get(h.get("dsh_state", "NOT_INSTALLED"), "NOT INSTALLED"), "DeepSeek Harness")
-        return data
+        # Node.js is its own prerequisite entity; it NEVER implies DSH readiness.
+        self._dims(data["ai_harnesses"]["node"])
+        self._dims(data["ai_harnesses"]["deepseek_harness"])
 
     def _report_client_action(self, res: Dict[str, Any]) -> None:
         outcome = res.get("outcome", "")

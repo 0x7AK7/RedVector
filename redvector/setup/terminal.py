@@ -22,12 +22,15 @@ _CODES = {
 # depends on color alone.
 _STATUS_COLOR = {
     "READY": "green", "CONNECTED": "green", "PASS": "green", "OK": "green",
-    "CONFIGURED": "green", "ADDED": "green", "UPDATED": "green",
+    "CONFIGURED": "green", "ADDED": "green", "UPDATED": "green", "INSTALLED": "green",
     "INFO": "cyan", "DETECTED": "cyan",
     "WARN": "yellow", "RESTART REQUIRED": "yellow", "MANUAL REQUIRED": "yellow",
     "NOT CONFIGURED": "yellow", "NOT INSTALLED": "yellow", "PREVIEW": "yellow",
     "PLATFORM DEPENDENT": "yellow", "UNVERIFIED": "yellow", "DEGRADED": "yellow",
     "STARTING": "yellow", "INSTALLED / STOPPED": "yellow", "STOPPED": "yellow",
+    "STALE": "yellow", "SETUP REQUIRED": "yellow", "NOT RUNNING": "yellow",
+    "NOT CONNECTED": "yellow",
+    "NOT OBSERVABLE": "dim", "NOT APPLICABLE": "dim", "UNKNOWN": "dim",
     "ERROR": "red", "FAILED": "red", "CRITICAL": "red", "INVALID": "red",
 }
 
@@ -66,11 +69,14 @@ class Terminal:
     def write(self, text: str = "") -> None:
         self.stream.write(text + "\n")
 
-    def status(self, tag: str, text: str = "") -> str:
+    def tagged(self, tag: str) -> str:
+        """Return a colorized ``[TAG]`` string (always contains the textual tag)."""
         tag_u = tag.upper()
         color = _STATUS_COLOR.get(tag_u, "cyan")
-        label = self.colorize("[%s]" % tag_u, color)
-        line = ("%s %s" % (label, text)).rstrip()
+        return self.colorize("[%s]" % tag_u, color)
+
+    def status(self, tag: str, text: str = "") -> str:
+        line = ("%s %s" % (self.tagged(tag), text)).rstrip()
         self.write(line)
         return line
 

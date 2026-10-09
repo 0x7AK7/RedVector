@@ -1,10 +1,15 @@
-﻿# RedVector AI MCP Agents v8.0
+﻿# RedVector 8.0.0
 #
-# INSTALLATION COMMANDS:
-# python3 -m venv redvector_env
-# source redvector_env/bin/activate
-# python -m pip install -r requirements.txt
-# python3 redvector_server.py
+# Recommended: run the one-command launcher, which creates the virtualenv and
+# installs these dependencies only when needed:
+#   ./start_redvector.sh        (Linux/Kali)
+#   .\start_redvector.ps1       (Windows PowerShell)
+#
+# Manual install:
+#   python -m venv .venv
+#   # Linux/macOS: source .venv/bin/activate | Windows: .\.venv\Scripts\Activate.ps1
+#   python -m pip install -r requirements.txt
+#   python -m redvector
 
 # ============================================================================
 # CORE FRAMEWORK DEPENDENCIES (ACTUALLY USED)

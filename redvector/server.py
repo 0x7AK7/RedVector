@@ -76,12 +76,12 @@ from mitmproxy import http as mitmhttp
 from mitmproxy.tools.dump import DumpMaster
 from mitmproxy.options import Options as MitmOptions
 import contextlib
-import redvector_cache_process as _cacheproc
-import redvector_error_handling as _errh
-import redvector_cve_intelligence as _cveintel
-import redvector_workflows as _wf
-import redvector_payloads as _payloads
-import redvector_core as _core
+from redvector import cache_process as _cacheproc
+from redvector import error_handling as _errh
+from redvector import cve_intelligence as _cveintel
+from redvector import workflows as _wf
+from redvector import payloads as _payloads
+from redvector import core as _core
 
 # ============================================================================
 # LOGGING CONFIGURATION (MUST BE FIRST)
@@ -112,10 +112,13 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # Phase 3: declarative security-tool integration (command source of truth).
-import redvector_security_tools as _sec_tools
+from redvector import security_tools as _sec_tools
 SECURITY_TOOL_REGISTRY = _sec_tools.SECURITY_TOOL_REGISTRY
-import redvector_config as _config  # Phase 4: typed configuration + provenance
-import redvector_ai_integration as _ai  # Phase 7: AI Integration Manager
+from redvector import config as _config  # Phase 4: typed configuration + provenance
+from redvector import ai_integration as _ai  # Phase 7: AI Integration Manager
+from redvector import agent as _agent  # Phase 8: provider-agnostic AI chat agent
+from redvector import toolmanager as _tm  # Phase 8: tool resolution + installation manager
+from redvector.version import __version__ as REDVECTOR_VERSION  # Phase 9: single version source
 app.config['JSON_SORT_KEYS'] = False
 
 # API Configuration
@@ -6240,7 +6243,7 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "message": "RedVector AI Tools API Server is operational",
-        "version": "8.0.0",
+        "version": REDVECTOR_VERSION,
         "uptime": time.time() - telemetry.stats["start_time"]
     })
 
@@ -6341,7 +6344,7 @@ def health_check_details():
     return jsonify({
         "status": "healthy",
         "message": "RedVector AI Tools API Server is operational",
-        "version": "8.0.0",
+        "version": REDVECTOR_VERSION,
         "tools_status": tools_status,
         "all_essential_tools_available": all_essential_tools_available,
         "total_tools_available": sum(1 for tool, available in tools_status.items() if available),
@@ -31499,7 +31502,7 @@ def _mcp_client_manager():
     global _MCP_CLIENT_MANAGER
     if _MCP_CLIENT_MANAGER is None:
         gen = _ai.MCPConfigGenerator(
-            project_root=os.path.dirname(os.path.abspath(__file__)),
+            project_root=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             backend_url="http://%s:%s" % (API_HOST, API_PORT),
             api_token=API_TOKEN)
         _MCP_CLIENT_MANAGER = _ai.MCPClientManager(generator=gen)
@@ -31650,10 +31653,234 @@ def ai_client_restore(cid):
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
+# ============================================================================
+# PHASE 8 - PROVIDER-AGNOSTIC AI CHAT AGENT (/api/agent/chat)
+# Additive. Reuses SECURITY_TOOL_REGISTRY (no second registry), the existing
+# /api/tools execution path, and the active provider from the AI manager.
+# ============================================================================
+
+_REDVECTOR_AGENT = None
+
+
+def _agent_execute(tool_id, path, params):
+    """Execute a validated ToolInvocation through the EXISTING /api/tools route,
+    reusing RedVector's own backend (same execution path, no new logic)."""
+    url = "http://%s:%s%s" % (API_HOST, API_PORT, path if path.startswith("/") else "/" + path)
+    headers = {"Authorization": "Bearer %s" % API_TOKEN, "Content-Type": "application/json"}
+    resp = requests.post(url, json=params, headers=headers, timeout=COMMAND_TIMEOUT + 30)
+    try:
+        return resp.json()
+    except Exception:
+        return {"success": False, "error": "non-JSON response", "status_code": resp.status_code}
+
+
+def _agent_provider_factory():
+    """Build a provider-agnostic ChatProvider from the active provider, or None
+    (the agent then uses its deterministic result interpreter)."""
+    try:
+        mgr = _ai_manager()
+        active = mgr.active()
+        pid = active.get("active_provider")
+        if not pid:
+            return None
+        return _agent.ChatProvider(provider_id=pid, model=active.get("active_model", ""),
+                                   credentials=mgr.credentials, transport=_ai._default_transport)
+    except Exception:
+        return None
+
+
+_REDVECTOR_RESOLVER = None
+_REDVECTOR_INSTALLER = None
+
+
+def _tool_resolver():
+    """ToolResolver over the live SECURITY_TOOL_REGISTRY (single source of truth)."""
+    global _REDVECTOR_RESOLVER
+    if _REDVECTOR_RESOLVER is None:
+        _REDVECTOR_RESOLVER = _tm.ToolResolver(SECURITY_TOOL_REGISTRY)
+    return _REDVECTOR_RESOLVER
+
+
+def _tool_installer():
+    global _REDVECTOR_INSTALLER
+    if _REDVECTOR_INSTALLER is None:
+        _REDVECTOR_INSTALLER = _tm.ToolInstallationManager(_tool_resolver())
+    return _REDVECTOR_INSTALLER
+
+
+def _redvector_agent():
+    global _REDVECTOR_AGENT
+    if _REDVECTOR_AGENT is None:
+        _REDVECTOR_AGENT = _agent.RedVectorAgent(
+            registry=SECURITY_TOOL_REGISTRY,
+            executor=_agent.ToolExecutorAdapter(_agent_execute),
+            provider_factory=_agent_provider_factory,
+            audit_sink=lambda e: logger.info("[AGENT] %s", _ai.scrub(e)),
+            resolver=_tool_resolver(),
+            installer=_tool_installer(),
+        )
+    return _REDVECTOR_AGENT
+
+
+@app.route("/api/agent/chat", methods=["POST"])
+def agent_chat():
+    """Natural-language control of RedVector. Requires Bearer auth (enforced by
+    the global middleware). Does not change /api/llm/* or /api/tools/*."""
+    try:
+        params = request.get_json(silent=True) or {}
+        message = params.get("message", "")
+        if not message:
+            return jsonify({"error": "message is required"}), 400
+        req = _agent.AgentRequest(
+            message=message,
+            session_id=params.get("session_id"),
+            authorization=_agent.AuthorizationContext.from_dict(params.get("authorization")),
+            confirm=bool(params.get("confirm", False)),
+            choice=params.get("choice") if isinstance(params.get("choice"), dict) else None,
+        )
+        resp = _redvector_agent().handle(req)
+        return jsonify(resp.to_dict())
+    except Exception as e:
+        logger.error(f"💥 Error in agent chat endpoint: {str(e)}")
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+
+# ---------------------------------------------------------------------------
+# Phase 8 (MCP-first): high-level tool resolution / installation / status REST
+# surface. These power both RedVector-native chat and the high-level MCP tools
+# (registered separately in redvector_mcp.register_agent_mcp_tools). All reuse
+# the single SECURITY_TOOL_REGISTRY and require Bearer auth (global middleware).
+# ---------------------------------------------------------------------------
+@app.route("/api/agent/status", methods=["GET"])
+def agent_status():
+    """High-level readiness snapshot for an MCP client/agent."""
+    try:
+        cap = _redvector_agent().capabilities()
+        try:
+            active = _ai_manager().active()
+            provider = active.get("active_provider")
+            model = active.get("active_model")
+        except Exception:
+            provider = model = None
+        return jsonify({
+            "connected": True,
+            "security_integrations": cap.get("security_integrations"),
+            "categories": cap.get("example_categories"),
+            "active_provider": provider,
+            "active_model": model,
+            "agent_endpoint": "/api/agent/chat",
+        })
+    except Exception as e:
+        logger.error(f"💥 Error in agent status endpoint: {str(e)}")
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+
+@app.route("/api/agent/tool/search", methods=["POST"])
+def agent_tool_search():
+    """Search the registered security-tool integrations by id/category (no second registry)."""
+    try:
+        params = request.get_json(silent=True) or {}
+        query = (params.get("query") or "").strip().lower()
+        limit = int(params.get("limit", 25))
+        names = list(SECURITY_TOOL_REGISTRY.names())
+        matches = []
+        for name in names:
+            cat = _agent._classify_category(name)
+            if not query or query in name.lower() or query == cat:
+                matches.append({"tool": name, "category": cat})
+            if len(matches) >= limit:
+                break
+        return jsonify({"query": query, "count": len(matches),
+                        "total_integrations": len(names), "matches": matches})
+    except Exception as e:
+        logger.error(f"💥 Error in agent tool search endpoint: {str(e)}")
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+
+@app.route("/api/agent/tool/resolve", methods=["POST"])
+def agent_tool_resolve():
+    """Report the availability state of a registered tool."""
+    try:
+        params = request.get_json(silent=True) or {}
+        tool = params.get("tool")
+        if not tool:
+            return jsonify({"error": "tool is required"}), 400
+        return jsonify(_tool_resolver().resolve(tool).to_dict())
+    except Exception as e:
+        logger.error(f"💥 Error in agent tool resolve endpoint: {str(e)}")
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+
+@app.route("/api/agent/tool/install-options", methods=["POST"])
+def agent_tool_install_options():
+    """Return structured INSTALL / USE_ALTERNATIVE / CANCEL options for a tool."""
+    try:
+        params = request.get_json(silent=True) or {}
+        tool = params.get("tool")
+        if not tool:
+            return jsonify({"error": "tool is required"}), 400
+        if not _tool_resolver().is_registered(tool):
+            return jsonify({"error": f"{tool} is not a registered RedVector tool"}), 404
+        return jsonify(_tool_installer().install_options(tool))
+    except Exception as e:
+        logger.error(f"💥 Error in agent install-options endpoint: {str(e)}")
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+
+@app.route("/api/agent/tool/install", methods=["POST"])
+def agent_tool_install():
+    """Install a registered tool. Requires explicit confirm=true for automated installs.
+    Only the verified, fixed recipe for the tool can run; no arbitrary shell."""
+    try:
+        params = request.get_json(silent=True) or {}
+        tool = params.get("tool")
+        if not tool:
+            return jsonify({"error": "tool is required"}), 400
+        if not _tool_resolver().is_registered(tool):
+            return jsonify({"error": f"{tool} is not a registered RedVector tool"}), 404
+        result = _tool_installer().install(tool, confirmed=bool(params.get("confirm", False)))
+        return jsonify(result.to_dict())
+    except Exception as e:
+        logger.error(f"💥 Error in agent install endpoint: {str(e)}")
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+
+@app.route("/api/agent/session/<session_id>", methods=["GET"])
+def agent_session_context(session_id):
+    """Return the lightweight conversation context for a session (no secrets)."""
+    try:
+        ag = _redvector_agent()
+        sess = ag.conv.get(session_id) if hasattr(ag.conv, "get") else None
+        if sess is None:
+            return jsonify({"session_id": session_id, "exists": False}), 404
+        ctx = sess.authorization
+        return jsonify({
+            "session_id": session_id,
+            "exists": True,
+            "last_target": sess.last_target,
+            "last_tool": getattr(sess.last_result, "tool_id", None),
+            "authorized": bool(getattr(ctx, "authorized", False)),
+            "authorized_targets": list(getattr(ctx, "targets", []) or []),
+            "pending_confirmation": sess.pending_invocation is not None,
+            "pending_resolution": sess.pending_resolution,
+            "turns": len(sess.messages),
+        })
+    except Exception as e:
+        logger.error(f"💥 Error in agent session endpoint: {str(e)}")
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+
 # Create the banner after all classes are defined
 BANNER = ModernVisualEngine.create_banner()
 
-if __name__ == "__main__":
+def main():
+    """Start the RedVector backend API server.
+
+    This is the single authoritative backend startup implementation, reused by
+    both direct execution (``python redvector/server.py``) and the package
+    entrypoint (``python -m redvector``). It is not duplicated anywhere.
+    """
+    global API_PORT, API_HOST, DEBUG_MODE
     # Display the beautiful new banner
     print(BANNER)
 
@@ -31704,3 +31931,7 @@ if __name__ == "__main__":
         logger.critical(f"FATAL: Flask server crashed: {e}", exc_info=True)
         print(f"\n[FATAL] Server crashed: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

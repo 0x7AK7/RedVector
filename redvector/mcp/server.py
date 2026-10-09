@@ -33,8 +33,9 @@ from datetime import datetime
 
 from mcp.server.fastmcp import FastMCP
 
-import redvector_mcp_core as _mcp_core
-import redvector_mcp_declarative as _mcp_decl  # Phase 2B: declarative registration
+from redvector.mcp import core as _mcp_core
+from redvector.mcp import declarative as _mcp_decl  # Phase 2B: declarative registration
+from redvector.version import __version__ as REDVECTOR_VERSION  # Phase 9: single version source
 
 # Phase 2: central, inspectable registry of every registered MCP tool. Populated
 # (in registration order) during setup_mcp_server. Phase 2B registers the
@@ -170,7 +171,7 @@ for handler in logging.getLogger().handlers:
 logger = logging.getLogger(__name__)
 
 # Default configuration
-import redvector_config as _config  # Phase 4: typed configuration + provenance
+from redvector import config as _config  # Phase 4: typed configuration + provenance
 DEFAULT_REDVECTOR_SERVER = _config.MCP_DEFAULT_SERVER  # Default RedVector server URL
 DEFAULT_REQUEST_TIMEOUT = _config.MCP_DEFAULT_TIMEOUT  # 5 minutes default timeout for API requests
 MAX_RETRIES = _config.MCP_MAX_RETRIES  # Maximum number of retries for connection attempts
@@ -9784,6 +9785,73 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
 
     return mcp
 
+
+def register_agent_mcp_tools(mcp: "FastMCP", redvector_client: "RedVectorClient") -> int:
+    """Register high-level, MCP-first RedVector tools on an existing MCP server.
+
+    These are ADDITIVE and intentionally registered OUTSIDE setup_mcp_server, so
+    the proven 328-tool security surface (and its compatibility manifests/tests)
+    is unchanged. Each tool is a thin wrapper that forwards to the server's
+    /api/agent/* REST surface; no agent logic is duplicated here, and the single
+    SECURITY_TOOL_REGISTRY remains the only tool registry.
+
+    Returns the number of high-level tools registered.
+    """
+
+    @mcp.tool()
+    def redvector_status() -> Dict[str, Any]:
+        """Report whether RedVector is reachable, how many security-tool
+        integrations are available, and which AI provider (if any) is active.
+        Call this first in a conversation to confirm connectivity."""
+        return redvector_client.safe_get("api/agent/status")
+
+    @mcp.tool()
+    def redvector_tool_search(query: str = "", limit: int = 25) -> Dict[str, Any]:
+        """Search RedVector's registered security-tool integrations by name or
+        category (for example "web", "recon", "sqlmap"). Returns real registered
+        tool ids only; it never invents tools."""
+        return redvector_client.safe_post("api/agent/tool/search",
+                                          {"query": query, "limit": limit})
+
+    @mcp.tool()
+    def redvector_tool_resolve(tool: str) -> Dict[str, Any]:
+        """Report the availability of a registered tool: INSTALLED,
+        AVAILABLE_TO_INSTALL, INSTALLED_NOT_CONFIGURED, UNSUPPORTED, or
+        UNAVAILABLE_ON_THIS_PLATFORM, with registered alternatives."""
+        return redvector_client.safe_post("api/agent/tool/resolve", {"tool": tool})
+
+    @mcp.tool()
+    def redvector_tool_install_options(tool: str) -> Dict[str, Any]:
+        """Return structured INSTALL / USE_ALTERNATIVE / CANCEL options for a tool
+        that is not installed, including the verified install plan and official
+        source. Does not install anything; presents choices for the user."""
+        return redvector_client.safe_post("api/agent/tool/install-options", {"tool": tool})
+
+    @mcp.tool()
+    def redvector_agent_execute(message: str, session_id: str = "", confirm: bool = False,
+                                authorized_targets: str = "") -> Dict[str, Any]:
+        """Drive a full RedVector pentest step in natural language: the agent
+        parses the request, enforces scope, resolves tool availability (offering
+        installation when needed), runs higher-impact actions only with confirm,
+        and summarizes the result. Provide authorized_targets as a comma-separated
+        list of IPs/CIDRs/domains you are authorized to test."""
+        payload: Dict[str, Any] = {"message": message, "confirm": confirm}
+        if session_id:
+            payload["session_id"] = session_id
+        targets = [t.strip() for t in authorized_targets.split(",") if t.strip()]
+        if targets:
+            payload["authorization"] = {"authorized": True, "targets": targets}
+        return redvector_client.safe_post("api/agent/chat", payload)
+
+    @mcp.tool()
+    def redvector_session_context(session_id: str) -> Dict[str, Any]:
+        """Return the current context for an agent session: the last target/tool,
+        authorized scope, and any pending confirmation or install resolution."""
+        return redvector_client.safe_get(f"api/agent/session/{session_id}")
+
+    return 6
+
+
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Run the RedVector AI MCP Client")
@@ -9811,7 +9879,7 @@ def main():
         logger.debug("🔍 Debug logging enabled")
 
     # MCP compatibility: No banner output to avoid JSON parsing issues
-    logger.info(f"🚀 Starting RedVector AI MCP Client v2.0")
+    logger.info(f"🚀 Starting RedVector {REDVECTOR_VERSION} MCP Client")
     logger.info(f"🔗 Connecting to: {args.server}")
 
     try:
@@ -9835,6 +9903,14 @@ def main():
 
         # Set up and run the MCP server
         mcp = setup_mcp_server(redvector_client)
+
+        # Phase 8 (MCP-first): register the high-level agent tools additively,
+        # OUTSIDE setup_mcp_server, so the 328-tool security surface is unchanged.
+        try:
+            added = register_agent_mcp_tools(mcp, redvector_client)
+            logger.info(f"🧭 Registered {added} high-level RedVector agent MCP tools")
+        except Exception as e:
+            logger.warning(f"⚠️  High-level agent MCP tools not registered: {e}")
 
         # Configure transport-specific settings
         if args.transport in ("sse", "streamable-http"):

@@ -6,9 +6,9 @@ RedVector separates two distinct systems. Keeping them separate is the key menta
 
 External AI applications speak MCP to RedVector (RedVector is the **server**):
 
-- **Claude Desktop** — one-click setup
-- **Cursor** — one-click setup
-- **ChatGPT** — guided setup (configured in the ChatGPT app, not a local file)
+- **Claude Desktop** - one-click setup
+- **Cursor** - one-click setup
+- **ChatGPT** - guided setup (configured in the ChatGPT app, not a local file)
 - other MCP-compatible clients
 
 ```
@@ -19,11 +19,11 @@ Claude Desktop / Cursor / ChatGPT  ──MCP──▶  RedVector MCP ──▶ R
 
 RedVector detects the client's per-OS MCP config file, backs it up, merges in a `redvector-ai` server entry (preserving all your other settings), writes it atomically, and verifies the result. If anything fails, the previous config is restored. A client restart is required to load RedVector.
 
-The generated entry uses your current Python executable and the absolute path to `redvector_mcp.py` — no manual path editing.
+The generated entry uses your current Python executable and the absolute path to `redvector/mcp/server.py` - no manual path editing.
 
 ### ChatGPT (guided)
 
-ChatGPT connects to MCP servers through the ChatGPT app with account-level authorization, not a local JSON file. RedVector cannot silently configure it. The manager reports `setup_required` and provides guided steps: run the backend, start MCP over SSE (`python redvector_mcp.py --transport sse --mcp-port 8889`), expose it over a secure URL if remote access is needed, then add and authorize the connector in ChatGPT.
+ChatGPT connects to MCP servers through the ChatGPT app with account-level authorization, not a local JSON file. RedVector cannot silently configure it. The manager reports `setup_required` and provides guided steps: run the backend, start MCP over SSE (`python -m redvector.mcp.server --transport sse --mcp-port 8889`), expose it over a secure URL if remote access is needed, then add and authorize the connector in ChatGPT.
 
 ## AI providers are used BY RedVector
 

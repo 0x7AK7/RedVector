@@ -1,3 +1,15 @@
+# Development / private material (must never enter the public repository).
+# .gitignore does not untrack already-tracked files; nothing below is tracked here.
+0x7AK7/
+tests/
+test/
+phase-reports/
+private/
+secrets/
+credentials/
+*.swp
+*.swo
+
 # Python
 __pycache__/
 *.py[cod]

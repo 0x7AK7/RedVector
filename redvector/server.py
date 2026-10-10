@@ -31492,9 +31492,8 @@ def _ai_manager():
     overrides it. Tests monkeypatch this factory."""
     global _AI_MANAGER
     if _AI_MANAGER is None:
-        state = os.environ.get("REDVECTOR_AI_STATE") or \
-            os.path.join(os.path.expanduser("~"), ".redvector", "ai_state.json")
-        _AI_MANAGER = _ai.AIProviderManager(_ai.get_credential_store(), state_path=state)
+        _AI_MANAGER = _ai.AIProviderManager(_ai.get_credential_store(),
+                                            state_path=_ai.default_ai_state_path())
     return _AI_MANAGER
 
 

@@ -1,7 +1,7 @@
 {
  "release_name": "redvector-public",
  "version": "8.0.0",
- "date": "2026-10-09",
+ "date": "2026-10-10",
  "purpose": "Curated public GitHub release, rebuilt byte-identically from the private candidate.",
  "source": "validated private release candidate",
  "layout": "redvector/ package + data/ + docs/ + launchers",
@@ -16,8 +16,8 @@
  "files": [
   {
    "path": ".gitignore",
-   "sha256": "e98b0548585c9f9cbef3325ba884eb1cf92c1f39a2db120b59ea27871ff5d68f",
-   "bytes": 449
+   "sha256": "14ab943162d48e1a5aec96870aa7bd9504bcd7133234285abe62dcf2eec97fa3",
+   "bytes": 688
   },
   {
    "path": "LICENSE",
@@ -26,8 +26,8 @@
   },
   {
    "path": "README.md",
-   "sha256": "433a06183466d731c80c1da4b5ba67ae09fcd5506df78a183dece3808cc3baab",
-   "bytes": 20361
+   "sha256": "07d834ad01cc46605fb35e4f21576b54ee364b6b7854ddbe190d96cdd12bb29e",
+   "bytes": 20163
   },
   {
    "path": "THIRD_PARTY_NOTICES.md",
@@ -106,8 +106,8 @@
   },
   {
    "path": "redvector/ai_integration.py",
-   "sha256": "102d3d0b07dc7bb552f5f75886d79d4d65c7b93169d1405668900c9979b62bb3",
-   "bytes": 34081
+   "sha256": "3ee9ae93fd977f2e480131c24a81d8031cc5406ffe434b0f3aca11b3fd799e1a",
+   "bytes": 34542
   },
   {
    "path": "redvector/cache_process.py",
@@ -171,8 +171,8 @@
   },
   {
    "path": "redvector/server.py",
-   "sha256": "c808abbba78120d8d668d708e7c5a6f16dd88046ece0ad80643b9910ddcabac8",
-   "bytes": 1439889
+   "sha256": "3d23f3e8bd3e2f2ae9c5dff2a77026ee348bebafd36a9966fd9c7b485067cb1b",
+   "bytes": 1439816
   },
   {
    "path": "redvector/setup/__init__.py",
@@ -201,8 +201,8 @@
   },
   {
    "path": "redvector/setup/manager.py",
-   "sha256": "824555717e4022b5ba74a942fa6b447e311e20bf9a326ad9bf049e6b3e16376f",
-   "bytes": 20871
+   "sha256": "01d4187821e01591ef0cc138b6eafd0c1c124016bf808050e9af8ad0e694463d",
+   "bytes": 21235
   },
   {
    "path": "redvector/setup/platform_probe.py",
@@ -211,8 +211,8 @@
   },
   {
    "path": "redvector/setup/providers.py",
-   "sha256": "10735e91c8f6b963ba38514c98fcf9a1fed10513d45f75060f26ccc8022c18f3",
-   "bytes": 10444
+   "sha256": "dc5c5699a001f70a2cfcd6ecce565f43eddd98e59b2d7a27ccaeb393d2f1d426",
+   "bytes": 12369
   },
   {
    "path": "redvector/setup/reconnect.py",

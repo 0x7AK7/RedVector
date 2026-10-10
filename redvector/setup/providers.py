@@ -116,19 +116,51 @@ class OllamaModelManager:
                     "message": "Pull ran but model not detected."}
         return {"ok": True, "state": M_INSTALLED, "model": name, "message": "Pulled."}
 
-    # -- minimal inference readiness --
-    def inference_test(self, name: str) -> Dict[str, Any]:
-        if not self.validate_model_name(name):
-            return {"ok": False, "state": M_FAILED, "message": "Invalid model identifier."}
+    def _generate_once(self, name: str, timeout: int) -> Dict[str, Any]:
+        """One /api/generate attempt. Distinguishes a timeout (model likely cold /
+        still loading) from a hard failure (e.g. model missing)."""
         try:
             resp = self._http("POST", self.endpoint + "/api/generate",
-                              {"model": name, "prompt": "ping", "stream": False}, timeout=30)
+                              {"model": name, "prompt": "ping", "stream": False}, timeout=timeout)
+        except (TimeoutError, OSError) as e:
+            # socket.timeout is TimeoutError on 3.10+; a cold model keeps the request open.
+            is_timeout = isinstance(e, TimeoutError) or e.__class__.__name__ in ("timeout", "TimeoutError")
+            return {"ok": False, "timed_out": is_timeout, "message": type(e).__name__}
         except Exception as e:
-            return {"ok": False, "state": M_FAILED, "message": "Inference request failed: %s" % type(e).__name__}
+            return {"ok": False, "timed_out": False, "message": type(e).__name__}
         body = resp.get("json", {})
         if resp.get("status") == 200 and ("response" in body or body.get("done")):
+            return {"ok": True, "timed_out": False}
+        return {"ok": False, "timed_out": False, "message": "no valid response"}
+
+    # -- minimal inference readiness (cold-start aware, bounded) --
+    def inference_test(self, name: str, warm_timeout: int = 20, deadline: int = 120,
+                       on_cold: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+        """Verify the model can load and respond. A warm model answers within
+        ``warm_timeout``; a cold model may take ~60s+ to load, so after a warm-path
+        timeout we make ONE bounded long attempt for the remaining window (up to
+        ``deadline`` total). Bounded (2 attempts, <= deadline); never an infinite loop."""
+        if not self.validate_model_name(name):
+            return {"ok": False, "state": M_FAILED, "message": "Invalid model identifier."}
+        first = self._generate_once(name, warm_timeout)
+        if first["ok"]:
             return {"ok": True, "state": M_READY, "message": "Minimal inference succeeded."}
-        return {"ok": False, "state": M_FAILED, "message": "Model did not produce a valid response."}
+        if not first.get("timed_out"):
+            return {"ok": False, "state": M_FAILED,
+                    "message": "Model did not produce a valid response (%s)." % first.get("message", "error")}
+        # warm path timed out -> treat as cold start; one bounded long attempt
+        if on_cold:
+            try:
+                on_cold(name)
+            except Exception:
+                pass
+        cold_timeout = max(1, deadline - warm_timeout)
+        second = self._generate_once(name, cold_timeout)
+        if second["ok"]:
+            return {"ok": True, "state": M_READY,
+                    "message": "Minimal inference succeeded after cold start."}
+        return {"ok": False, "state": M_FAILED,
+                "message": "Model %s did not become ready within %ds." % (name, deadline)}
 
     def install_guidance(self) -> Dict[str, Any]:
         return {"method": "MANUAL_REQUIRED", "docs": OLLAMA_DOCS, "steps": list(OLLAMA_INSTALL_STEPS),

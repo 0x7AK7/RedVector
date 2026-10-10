@@ -76,7 +76,10 @@ class AIIntegrationSetupManager:
         self.platform = platform_probe or PlatformProbe()
         self.clients = client_setup or ClientSetup()
         if provider_setup is None:
-            mgr = _ai.AIProviderManager(credentials=_ai.get_credential_store())
+            # Persist the active provider/model to the SAME canonical state file the
+            # backend uses, so a selection made in setup/CLI survives new processes.
+            mgr = _ai.AIProviderManager(credentials=_ai.get_credential_store(),
+                                        state_path=_ai.default_ai_state_path())
             provider_setup = ProviderSetup(mgr)
         self.providers = provider_setup
         self.harness = harness or DeepSeekHarnessManager()
@@ -322,7 +325,8 @@ class AIIntegrationSetupManager:
 
     def _ollama_activate(self, name: str) -> None:
         om = self.providers.ollama
-        test = om.inference_test(name)
+        test = om.inference_test(name, on_cold=lambda m: self.t.status(
+            "STARTING", "Loading %s... (first load can take ~1-2 minutes)" % m))
         if not test["ok"]:
             self.t.status("FAILED", "Model not ready: %s" % test["message"])
             return

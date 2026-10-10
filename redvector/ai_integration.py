@@ -554,6 +554,15 @@ def _atomic_write_json(path: str, obj: Any) -> None:
     _atomic_write_text(path, json.dumps(obj, indent=2))
 
 
+def default_ai_state_path() -> str:
+    """Canonical, non-secret AI provider state file, shared by the backend and the
+    setup/CLI so the active provider/model persists across processes. Override with
+    REDVECTOR_AI_STATE. Contains only active_provider/active_model/fallback_* values,
+    never API keys or other secrets."""
+    return os.environ.get("REDVECTOR_AI_STATE") or \
+        os.path.join(os.path.expanduser("~"), ".redvector", "ai_state.json")
+
+
 # ============================================================================
 # MCP config generator
 # ============================================================================

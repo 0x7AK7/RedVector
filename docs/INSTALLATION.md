@@ -4,7 +4,7 @@
 
 - Python **3.10+**
 - An OS of Windows, macOS, or Linux
-- External security binaries you intend to use (e.g. nmap, nuclei, trivy) installed and on `PATH` — RedVector invokes them but does not install them
+- External security binaries you intend to use (e.g. nmap, nuclei, trivy) installed and on `PATH` - RedVector invokes them but does not install them
 - Optional: [Ollama](https://ollama.com) for local AI, or an API key for a cloud provider
 
 ## 1. Get the code and create a virtual environment
@@ -30,7 +30,7 @@ pip install -r requirements.txt
 ## 3. Start the backend
 
 ```bash
-python redvector_server.py
+python -m redvector
 ```
 
 Default address: `http://127.0.0.1:8888`.
@@ -52,7 +52,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8888/health"
 Start the MCP server (stdio by default), pointing at the backend:
 
 ```bash
-python redvector_mcp.py --server http://127.0.0.1:8888
+python -m redvector.mcp.server --server http://127.0.0.1:8888
 ```
 
 Or use the launcher scripts (`start_redvector.sh` / `start_redvector.ps1`) which start the backend if needed and then launch MCP. See [AI_INTEGRATION.md](AI_INTEGRATION.md) for one-click client setup.

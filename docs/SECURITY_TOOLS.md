@@ -4,7 +4,7 @@
 
 ## Overview
 
-RedVector exposes **134** security-tool integrations under `/api/tools/*`. Of these, **55** have their command construction driven declaratively by a typed `SecurityToolSpec` in the `SecurityToolRegistry` (`redvector_security_tools.py`), and **79** remain explicit custom handlers whose behavior is not exactly representable by the declarative command model (multi-command orchestration, output parsers, file/temp artifacts, dynamic commands, or response-derived logic).
+RedVector exposes **134** security-tool integrations under `/api/tools/*`. Of these, **55** have their command construction driven declaratively by a typed `SecurityToolSpec` in the `SecurityToolRegistry` (`redvector/security_tools.py`), and **79** remain explicit custom handlers whose behavior is not exactly representable by the declarative command model (multi-command orchestration, output parsers, file/temp artifacts, dynamic commands, or response-derived logic).
 
 ## Execution model
 

@@ -7,7 +7,7 @@
       "env": {
         "REDVECTOR_API_TOKEN": "redvector-dev-token"
       },
-      "description": "RedVector AI v8.0 - Autonomous Red Team Operations Platform. Auto-starts the backend server. All 321 tools are fully autonomous. Supports stdio (default) and SSE transports.",
+      "description": "RedVector 8.0.0 - AI-assisted cybersecurity platform. The launcher auto-starts the backend server and the MCP client. Supports stdio (default) and SSE transports.",
       "timeout": 300,
       "alwaysAllow": [
         "nmap_scan", "gobuster_scan", "nuclei_scan", "prowler_scan", "trivy_scan",

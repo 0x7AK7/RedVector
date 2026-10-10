@@ -39,10 +39,10 @@ import json
 import os
 from typing import Any, Callable, Dict, List
 
-import redvector_mcp_core as _core
+from redvector.mcp import core as _core
 
 SPECS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          "redvector_mcp_specs.json")
+                          "specs.json")
 
 
 def load_tool_specs(path: str = SPECS_PATH) -> Dict[str, Dict[str, Any]]:

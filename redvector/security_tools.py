@@ -40,8 +40,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-SPECS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          "security_tool_specs.json")
+SPECS_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "data", "security_tool_specs.json")
 
 
 # ============================================================================

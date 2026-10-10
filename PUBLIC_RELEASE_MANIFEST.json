@@ -1,30 +1,23 @@
 {
  "release_name": "redvector-public",
- "version": "rc1",
- "date": "2026-10-07",
- "purpose": "Curated public GitHub release, rebuilt byte-identically from release/redvector-private/.",
- "source": "validated private release candidate (RELEASE_CANDIDATE_MANIFEST.json excluded)",
- "mcp_tools": 328,
+ "version": "8.0.0",
+ "date": "2026-10-10",
+ "purpose": "Curated public GitHub release, rebuilt byte-identically from the private candidate.",
+ "source": "validated private release candidate",
+ "layout": "redvector/ package + data/ + docs/ + launchers",
+ "mcp_tools_security_surface": 328,
  "mcp_declarative": 171,
  "mcp_custom": 157,
+ "mcp_high_level_agent_tools": 6,
+ "mcp_tools_live_total": 334,
  "security_integrations": 134,
  "security_declarative": 55,
  "security_custom": 79,
- "excluded_categories": [
-  "private developer workspace",
-  "tests",
-  "fixtures",
-  "phase reports",
-  "regression logs",
-  "private developer docs",
-  "caches/logs",
-  "candidate manifest"
- ],
  "files": [
   {
    "path": ".gitignore",
-   "sha256": "e98b0548585c9f9cbef3325ba884eb1cf92c1f39a2db120b59ea27871ff5d68f",
-   "bytes": 449
+   "sha256": "14ab943162d48e1a5aec96870aa7bd9504bcd7133234285abe62dcf2eec97fa3",
+   "bytes": 688
   },
   {
    "path": "LICENSE",
@@ -33,8 +26,8 @@
   },
   {
    "path": "README.md",
-   "sha256": "bea7e570e2c115213481766ec84b4e2741ef5fd61efb173f97334b39acee7bf3",
-   "bytes": 5757
+   "sha256": "07d834ad01cc46605fb35e4f21576b54ee364b6b7854ddbe190d96cdd12bb29e",
+   "bytes": 20163
   },
   {
    "path": "THIRD_PARTY_NOTICES.md",
@@ -47,24 +40,34 @@
    "bytes": 1227867
   },
   {
+   "path": "data/security_tool_specs.json",
+   "sha256": "5f6e5d3d9b4d9b64e3ef9e27c501552274e67b7516038ca68c1da69cda95a0cb",
+   "bytes": 147539
+  },
+  {
    "path": "docs/AI_INTEGRATION.md",
-   "sha256": "ea76dfa7f988cb28cce23d1717ca148a815c5e2b2605fe62453a78f3b7fe1dfa",
-   "bytes": 2896
+   "sha256": "552de74c0cf720b4c97c47bdaa5df28f6ef97fdb9bce34c66dd004754d0ee6a5",
+   "bytes": 2902
+  },
+  {
+   "path": "docs/AI_SETUP.md",
+   "sha256": "7b978cbbdbefff081241a6f74c39b04e55de46f1290671f646ca1cb5a6b92cb5",
+   "bytes": 8567
   },
   {
    "path": "docs/ARCHITECTURE.md",
-   "sha256": "dd4398db43d156a28d4dad90f925bc7cb0671a5eef6af483f8050d0a8791b467",
-   "bytes": 2593
+   "sha256": "659ef7269564cebd12a88deb355e7edd5a894ff39a27210b2d1fe99bf7cfde2f",
+   "bytes": 2607
   },
   {
    "path": "docs/CONFIGURATION.md",
-   "sha256": "fda75242f89dbfa84538ec8c76012836038f2f1f886d71a779689b4cbed429e5",
-   "bytes": 3630
+   "sha256": "54abc366e255cd9e8f268c271fb41e61627bf52763ddd40e72cf49d259a2cd71",
+   "bytes": 3566
   },
   {
    "path": "docs/INSTALLATION.md",
-   "sha256": "953c9ad8783ea462cf112628e69e067591c706ebbb5fff08996f798a99c48714",
-   "bytes": 1786
+   "sha256": "320cc5b89c4f2d1f57865cf724de1ca3f2e0fdb2df27501dd2760e02d093c160",
+   "bytes": 1784
   },
   {
    "path": "docs/SECURITY.md",
@@ -73,108 +76,193 @@
   },
   {
    "path": "docs/SECURITY_TOOLS.md",
-   "sha256": "3929ca9461f05d1765d4292c1d3f3242574e6d1beac74b98c13588192718907c",
-   "bytes": 8176
+   "sha256": "ed7bd4d33bcc686ea3001a5ec60f8c1287d907ff16e6b56015ab0869e1426a6d",
+   "bytes": 8011
   },
   {
-   "path": "ollama-mcp.json",
-   "sha256": "a4d49b80c5423cbf03287574080349e88e69a6ba9836261f459ed1242a9003b6",
-   "bytes": 1424
+   "path": "docs/examples/ollama-mcp.json",
+   "sha256": "3bdd31058e0b9757399ab3140b2a32eab2fad1affe0e85c7e13a8b9e88f38745",
+   "bytes": 1426
   },
   {
-   "path": "redvector-mcp.json",
-   "sha256": "6a67225e9a624070c58bd6f0f40a74e6c82b18d0ae9b69b6a12fe6a32167f242",
-   "bytes": 9698
+   "path": "docs/examples/redvector-mcp.json",
+   "sha256": "7e0ffa39a3db7714a69095ee6e389e2f2315aee828d1844491f6cc3e3f664aa2",
+   "bytes": 9687
   },
   {
-   "path": "redvector_ai_integration.py",
-   "sha256": "15d099a4a48f3d6069105fbf54e903f9a437b0bee34f4b194d04044afd8c5bbb",
-   "bytes": 33687
+   "path": "redvector/__init__.py",
+   "sha256": "87b175bda18e7defc665a806da92b89c9129f7b6e43309d1866d3eb698a04996",
+   "bytes": 558
   },
   {
-   "path": "redvector_cache_process.py",
+   "path": "redvector/__main__.py",
+   "sha256": "a5cf703e3f857a7470c2341c5da1b87e22f08ca32f56e1dd3c06db798db3dee1",
+   "bytes": 402
+  },
+  {
+   "path": "redvector/agent.py",
+   "sha256": "c1ad23a6850485bd5ec46427919ded2ce0c9462a680d94695def89051b477c34",
+   "bytes": 44060
+  },
+  {
+   "path": "redvector/ai_integration.py",
+   "sha256": "3ee9ae93fd977f2e480131c24a81d8031cc5406ffe434b0f3aca11b3fd799e1a",
+   "bytes": 34542
+  },
+  {
+   "path": "redvector/cache_process.py",
    "sha256": "5d58fac78d3fa1b84d861cce5c484564909d0c600076acde76a1a59a9b17bef6",
    "bytes": 28314
   },
   {
-   "path": "redvector_config.py",
+   "path": "redvector/config.py",
    "sha256": "4b8549ce0d042039c97d120ff75d7d34a0b547d25df29c89d61ad63c42f01f61",
    "bytes": 13423
   },
   {
-   "path": "redvector_core.py",
+   "path": "redvector/core.py",
    "sha256": "5d5e84f63b7c1d35427cdecd8fa20eb3c389b10dcd9912d12bb8192e72fc094a",
    "bytes": 50576
   },
   {
-   "path": "redvector_cve_intelligence.py",
+   "path": "redvector/cve_intelligence.py",
    "sha256": "6c4c9b30e474a587ccbe9f930979fcb787928f18673b85f95db8964ae62b202f",
    "bytes": 54010
   },
   {
-   "path": "redvector_error_handling.py",
+   "path": "redvector/error_handling.py",
    "sha256": "19833c811df80f93bf9c7e4055684a52f54b76c34da77a6d9114b50af322ca3a",
    "bytes": 53222
   },
   {
-   "path": "redvector_mcp.py",
-   "sha256": "8981e4858af1d52a6d89599429ea7be00689247d5aaebf395f0a17a099246c1e",
-   "bytes": 408689
+   "path": "redvector/mcp/__init__.py",
+   "sha256": "70d04925ee28ce3de8399f7142b5643d24562482a4ae1eedc94662a5dffd69b5",
+   "bytes": 294
   },
   {
-   "path": "redvector_mcp_core.py",
+   "path": "redvector/mcp/core.py",
    "sha256": "136bdb45093730fefe2c66229487dd95bf3d3034911c962a98b58294cf3c006c",
    "bytes": 11855
   },
   {
-   "path": "redvector_mcp_declarative.py",
-   "sha256": "6482bceec0c3ad9040e9cf3b9dd6d56c8b1a0c0e8520122dce475f8173a3ee41",
-   "bytes": 10119
+   "path": "redvector/mcp/declarative.py",
+   "sha256": "7be888a345aab0e9520387f7efac2a85c8a50f3dd43dafd180179a67d26668ea",
+   "bytes": 10110
   },
   {
-   "path": "redvector_mcp_specs.json",
+   "path": "redvector/mcp/server.py",
+   "sha256": "3e2fff8d9941933ed6096401959e331cf86ae7f118d7d9877e030716b04e76cc",
+   "bytes": 412782
+  },
+  {
+   "path": "redvector/mcp/specs.json",
    "sha256": "dc7113d4a78d16522df778e3e5ad329d48b2a67e7c2d59b377c45c9465e905df",
    "bytes": 324730
   },
   {
-   "path": "redvector_payloads.py",
+   "path": "redvector/payloads.py",
    "sha256": "b7940ed3793daec159b0e353aafd5438094c3e462d7be75475a10cef80edab5d",
    "bytes": 56365
   },
   {
-   "path": "redvector_security_tools.py",
-   "sha256": "184f70e6f1d19860d6045ea5dd8c5ca25b57f95c162151e606011c147a1be140",
-   "bytes": 10755
+   "path": "redvector/security_tools.py",
+   "sha256": "07ccef1e174da1315894977a9ae9e63e9ed60f65cbd50d3175b79de0f146a432",
+   "bytes": 10780
   },
   {
-   "path": "redvector_server.py",
-   "sha256": "d0928d8bbe46803b9243588fe287c4a40c378910be340e9d629f6a47e08be50f",
-   "bytes": 1429841
+   "path": "redvector/server.py",
+   "sha256": "3d23f3e8bd3e2f2ae9c5dff2a77026ee348bebafd36a9966fd9c7b485067cb1b",
+   "bytes": 1439816
   },
   {
-   "path": "redvector_workflows.py",
+   "path": "redvector/setup/__init__.py",
+   "sha256": "2a26f5e50f0ccbdcce1df35f6a31fc13f507e3803977b03f1a2b0425a00443dd",
+   "bytes": 538
+  },
+  {
+   "path": "redvector/setup/__main__.py",
+   "sha256": "6448367126c4f78986c7dbc29796c21c2ff49c59fed89df8fe2ca4fa993fca04",
+   "bytes": 536
+  },
+  {
+   "path": "redvector/setup/clients.py",
+   "sha256": "c8240ad5c9cc52860b9809e3d6a0d88a52b6dfd1b50d602f8427999e56db18b2",
+   "bytes": 12228
+  },
+  {
+   "path": "redvector/setup/diagnostics.py",
+   "sha256": "e0d27f78837cd0cacb0bf80dab49140af34562880ab539e7bb328191449ab252",
+   "bytes": 5601
+  },
+  {
+   "path": "redvector/setup/harness.py",
+   "sha256": "f6fcd80d4b1e98ea2f960f49b10f487c5b917703560dc2ce303551dca3f97d73",
+   "bytes": 8957
+  },
+  {
+   "path": "redvector/setup/manager.py",
+   "sha256": "01d4187821e01591ef0cc138b6eafd0c1c124016bf808050e9af8ad0e694463d",
+   "bytes": 21235
+  },
+  {
+   "path": "redvector/setup/platform_probe.py",
+   "sha256": "803f5773c50eeac1fe526b0d20d91709f1820db2e6853463085f9764fd3b15e3",
+   "bytes": 3703
+  },
+  {
+   "path": "redvector/setup/providers.py",
+   "sha256": "dc5c5699a001f70a2cfcd6ecce565f43eddd98e59b2d7a27ccaeb393d2f1d426",
+   "bytes": 12369
+  },
+  {
+   "path": "redvector/setup/reconnect.py",
+   "sha256": "41a6f26f51f28a39d5ee38b49f970a8be95b60304ad76e2175cca76e02e37f05",
+   "bytes": 1791
+  },
+  {
+   "path": "redvector/setup/status.py",
+   "sha256": "ad43f0dc7664ea8096fa3805aa632d852efeb3ce428c574cb881a6099e5e4094",
+   "bytes": 1490
+  },
+  {
+   "path": "redvector/setup/terminal.py",
+   "sha256": "c086f9a42ed522603f23862ea9645f81d9d12486a945db6f8bbfc52335a24f6f",
+   "bytes": 5315
+  },
+  {
+   "path": "redvector/setup/vendors.py",
+   "sha256": "23d3e711c64d29d4118cd7d29430db7a1739429824699b4228a22d4a58601b89",
+   "bytes": 9777
+  },
+  {
+   "path": "redvector/toolmanager.py",
+   "sha256": "468ec063b5fd6883072bd429b58b489177a8de54d06a7b54c6d757a3786bd51a",
+   "bytes": 25414
+  },
+  {
+   "path": "redvector/version.py",
+   "sha256": "f05cf2400e71d56acb92374c4f314bfd596d20500ae6b90ac2b3910b4dfba5c1",
+   "bytes": 453
+  },
+  {
+   "path": "redvector/workflows.py",
    "sha256": "5647dd679932f7a319454f002389dacc3dd712c8e7f1c060b964f0e7368b229b",
    "bytes": 95739
   },
   {
    "path": "requirements.txt",
-   "sha256": "3a4de28038b443cb5b29f573a5a28be5dda1318df65dd76afb7b9a222ff5d5b9",
-   "bytes": 4351
-  },
-  {
-   "path": "security_tool_specs.json",
-   "sha256": "5f6e5d3d9b4d9b64e3ef9e27c501552274e67b7516038ca68c1da69cda95a0cb",
-   "bytes": 147539
+   "sha256": "1ae03f3fb38935b8c4272aee480f7efb056296be99c1fcbae827ea184e945dd4",
+   "bytes": 4595
   },
   {
    "path": "start_redvector.ps1",
-   "sha256": "88d5615bd4fe1bd8ff66bbc403b6e2d02e720f0bcdbb32daebb56bbbd56e747a",
-   "bytes": 3236
+   "sha256": "5685f9dc822609e2ec0791fe2ff911654dbe29533e3a0e52abd08f6ed95bbefb",
+   "bytes": 6279
   },
   {
    "path": "start_redvector.sh",
-   "sha256": "5df11eb1a57591336ee8313557690eba9d24e3ef4bc9029d193332f1ee9275dd",
-   "bytes": 2868
+   "sha256": "4d5cc93130fe544ec1e1e9faebca31ea21bfe2618dc16842c7c3c9d101ae98b7",
+   "bytes": 6104
   }
  ]
 }

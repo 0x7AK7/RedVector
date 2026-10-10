@@ -8,10 +8,10 @@ A high-level, public overview of how RedVector is structured. Facts here (tool c
 AI client (Claude Desktop / Cursor / ChatGPT)
         │  MCP (stdio / SSE / streamable-http)
         ▼
-RedVector MCP  (redvector_mcp.py)
+RedVector MCP  (redvector/mcp/server.py)
         │  REST (safe_get / safe_post / safe_delete)
         ▼
-RedVector backend  (redvector_server.py)
+RedVector backend  (redvector/server.py)
         ├── security-tool routes  /api/tools/*   → execute_command → external binaries
         ├── autonomous routes     /api/autonomous/*
         ├── LLM routes            /api/llm/*
@@ -25,15 +25,15 @@ AI providers  (Claude / Gemini / DeepSeek / Ollama)   ← used BY RedVector
 
 | Module | Responsibility |
 |---|---|
-| `redvector_server.py` | Flask backend, routes, command execution, caching |
-| `redvector_mcp.py` | MCP server; forwards tool calls to the REST backend |
-| `redvector_mcp_core.py` | Typed MCP registry + transport adapter |
-| `redvector_mcp_declarative.py` | Spec-driven MCP tool generation |
-| `redvector_security_tools.py` | Typed security-tool registry + command builder |
-| `redvector_config.py` | Typed configuration & startup resolution |
-| `redvector_ai_integration.py` | AI Integration Manager (providers + MCP clients) |
-| `redvector_core.py` / `redvector_workflows.py` / `redvector_payloads.py` | Core services, workflows, payload templates |
-| `redvector_cve_intelligence.py` / `redvector_error_handling.py` / `redvector_cache_process.py` | CVE correlation, recovery, cache/process |
+| `redvector/server.py` | Flask backend, routes, command execution, caching |
+| `redvector/mcp/server.py` | MCP server; forwards tool calls to the REST backend |
+| `redvector/mcp/core.py` | Typed MCP registry + transport adapter |
+| `redvector/mcp/declarative.py` | Spec-driven MCP tool generation |
+| `redvector/security_tools.py` | Typed security-tool registry + command builder |
+| `redvector/config.py` | Typed configuration & startup resolution |
+| `redvector/ai_integration.py` | AI Integration Manager (providers + MCP clients) |
+| `redvector/core.py` / `redvector/workflows.py` / `redvector/payloads.py` | Core services, workflows, payload templates |
+| `redvector/cve_intelligence.py` / `redvector/error_handling.py` / `redvector/cache_process.py` | CVE correlation, recovery, cache/process |
 
 ## MCP layer
 

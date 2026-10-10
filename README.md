@@ -3,12 +3,13 @@
 
   # RedVector
 
-  AI-assisted security testing platform
+  AI-assisted cybersecurity platform
 
+  ![Version](https://img.shields.io/badge/RedVector-8.0.0-red.svg)
   ![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
   ![MCP](https://img.shields.io/badge/MCP-Compatible-purple.svg)
   ![REST API](https://img.shields.io/badge/API-Flask-black.svg)
-  ![MCP Tools](https://img.shields.io/badge/MCP%20Tools-328-brightgreen.svg)
+  ![MCP Tools](https://img.shields.io/badge/MCP%20Tools-334%20live-brightgreen.svg)
   ![Security Tools](https://img.shields.io/badge/Security%20Integrations-134-orange.svg)
   ![Use](https://img.shields.io/badge/Use-Authorized%20Testing%20Only-red.svg)
 </div>
@@ -17,9 +18,9 @@
 
 RedVector is an AI-assisted offensive security platform that connects AI clients such as Claude, ChatGPT, Cursor, and other MCP-compatible tools with a wide range of real-world cybersecurity tools for ethical hacking, penetration testing, red teaming, vulnerability discovery, security validation, and automated security workflows. RedVector also supports AI providers such as Ollama and DeepSeek through its provider integration layer.
 
-RedVector puts a large set of security tools behind one API. It runs a Flask backend that exposes each tool as a REST route, and an MCP server so an AI assistant can call those tools directly. RedVector does not replace the tools; it runs the ones you have installed, passes your arguments through, and returns their output in a consistent shape.
+RedVector puts a large set of security tools behind one API. It runs a Flask backend that exposes each tool as a REST route, and an MCP server so an AI assistant can call those tools directly.
 
-Use it only against systems you are allowed to test.
+RedVector does not replace the tools; it runs the ones you have installed, passes your arguments through, and returns their output in a consistent shape. Use it only against systems you are allowed to test. This is RedVector 8.0.0.
 
 ## Why RedVector?
 
@@ -47,10 +48,10 @@ Use it only against systems you are allowed to test.
 AI client (Claude Desktop / Cursor / ChatGPT)
         |  MCP
         v
-RedVector MCP (redvector_mcp.py)
+RedVector MCP (redvector/mcp/server.py)
         |  REST
         v
-RedVector backend (redvector_server.py)  ->  security-tool integrations  ->  external tools
+RedVector backend (redvector/server.py)  ->  security-tool integrations  ->  external tools
         |
         v
 AI providers (Claude / Gemini / DeepSeek / Ollama)   used by RedVector
@@ -67,6 +68,47 @@ Keep two ideas separate:
 
 The AI Integration Manager sets up one-click MCP config for Claude Desktop and Cursor (with backup and rollback), and a guided flow for ChatGPT, which is configured in the ChatGPT app rather than a local file. See [docs/AI_INTEGRATION.md](docs/AI_INTEGRATION.md).
 
+### Chat with RedVector
+
+RedVector includes a provider-agnostic chat agent at `POST /api/agent/chat`. You describe what you want in plain language and the agent figures out the intent, extracts the target from your message, checks it against the authorized scope you pass in, picks a real registered tool, builds validated arguments, runs it through the normal tool layer, and summarizes the result with your active AI provider. The same agent works with every supported provider and client; you do not pick a model or write a command.
+
+```json
+POST /api/agent/chat
+{
+  "message": "Scan my authorized lab target <TARGET_IP> and identify open ports and services.",
+  "session_id": "optional-session-id",
+  "authorization": { "authorized": true, "targets": ["<TARGET_IP>"] }
+}
+```
+
+Targets are always taken from your request and validated against `authorization.targets`; nothing is hard-coded, and out-of-scope targets are refused. Higher-impact actions ask for confirmation before running.
+
+### Use RedVector from your MCP client
+
+RedVector is an MCP server, so Claude Desktop, Cursor, and other MCP clients can drive a full pentest workflow by conversation. Alongside the security tools, RedVector exposes a small set of high-level MCP tools:
+
+| MCP tool | What it does |
+|---|---|
+| `redvector_status` | Confirms connectivity and reports how many integrations are available and which AI provider is active |
+| `redvector_tool_search` | Searches the registered integrations by name or category (real tools only, never invented) |
+| `redvector_tool_resolve` | Reports whether a tool is installed, available to install, installed but not configured, unsupported, or unavailable on this platform |
+| `redvector_tool_install_options` | Returns structured install, use-alternative, and cancel options with a verified install plan from an official source |
+| `redvector_agent_execute` | Runs a pentest step in natural language with scope enforcement, tool resolution, and confirmation for higher-impact actions |
+| `redvector_session_context` | Returns the current session context: last target and tool, authorized scope, and any pending confirmation |
+
+When a tool you ask for is not installed, RedVector does not fail silently and it does not install anything on its own. It tells you the tool is missing, shows a verified install plan from the official source, offers real registered alternatives, and installs only after you explicitly confirm. Installation runs a fixed, verified recipe for that tool; it never runs arbitrary commands, and it verifies the tool afterwards. These high-level tools are additive: the security-tool surface is unchanged.
+
+The same capabilities are available over REST for RedVector-native chat and other clients:
+
+```
+GET  /api/agent/status
+POST /api/agent/tool/search            { "query": "web" }
+POST /api/agent/tool/resolve           { "tool": "nuclei" }
+POST /api/agent/tool/install-options   { "tool": "nuclei" }
+POST /api/agent/tool/install           { "tool": "nmap", "confirm": true }
+GET  /api/agent/session/<session_id>
+```
+
 ### Supported AI providers
 
 | Provider | Type | API key | Model discovery |
@@ -78,24 +120,65 @@ The AI Integration Manager sets up one-click MCP config for Claude Desktop and C
 
 ## Installation
 
+One command sets everything up and starts RedVector. The launcher creates a `.venv` when needed, installs Python dependencies when needed (and skips the install when `requirements.txt` is unchanged), starts the backend, and starts the MCP client.
+
+Linux/Kali:
+
 ```bash
-git clone <your-fork-url> redvector
-cd redvector
-python -m venv .venv
-# Linux/macOS: source .venv/bin/activate   |   Windows: .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+git clone https://github.com/0x7AK7/RedVector.git
+cd RedVector
+chmod +x start_redvector.sh
+./start_redvector.sh
 ```
 
-Full guide: [docs/INSTALLATION.md](docs/INSTALLATION.md).
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/0x7AK7/RedVector.git
+cd RedVector
+.\start_redvector.ps1
+```
+
+Full guide, including manual setup: [docs/INSTALLATION.md](docs/INSTALLATION.md).
 
 ## Quick start
 
+The launcher above already starts the backend and MCP. To run the backend on its own:
+
 ```bash
-python redvector_server.py            # backend on 127.0.0.1:8888
+python -m redvector                   # backend on 127.0.0.1:8888
 curl http://127.0.0.1:8888/health     # check it is up
 ```
 
-Connect an MCP client with `redvector_mcp.py` (see [docs/AI_INTEGRATION.md](docs/AI_INTEGRATION.md)).
+Connect an MCP client with `python -m redvector.mcp.server` (see [docs/AI_INTEGRATION.md](docs/AI_INTEGRATION.md)). Example MCP configurations are available under `docs/examples/`.
+
+## Set up AI clients, providers, and harnesses
+
+The launcher includes a guided setup manager so you do not hand-edit MCP config files. On the first interactive run it shows a menu; later runs start RedVector directly.
+
+```
+RedVector 8.0.0
+
+1. Start RedVector
+2. Connect an AI client
+3. Configure an AI provider
+4. Install or configure an AI harness
+5. Diagnostics
+6. Exit
+```
+
+You can also run commands directly:
+
+```bash
+./start_redvector.sh --connect-claude      # add the RedVector MCP entry to Claude Desktop
+./start_redvector.sh --connect-cursor      # add it to Cursor (~/.cursor/mcp.json)
+./start_redvector.sh --setup-ai            # configure an AI provider (Ollama / Claude / Gemini / DeepSeek)
+./start_redvector.sh --setup-harness       # DeepSeek Harness (optional)
+./start_redvector.sh --diagnostics         # read-only health and capability report
+./start_redvector.sh --status             # concise startup status
+```
+
+Windows uses the same flags with `.\start_redvector.ps1`. Client config changes are backup-first, atomic, preserve unrelated MCP servers, and repair stale entries; a valid config is reported `CONFIGURED` (RedVector never fakes `CONNECTED` for a desktop client). For Ollama, the recommended model is `dolphin-llama3:8b` (a recommendation only, not a dependency); custom models are validated and never pulled without confirmation. Secrets are stored through RedVector's credential store and never displayed. Full details, including supported vs unvalidated platforms and connection states, are in [docs/AI_SETUP.md](docs/AI_SETUP.md).
 
 ## Configuration
 
@@ -330,19 +413,16 @@ Windows, macOS, and Linux. Which tools you can run depends on what you install o
 ## Project structure
 
 ```
-redvector/
-  README.md  LICENSE  THIRD_PARTY_NOTICES.md  requirements.txt  .gitignore
-  redvector_server.py          # Flask backend + routes
-  redvector_mcp.py             # MCP server
-  redvector_mcp_core.py        # MCP registry + transport
-  redvector_mcp_declarative.py # declarative MCP tool generation
-  redvector_security_tools.py  # security-tool registry + command builder
-  redvector_config.py          # typed configuration
-  redvector_ai_integration.py  # AI Integration Manager
-  redvector_core.py  redvector_workflows.py  redvector_payloads.py
-  redvector_cve_intelligence.py  redvector_error_handling.py  redvector_cache_process.py
-  assets/   docs/
+RedVector/
+  README.md  LICENSE  THIRD_PARTY_NOTICES.md  requirements.txt
+  start_redvector.sh  start_redvector.ps1
+  assets/
+  redvector/        # the RedVector package (server, agent, toolmanager, mcp/, ...)
+  data/             # runtime data (security_tool_specs.json)
+  docs/
 ```
+
+Module-by-module detail is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Documentation
 

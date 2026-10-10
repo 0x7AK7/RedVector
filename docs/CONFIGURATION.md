@@ -1,6 +1,6 @@
 # RedVector Configuration & Startup
 
-> Generated from `tests/fixtures/config_startup_manifest.json` (the Phase-4 compatibility contract). Values are resolved by the typed model in `redvector_config.py`.
+> Generated from `tests/fixtures/config_startup_manifest.json` (the Phase-4 compatibility contract). Values are resolved by the typed model in `redvector/config.py`.
 
 ## Precedence
 
@@ -36,23 +36,23 @@ No host/port/LLM config file is read at runtime; FileConfigSource is a future no
 
 ## Entry points
 
-### `server` — `redvector_server.py`
-- Invocation: `python redvector_server.py`
+### `server` - `redvector/server.py`
+- Invocation: `python -m redvector`
 - CLI: `--debug`, `--port`, `--host`
 - Process: Flask app.run
 - Logging: basicConfig INFO + redvector.log (import-time)
 
-### `mcp` — `redvector_mcp.py`
-- Invocation: `python redvector_mcp.py`
+### `mcp` - `redvector/mcp/server.py`
+- Invocation: `python -m redvector.mcp.server`
 - CLI: `--server`, `--timeout`, `--transport`, `--mcp-port`, `--mcp-host`, `--debug`
 - Process: FastMCP mcp.run(transport)
 - Logging: basicConfig INFO stderr (import-time)
 
-### `launcher_sh` — `start_redvector.sh`
+### `launcher_sh` - `start_redvector.sh`
 - Invocation: `bash start_redvector.sh [args]`
 - Behavior: cd script dir; activate .venv; start server if /health down (setsid, 30s wait); exec mcp --server
 
-### `launcher_ps1` — `start_redvector.ps1`
+### `launcher_ps1` - `start_redvector.ps1`
 - Invocation: `powershell start_redvector.ps1 [args]`
 - Behavior: cd script dir; activate .venv; start server if /health down (Start-Process, 30s wait); run mcp --server
 

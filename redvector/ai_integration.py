@@ -554,35 +554,51 @@ def _atomic_write_json(path: str, obj: Any) -> None:
     _atomic_write_text(path, json.dumps(obj, indent=2))
 
 
+def default_ai_state_path() -> str:
+    """Canonical, non-secret AI provider state file, shared by the backend and the
+    setup/CLI so the active provider/model persists across processes. Override with
+    REDVECTOR_AI_STATE. Contains only active_provider/active_model/fallback_* values,
+    never API keys or other secrets."""
+    return os.environ.get("REDVECTOR_AI_STATE") or \
+        os.path.join(os.path.expanduser("~"), ".redvector", "ai_state.json")
+
+
 # ============================================================================
 # MCP config generator
 # ============================================================================
 
 class MCPConfigGenerator:
-    """Builds the RedVector MCP server definition for a client config, with
-    dynamically-resolved python + absolute redvector_mcp.py path (never a
-    hardcoded developer path)."""
+    """Builds the RedVector MCP server definition for a client config, using the
+    portable package entrypoint ``python -m redvector.mcp.server`` with a
+    dynamically-resolved python and project root (never a hardcoded developer
+    path, never a flat script filename)."""
 
     SERVER_KEY = "redvector-ai"
+    MCP_MODULE = "redvector.mcp.server"
 
     def __init__(self, project_root: Optional[str] = None,
                  python_executable: Optional[str] = None,
                  backend_url: str = "http://127.0.0.1:8888",
                  api_token: str = "redvector-dev-token") -> None:
-        self.project_root = os.path.abspath(project_root or os.path.dirname(os.path.abspath(__file__)))
+        # Default to the repository root (the directory that contains the
+        # ``redvector`` package), so ``python -m redvector.mcp.server`` resolves.
+        default_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.project_root = os.path.abspath(project_root or default_root)
         import sys as _sys
         self.python = python_executable or _sys.executable or "python"
         self.backend_url = backend_url
         self.api_token = api_token
 
-    def mcp_script_path(self) -> str:
-        return os.path.join(self.project_root, "redvector_mcp.py")
+    def module_target(self) -> str:
+        return self.MCP_MODULE
 
     def server_entry(self) -> Dict[str, Any]:
         return {
             "command": self.python,
-            "args": [self.mcp_script_path(), "--server", self.backend_url],
-            "env": {"REDVECTOR_API_TOKEN": self.api_token},
+            "args": ["-m", self.MCP_MODULE, "--server", self.backend_url],
+            "cwd": self.project_root,
+            "env": {"REDVECTOR_API_TOKEN": self.api_token,
+                    "PYTHONPATH": self.project_root},
         }
 
 
@@ -759,8 +775,8 @@ class ChatGPTAdapter(MCPClientAdapter):
             "MCP server over a reachable URL (e.g. SSE transport or a secure tunnel) and "
             "add it as a connector in the ChatGPT app with your account's authorization.",
             {"guided_steps": [
-                "Start the backend: python redvector_server.py",
-                "Start MCP over SSE: python redvector_mcp.py --transport sse --mcp-port 8889",
+                "Start the backend: python -m redvector",
+                "Start MCP over SSE: python -m redvector.mcp.server --transport sse --mcp-port 8889",
                 "Expose http://127.0.0.1:8889/sse via your own secure tunnel if remote access is needed",
                 "In ChatGPT, add RedVector as an MCP connector and authorize it in-app",
             ]})

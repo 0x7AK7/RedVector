@@ -907,6 +907,12 @@ class RedVectorAgent:
                                   "stage": plan.stage}], events, t0, candidate.tool_id, target,
                                 ctx.authorized, candidate.action_class.value, False)
 
+        # Persist the active engagement target NOW (authorized + in scope), before the
+        # availability gate / confirmation. A follow-up must keep working even if this
+        # first tool turns out to be uninstalled or needs confirmation.
+        sess.current_target = target
+        sess.last_target = target
+
         # 4) availability gate (MCP-first)
         if self.resolver is not None:
             gate = self._resolution_gate(sess, candidate, target, getattr(intent, "raw_message", None),
@@ -1121,26 +1127,43 @@ class RedVectorAgent:
     @staticmethod
     def _finding_signal(result) -> str:
         """Classify a tool result's evidentiary strength from its REAL data only -
-        never from the request wording. Returns 'validated' | 'candidate' | 'none'."""
+        never from the request wording, and never by interpreting output prose.
+
+        Returns:
+          * 'validated' - the integration emitted an explicit positive verdict
+            (a structured ``vulnerable``/``validated``/``exploited``/``confirmed`` key);
+          * 'output'    - the tool completed and returned SUBSTANTIVE output
+            (non-empty findings / parsed / stdout) for the operator to judge;
+          * 'none'      - did not complete, an explicit negative verdict, or an
+            empty / filtered / no-service result (no output to act on).
+        """
         if not result.ok:
             return "none"
         d = result.data or {}
+        # explicit machine verdict wins both ways (positive or negative)
         for k in ("vulnerable", "validated", "exploited", "confirmed"):
-            if d.get(k):
-                return "validated"
+            if k in d:
+                return "validated" if d.get(k) else "none"
+        # explicit, structured finding lists: present+truthy = real output, empty = none
         for k in ("findings", "finding", "vulnerabilities", "vulns"):
-            v = d.get(k)
-            if v:
-                return "candidate"
+            if k in d:
+                return "output" if d.get(k) else "none"
         if d.get("parsed"):
-            return "candidate"
+            return "output"
+        out = d.get("stdout")
+        if isinstance(out, str) and out.strip():
+            return "output"
         return "none"
 
     def _record_evidence(self, sess, inv, result, stage: Optional[str]) -> None:
-        """Update the single session evidence store. Candidate findings are only ever
-        recorded from real tool data; exploitation is unlocked only by a validation
-        step that returns a positive ('validated') signal - the word in the request
-        is never evidence."""
+        """Update the single session evidence store from REAL tool data only.
+
+        Exploitation is unlocked only when an explicit VULN_VALIDATION step has run
+        and returned either a structured positive verdict or substantive output (the
+        operator judges that output; RedVector never fabricates a verdict and still
+        requires explicit confirmation before any exploitation tool runs). Discovery
+        output is recorded as a candidate, never auto-promoted to validated; empty /
+        filtered / no-service results record nothing."""
         sess.current_target = sess.last_target
         sess.last_tool = inv.tool_id
         if stage:
@@ -1148,16 +1171,12 @@ class RedVectorAgent:
         sess.completed_actions.append({"stage": stage, "tool": inv.tool_id,
                                        "target": sess.last_target, "status": result.status})
         signal = self._finding_signal(result)
-        if stage == _planner.Stage.VULN_DISCOVERY and signal in ("candidate", "validated"):
+        if stage == _planner.Stage.VULN_DISCOVERY and signal in ("output", "validated"):
             sess.candidate_findings.append({"tool": inv.tool_id, "target": sess.last_target,
                                             "stage": stage, "signal": signal})
-        elif stage == _planner.Stage.VULN_VALIDATION:
-            if signal == "validated":
-                sess.validated_findings.append({"tool": inv.tool_id, "target": sess.last_target,
-                                                "stage": stage})
-            elif signal == "candidate":
-                sess.candidate_findings.append({"tool": inv.tool_id, "target": sess.last_target,
-                                                "stage": stage, "signal": "inconclusive"})
+        elif stage == _planner.Stage.VULN_VALIDATION and signal in ("output", "validated"):
+            sess.validated_findings.append({"tool": inv.tool_id, "target": sess.last_target,
+                                            "stage": stage, "evidence": signal})
 
     def _finish(self, sess, msg, prov_id, prov_model, actions, events, t0=None, tool=None,
                 target=None, authorized=None, action_class=None, success=True,

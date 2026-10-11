@@ -101,8 +101,8 @@
   },
   {
    "path": "redvector/agent.py",
-   "sha256": "7c12b0c6b4f783971e33b203c43f2e81d993487df885585bdce7159f2cf60bd8",
-   "bytes": 59569
+   "sha256": "d0d707d4b296e316e90ae347fdf826a41fb17b78e647cc0286de842ce67a10e8",
+   "bytes": 60730
   },
   {
    "path": "redvector/ai_integration.py",
@@ -196,8 +196,8 @@
   },
   {
    "path": "redvector/setup/chat.py",
-   "sha256": "693f49f98b43eaff038c04e0f9816d84c5ff9f486fcb5aaf6e09158b9661ecb3",
-   "bytes": 5494
+   "sha256": "b9f07c99d47806a47f70f4cba306833de182c30a306224aab1a4797d83ed05eb",
+   "bytes": 6734
   },
   {
    "path": "redvector/setup/clients.py",

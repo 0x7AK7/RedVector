@@ -112,15 +112,38 @@ class ChatSession:
         return "disable_ai"   # 0 / EOF / anything else -> continue without AI (session-scoped)
 
     def _render(self, resp: Dict[str, Any], targets: List[str]) -> None:
+        # 1) Live execution visibility: replay the agent's own pipeline steps
+        #    (Understanding -> Planning -> Selecting tool -> Running <tool> ->
+        #    Analyzing -> Completed). These come from the agent, not invented here.
+        for ev in (resp.get("status") or []):
+            self.t.hint("  %s %s" % (self.t.colorize("|", "dim"), ev))
+
         actions = resp.get("actions") or []
-        if actions:
-            a0 = actions[0]
-            if a0.get("tool"):
-                self.t.status("TOOL", a0["tool"])
-            if targets:
-                self.t.status("TARGET", targets[0])
-            self.t.status("RUNNING", "Executing through RedVector...")
-        self.t.status("READY", "")
+        a0 = actions[0] if actions else {}
+        tool, stage, status = a0.get("tool"), a0.get("stage"), a0.get("status")
+        if tool:
+            self.t.status("TOOL", "%s%s" % (tool, (" (%s)" % stage) if stage else ""))
+        tgt = targets[0] if targets else None
+        if tgt:
+            self.t.status("TARGET", tgt)
+
+        # 2) Tool-availability resolution (never a silent dead-end): if a tool is not
+        #    ready, surface the state and the operator's options.
+        tstate = resp.get("tool_state")
+        if tstate:
+            self.t.status("WARN", "Tool not ready: %s" % tstate)
+            choices = resp.get("choices") or []
+            alts = resp.get("alternatives") or []
+            if choices:
+                self.t.hint("  options: %s" % ", ".join(choices))
+            if alts:
+                self.t.hint("  registered alternatives: %s" % ", ".join(alts))
+
+        # 3) Result presentation: clear outcome line + the agent's grounded summary.
+        if status and status not in ("awaiting_confirmation",):
+            self.t.status("READY" if status in ("completed", "recalled") else "INFO", status)
+        else:
+            self.t.status("READY", "")
         self.t.write()
         self.t.write(self.t.colorize("RedVector>", "red"))
         self.t.write(resp.get("message", "(no response)"))

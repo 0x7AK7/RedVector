@@ -109,24 +109,12 @@ class Terminal:
         return lines
 
     def classic_banner(self, host: str = "127.0.0.1", port: str = "8888") -> None:
-        """The classic RedVector red-team startup identity (compact, not a giant
-        ASCII replacement). Preserves branding, By Adam K., the pipeline lines, and
-        ARMED. Respects NO_COLOR / non-TTY."""
-        self.write()
-        self.write(self.colorize("R E D V E C T O R", "red"))
-        self.write(self.colorize("By Adam K.", "dim"))
-        self.write(self.colorize("-" * 60, "dim"))
-        rows = [
-            ("THREAT FRAMEWORK", "325 attack vectors across 33 autonomous engines"),
-            ("EXECUTION MODE", "real tool chains (recon -> exploit -> report)"),
-            ("OFFENSIVE PIPELINE", "8-stage lifecycle: recon > exploit > persist > exfil"),
-            ("AI DECISION ENGINE", "adaptive replanning with fallback chains"),
-        ]
-        for label, value in rows:
-            self.write("  %s %s %s" % (self.colorize("|> " + label.ljust(18), "cyan"),
-                                       self.colorize("|", "red"), self.colorize(value, "green")))
-        self.write(self.colorize("-" * 60, "dim"))
-        self.status("ARMED", "Authorized red team operations only on %s:%s." % (host, port))
+        """Render the ORIGINAL classic RedVector banner by reusing the single
+        implementation in redvector.branding (no approximate duplicate). ANSI is
+        stripped when color is disabled (NO_COLOR / non-TTY)."""
+        from redvector import branding
+        self.stream.write(branding.create_banner(host, port, color=self.color_enabled))
+        self.stream.write("\n")
 
     def menu(self, title: str, options: List[str]) -> None:
         self.write()

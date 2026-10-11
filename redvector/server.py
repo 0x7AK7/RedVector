@@ -459,7 +459,14 @@ class ModernVisualEngine:
 
     @staticmethod
     def create_banner() -> str:
-        """Create the enhanced RedVector banner"""
+        """Create the classic RedVector banner. Single implementation lives in
+        redvector.branding (reused by the setup/chat Start screen too)."""
+        from redvector import branding as _branding
+        return _branding.create_banner(str(API_HOST), str(API_PORT))
+
+    @staticmethod
+    def _legacy_create_banner() -> str:
+        """Historical inline banner (kept for reference; superseded by branding)."""
         border_color = ModernVisualEngine.COLORS['PRIMARY_BORDER']
         accent = ModernVisualEngine.COLORS['ACCENT_LINE']
         gradient = ModernVisualEngine.COLORS['ACCENT_GRADIENT']

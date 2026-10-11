@@ -101,13 +101,18 @@
   },
   {
    "path": "redvector/agent.py",
-   "sha256": "c1ad23a6850485bd5ec46427919ded2ce0c9462a680d94695def89051b477c34",
-   "bytes": 44060
+   "sha256": "7c12b0c6b4f783971e33b203c43f2e81d993487df885585bdce7159f2cf60bd8",
+   "bytes": 59569
   },
   {
    "path": "redvector/ai_integration.py",
    "sha256": "3ee9ae93fd977f2e480131c24a81d8031cc5406ffe434b0f3aca11b3fd799e1a",
    "bytes": 34542
+  },
+  {
+   "path": "redvector/branding.py",
+   "sha256": "3858a727b791425570e06fe077ee6e0b3e60171b6a8f81e96fc55f56f2cdebdf",
+   "bytes": 4396
   },
   {
    "path": "redvector/cache_process.py",
@@ -165,14 +170,19 @@
    "bytes": 56365
   },
   {
+   "path": "redvector/planner.py",
+   "sha256": "5bc2a46526f8fc3195768751588ed3a1d4686462fd8f8378e05bba2b9a269927",
+   "bytes": 21295
+  },
+  {
    "path": "redvector/security_tools.py",
    "sha256": "07ccef1e174da1315894977a9ae9e63e9ed60f65cbd50d3175b79de0f146a432",
    "bytes": 10780
   },
   {
    "path": "redvector/server.py",
-   "sha256": "3d23f3e8bd3e2f2ae9c5dff2a77026ee348bebafd36a9966fd9c7b485067cb1b",
-   "bytes": 1439816
+   "sha256": "4e05f891b861e0b995094873eea954e9ccf3bc7892246a7eded83041c7fffd58",
+   "bytes": 1440184
   },
   {
    "path": "redvector/setup/__init__.py",
@@ -231,8 +241,8 @@
   },
   {
    "path": "redvector/setup/terminal.py",
-   "sha256": "c3c259c17cb0b02b1900e3478b7a274fa02a706ce2b77e8ae458587b181aa907",
-   "bytes": 6850
+   "sha256": "bdc1489de5223ac9015651984856fe1d0d6f32086a639b6124af568b8732bc0e",
+   "bytes": 6104
   },
   {
    "path": "redvector/setup/vendors.py",

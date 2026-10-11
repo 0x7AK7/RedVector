@@ -35,6 +35,7 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
 from redvector import ai_integration as _ai
+from redvector import planner as _planner
 
 
 # ============================================================================
@@ -137,6 +138,16 @@ class AgentSession:
     # follow-up INSTALL / USE_ALTERNATIVE / CANCEL choice can continue.
     pending_resolution: Optional[Dict[str, Any]] = None
     authorization: AuthorizationContext = field(default_factory=AuthorizationContext)
+    # Phase 10.5#2: structured workflow/evidence state (single session store; reused by
+    # the planner for follow-up classification, dynamic capability routing, and to gate
+    # exploitation on validated evidence). No second state system.
+    current_target: Optional[str] = None
+    last_stage: Optional[str] = None
+    last_tool: Optional[str] = None
+    discovered_services: List[str] = field(default_factory=list)
+    candidate_findings: List[Dict[str, Any]] = field(default_factory=list)
+    validated_findings: List[Dict[str, Any]] = field(default_factory=list)
+    completed_actions: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -292,6 +303,25 @@ _KEYWORD_TOOL = [
 
 _PRIOR_REFS = ("previous", "last", "that finding", "the finding", "earlier", "which services",
                "outdated", "show me the", "it ", "those ", "again")
+
+# Stop-words excluded from capability-search terms (so generic verbs/articles do
+# not accidentally match tool ids). Not a phrase->tool table; just noise removal.
+_TERM_STOP = {"the", "and", "for", "run", "scan", "check", "test", "find", "with", "against",
+              "please", "can", "you", "could", "would", "this", "that", "into", "onto", "from",
+              "look", "show", "give", "want", "need", "now", "then", "some", "any", "all"}
+_TERM_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9]{2,}")
+
+
+def _query_terms(message: str) -> List[str]:
+    """Lowercase alphanumeric tokens (>=3 chars, minus stop-words) used as a light
+    capability search against tool ids. Purely lexical; no stored phrase mapping."""
+    if not message:
+        return []
+    out = []
+    for tok in _TERM_RE.findall(message.lower()):
+        if tok not in _TERM_STOP and tok not in out:
+            out.append(tok)
+    return out
 
 
 class IntentParser:
@@ -657,13 +687,24 @@ class RedVectorAgent:
                  conversation: Optional[ConversationManager] = None,
                  audit_sink: Optional[Callable[[Dict[str, Any]], None]] = None,
                  resolver: Optional[Any] = None,
-                 installer: Optional[Any] = None) -> None:
+                 installer: Optional[Any] = None,
+                 planner: Optional[Any] = None,
+                 stage_refiner: Optional[Callable[[str], Optional[str]]] = None) -> None:
         self.reg = ToolRegistryAdapter(registry)
         self.selector = ToolSelector(self.reg)
         self.argbuilder = ToolArgumentBuilder()
         self.guard = AuthorizationGuard()
         self.parser = IntentParser()
         self.interpreter = ResultInterpreter()
+        # Structured planner (stage classification) + dynamic capability->tool
+        # resolver. The resolver reuses the live registry + optional MCP availability
+        # check; no tool id/target/provider is hard-coded. ``stage_refiner`` lets the
+        # active provider optionally inform stage classification.
+        self.planner = planner or _planner.Planner(
+            classifier=_planner.StageClassifier(refine_fn=stage_refiner))
+        self.capresolver = _planner.CapabilityResolver(
+            self.reg, _classify_category, resolver,
+            action_classifier=_classify_action, confirm_classes=CONFIRM_REQUIRED)
         self.executor = executor
         self.provider_factory = provider_factory or (lambda: None)
         self.conv = conversation or ConversationManager()
@@ -682,7 +723,13 @@ class RedVectorAgent:
     def handle(self, req: AgentRequest) -> AgentResponse:
         t0 = time.time()
         sess = self.conv.get_or_create(req.session_id)
-        if req.authorization and (req.authorization.authorized or req.authorization.targets):
+        # Scope persistence: a request that carries NEW explicit targets overrides and
+        # rescopes the session; a follow-up that carries none (e.g. "exploit it") must
+        # keep the session's existing authorized scope instead of wiping it. A first
+        # authorization with no prior scope is also adopted.
+        if req.authorization and req.authorization.targets:
+            sess.authorization = req.authorization
+        elif req.authorization and req.authorization.authorized and not sess.authorization.targets:
             sess.authorization = req.authorization
         ctx = sess.authorization
         sess.messages.append(AgentMessage("user", req.message))
@@ -717,18 +764,51 @@ class RedVectorAgent:
             return self._execute_and_answer(sess, inv, req.message, prov, prov_id, prov_model, events, t0, ctx)
 
         intent = self.parser.parse(req.message)
-        events.append("Checking scope")
 
-        # follow-up referring to prior results, no new target/tool
-        if intent.references_prior and intent.target is None and sess.last_result is not None:
-            events.append("Analyzing results")
-            answer = self.interpreter.interpret(req.message, sess.last_result, prov)
+        # STRUCTURED PLAN: classify the lifecycle stage + dynamic capability, using
+        # grouped signals and session context (not a single-keyword->tool shortcut).
+        plan = self.planner.plan(req.message, sess, intent)
+        events.append("Planning: %s" % plan.stage)
+
+        # ---- follow-up: summarize / report from session, no re-execution ----
+        if plan.stage in (_planner.Stage.SUMMARY, _planner.Stage.REPORT):
+            if sess.last_result is not None:
+                events.append("Analyzing prior results")
+                answer = self.interpreter.interpret(req.message, sess.last_result, prov)
+                events.append("Completed")
+                return self._finish(sess, answer, prov_id, prov_model,
+                                    [{"tool": sess.last_result.tool_id, "status": "recalled",
+                                      "stage": plan.stage}], events, t0,
+                                    sess.last_result.tool_id, sess.current_target or sess.last_target,
+                                    ctx.authorized, "read_only", True)
             events.append("Completed")
-            return self._finish(sess, answer, prov_id, prov_model,
-                                [{"tool": sess.last_result.tool_id, "status": "recalled"}], events, t0,
-                                sess.last_result.tool_id, sess.last_target, ctx.authorized, "read_only", True)
+            return self._finish(sess, "There are no results from this session yet, so there is nothing "
+                                "to %s. Give me an authorized target and an action to begin." %
+                                ("summarize" if plan.stage == _planner.Stage.SUMMARY else "report on"),
+                                prov_id, prov_model, [{"status": "no_prior_context", "stage": plan.stage}],
+                                events, t0, None, None, ctx.authorized, "read_only", True)
 
-        return self._run_intent(sess, intent, req.message, prov, prov_id, prov_model,
+        # ---- exploitation without a validated finding: route to validation, never
+        #      run blind recon and never fabricate exploitability ----
+        if plan.reason_code == "exploit_requires_validated_finding":
+            events.append("Completed")
+            msg = ("No validated exploitable finding has been established for this engagement yet, so "
+                   "I will not attempt exploitation or assume the target is exploitable. The next step "
+                   "is to validate a candidate weakness against an authorized target; tell me which "
+                   "finding to validate (or run a vulnerability check first) and I will proceed.")
+            return self._finish(sess, msg, prov_id, prov_model,
+                                [{"status": "exploitation_blocked_no_validated_finding",
+                                  "stage": plan.stage}], events, t0, None,
+                                sess.current_target or sess.last_target, ctx.authorized,
+                                ActionClass.VALIDATION.value, True)
+
+        # ---- retest: reuse the last tool against the session target ----
+        if plan.stage == _planner.Stage.RETEST and plan.reason_code == "retest_last_action":
+            return self._run_retest(sess, intent, req.message, prov, prov_id, prov_model,
+                                    events, t0, ctx, req.confirm, plan)
+
+        # ---- action stages: dynamic capability -> real tool ----
+        return self._run_action(sess, plan, intent, req.message, prov, prov_id, prov_model,
                                 events, t0, ctx, req.confirm)
 
     # ---- intent execution (shared by the normal path and alternative selection) ----
@@ -757,7 +837,9 @@ class RedVectorAgent:
 
         # availability gate (MCP-first): never run a tool that is not installed/ready
         if self.resolver is not None:
-            gate = self._resolution_gate(sess, candidate, intent, prov_id, prov_model, events, t0, ctx)
+            gate = self._resolution_gate(sess, candidate, intent.target,
+                                         getattr(intent, "raw_message", None),
+                                         prov_id, prov_model, events, t0, ctx)
             if gate is not None:
                 return gate
 
@@ -787,8 +869,131 @@ class RedVectorAgent:
         events.append("Analyzing results")
         return self._execute_and_answer(sess, inv, question, prov, prov_id, prov_model, events, t0, ctx)
 
+    # ---- plan-driven action execution (dynamic capability -> real tool) ----
+    def _run_action(self, sess, plan, intent, question, prov, prov_id, prov_model, events, t0, ctx,
+                    confirm) -> AgentResponse:
+        # 1) resolve the target dynamically: explicit message > current session.
+        target = intent.target
+        if target is None and plan.target_source == "session":
+            target = sess.current_target or sess.last_target
+        if target is None:
+            events.append("Completed")
+            return self._finish(sess, "I need an authorized target for this %s step. Tell me which "
+                                "in-scope host or domain to use." % plan.stage.replace("_", " "),
+                                prov_id, prov_model, [{"status": "needs_target", "stage": plan.stage}],
+                                events, t0, None, None, ctx.authorized, "read_only", False)
+
+        # 2) dynamic capability search -> a REAL registered tool (capability match +
+        #    action-class preference + registry order); nothing is hard-coded.
+        events.append("Selecting tool")
+        terms = _query_terms(getattr(intent, "raw_message", None) or question)
+        candidate = self.capresolver.resolve(plan.capability_categories, query_terms=terms,
+                                             prefer_active=plan.requires_confirmation)
+        if candidate is None:
+            events.append("Completed")
+            return self._finish(sess, "I could not find a registered tool providing the %s capability." %
+                                (plan.capability_query or plan.stage), prov_id, prov_model,
+                                [{"status": "no_capability_tool", "stage": plan.stage}], events, t0,
+                                None, target, ctx.authorized, "read_only", False)
+
+        # 3) scope / authorization
+        decision = self.guard.check(target, ctx)
+        if not decision.allowed:
+            self._audit(sess, prov_id, prov_model, candidate.tool_id, target, ctx.authorized,
+                        "rejected_scope", t0, "ScopeError")
+            events.append("Completed")
+            return self._finish(sess, decision.reason + " I did not run anything.", prov_id, prov_model,
+                                [{"tool": candidate.tool_id, "status": "blocked_out_of_scope",
+                                  "stage": plan.stage}], events, t0, candidate.tool_id, target,
+                                ctx.authorized, candidate.action_class.value, False)
+
+        # 4) availability gate (MCP-first)
+        if self.resolver is not None:
+            gate = self._resolution_gate(sess, candidate, target, getattr(intent, "raw_message", None),
+                                         prov_id, prov_model, events, t0, ctx)
+            if gate is not None:
+                return gate
+
+        # 5) build + validate arguments
+        try:
+            inv = self.argbuilder.build(candidate, intent, target)
+        except ArgumentValidationError as e:
+            events.append("Completed")
+            return self._finish(sess, "I could not build valid arguments: %s" % e, prov_id, prov_model,
+                                [{"tool": candidate.tool_id, "status": "invalid_arguments",
+                                  "stage": plan.stage}], events, t0, candidate.tool_id, target,
+                                ctx.authorized, candidate.action_class.value, False)
+        sess.last_target = target
+
+        # 6) confirmation for higher-impact actions (tool's own action class decides)
+        if candidate.action_class in CONFIRM_REQUIRED and not confirm:
+            sess.pending_invocation = inv
+            sess.last_stage = plan.stage
+            msg = ("This action (%s) is classified as %s against %s. Reply to confirm before I run it." %
+                   (candidate.tool_id, candidate.action_class.value, target))
+            events.append("Awaiting confirmation")
+            return self._finish(sess, msg, prov_id, prov_model,
+                                [{"tool": candidate.tool_id, "status": "awaiting_confirmation",
+                                  "stage": plan.stage}], events, t0, candidate.tool_id, target,
+                                ctx.authorized, candidate.action_class.value, True, needs_confirmation=True)
+
+        events.append("Running %s" % candidate.tool_id)
+        events.append("Analyzing results")
+        return self._execute_and_answer(sess, inv, question, prov, prov_id, prov_model, events, t0, ctx,
+                                        stage=plan.stage)
+
+    def _run_retest(self, sess, intent, question, prov, prov_id, prov_model, events, t0, ctx,
+                    confirm, plan) -> AgentResponse:
+        """Re-run the SAME tool as the last action against the SAME session target
+        (a new explicit target overrides it and triggers a fresh scope check)."""
+        tool_id = sess.last_tool
+        target = intent.target or sess.current_target or sess.last_target
+        candidate = self.reg.candidate(tool_id) if tool_id and self.reg.has(tool_id) else None
+        if candidate is None or target is None:
+            events.append("Completed")
+            return self._finish(sess, "There is no previous action to repeat yet.", prov_id, prov_model,
+                                [{"status": "nothing_to_retest"}], events, t0, None, target,
+                                ctx.authorized, "read_only", False)
+
+        decision = self.guard.check(target, ctx)
+        if not decision.allowed:
+            self._audit(sess, prov_id, prov_model, candidate.tool_id, target, ctx.authorized,
+                        "rejected_scope", t0, "ScopeError")
+            events.append("Completed")
+            return self._finish(sess, decision.reason + " I did not run anything.", prov_id, prov_model,
+                                [{"tool": candidate.tool_id, "status": "blocked_out_of_scope"}], events, t0,
+                                candidate.tool_id, target, ctx.authorized, candidate.action_class.value, False)
+
+        if self.resolver is not None:
+            gate = self._resolution_gate(sess, candidate, target, getattr(intent, "raw_message", None),
+                                         prov_id, prov_model, events, t0, ctx)
+            if gate is not None:
+                return gate
+        try:
+            inv = self.argbuilder.build(candidate, intent, target)
+        except ArgumentValidationError as e:
+            events.append("Completed")
+            return self._finish(sess, "I could not build valid arguments: %s" % e, prov_id, prov_model,
+                                [{"tool": candidate.tool_id, "status": "invalid_arguments"}], events, t0,
+                                candidate.tool_id, target, ctx.authorized, candidate.action_class.value, False)
+        sess.last_target = target
+        if candidate.action_class in CONFIRM_REQUIRED and not confirm:
+            sess.pending_invocation = inv
+            sess.last_stage = sess.last_stage or _planner.Stage.RETEST
+            msg = ("Re-running %s (classified %s) against %s. Reply to confirm before I run it." %
+                   (candidate.tool_id, candidate.action_class.value, target))
+            events.append("Awaiting confirmation")
+            return self._finish(sess, msg, prov_id, prov_model,
+                                [{"tool": candidate.tool_id, "status": "awaiting_confirmation"}], events, t0,
+                                candidate.tool_id, target, ctx.authorized, candidate.action_class.value,
+                                True, needs_confirmation=True)
+        events.append("Re-running %s" % candidate.tool_id)
+        events.append("Analyzing results")
+        return self._execute_and_answer(sess, inv, question, prov, prov_id, prov_model, events, t0, ctx,
+                                        stage=sess.last_stage or _planner.Stage.RETEST)
+
     # ---- MCP-first tool resolution ----
-    def _resolution_gate(self, sess, candidate, intent, prov_id, prov_model, events, t0, ctx):
+    def _resolution_gate(self, sess, candidate, target, message, prov_id, prov_model, events, t0, ctx):
         """Return a resolution response if the tool is not runnable, else None."""
         from redvector.toolmanager import AvailabilityState
         resolved = self.resolver.resolve(candidate.tool_id)
@@ -796,8 +1001,8 @@ class RedVectorAgent:
             return None
 
         events.append("Resolving tool availability")
-        sess.pending_resolution = {"tool": candidate.tool_id, "target": intent.target,
-                                   "message": getattr(intent, "raw_message", None),
+        sess.pending_resolution = {"tool": candidate.tool_id, "target": target,
+                                   "message": message,
                                    "alternatives": list(resolved.alternatives)}
         alts = resolved.alternatives
 
@@ -808,7 +1013,7 @@ class RedVectorAgent:
                    (candidate.tool_id, resolved.detail))
             return self._finish(sess, msg, prov_id, prov_model,
                                 [{"tool": candidate.tool_id, "status": "not_configured"}], events, t0,
-                                candidate.tool_id, intent.target, ctx.authorized, "installation", True,
+                                candidate.tool_id, target, ctx.authorized, "installation", True,
                                 tool_state=resolved.state.value, choices=choices, alternatives=alts)
 
         if resolved.state == AvailabilityState.UNAVAILABLE_ON_THIS_PLATFORM:
@@ -817,7 +1022,7 @@ class RedVectorAgent:
                    (candidate.tool_id, resolved.detail))
             return self._finish(sess, msg, prov_id, prov_model,
                                 [{"tool": candidate.tool_id, "status": "unavailable_on_platform"}], events, t0,
-                                candidate.tool_id, intent.target, ctx.authorized, "installation", True,
+                                candidate.tool_id, target, ctx.authorized, "installation", True,
                                 tool_state=resolved.state.value, choices=choices, alternatives=alts)
 
         # AVAILABLE_TO_INSTALL (or UNSUPPORTED, defensively)
@@ -828,7 +1033,7 @@ class RedVectorAgent:
                (candidate.tool_id, resolved.detail))
         return self._finish(sess, msg, prov_id, prov_model,
                             [{"tool": candidate.tool_id, "status": "not_installed"}], events, t0,
-                            candidate.tool_id, intent.target, ctx.authorized, "installation", True,
+                            candidate.tool_id, target, ctx.authorized, "installation", True,
                             tool_state=resolved.state.value, choices=options.get("choices", []),
                             install_options=options, alternatives=alts)
 
@@ -899,16 +1104,60 @@ class RedVectorAgent:
                             orig_tool, target, ctx.authorized, "installation", False)
 
     # ---- helpers ----
-    def _execute_and_answer(self, sess, inv, question, prov, prov_id, prov_model, events, t0, ctx) -> AgentResponse:
+    def _execute_and_answer(self, sess, inv, question, prov, prov_id, prov_model, events, t0, ctx,
+                            stage: Optional[str] = None) -> AgentResponse:
         result = self.executor.run(inv)
         sess.last_result = result
+        stage = stage or sess.last_stage
+        self._record_evidence(sess, inv, result, stage)
         answer = self.interpreter.interpret(question, result, prov)
         events.append("Completed")
         self._audit(sess, prov_id, prov_model, inv.tool_id, sess.last_target, ctx.authorized,
                     result.status, t0, None if result.ok else "ToolError")
         return self._finish(sess, answer, prov_id, prov_model,
-                            [{"tool": inv.tool_id, "status": result.status}], events, t0,
+                            [{"tool": inv.tool_id, "status": result.status, "stage": stage}], events, t0,
                             inv.tool_id, sess.last_target, ctx.authorized, inv.action_class.value, result.ok)
+
+    @staticmethod
+    def _finding_signal(result) -> str:
+        """Classify a tool result's evidentiary strength from its REAL data only -
+        never from the request wording. Returns 'validated' | 'candidate' | 'none'."""
+        if not result.ok:
+            return "none"
+        d = result.data or {}
+        for k in ("vulnerable", "validated", "exploited", "confirmed"):
+            if d.get(k):
+                return "validated"
+        for k in ("findings", "finding", "vulnerabilities", "vulns"):
+            v = d.get(k)
+            if v:
+                return "candidate"
+        if d.get("parsed"):
+            return "candidate"
+        return "none"
+
+    def _record_evidence(self, sess, inv, result, stage: Optional[str]) -> None:
+        """Update the single session evidence store. Candidate findings are only ever
+        recorded from real tool data; exploitation is unlocked only by a validation
+        step that returns a positive ('validated') signal - the word in the request
+        is never evidence."""
+        sess.current_target = sess.last_target
+        sess.last_tool = inv.tool_id
+        if stage:
+            sess.last_stage = stage
+        sess.completed_actions.append({"stage": stage, "tool": inv.tool_id,
+                                       "target": sess.last_target, "status": result.status})
+        signal = self._finding_signal(result)
+        if stage == _planner.Stage.VULN_DISCOVERY and signal in ("candidate", "validated"):
+            sess.candidate_findings.append({"tool": inv.tool_id, "target": sess.last_target,
+                                            "stage": stage, "signal": signal})
+        elif stage == _planner.Stage.VULN_VALIDATION:
+            if signal == "validated":
+                sess.validated_findings.append({"tool": inv.tool_id, "target": sess.last_target,
+                                                "stage": stage})
+            elif signal == "candidate":
+                sess.candidate_findings.append({"tool": inv.tool_id, "target": sess.last_target,
+                                                "stage": stage, "signal": "inconclusive"})
 
     def _finish(self, sess, msg, prov_id, prov_model, actions, events, t0=None, tool=None,
                 target=None, authorized=None, action_class=None, success=True,

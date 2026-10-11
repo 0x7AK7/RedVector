@@ -37,6 +37,7 @@ from typing import Any, Callable, Dict, List, Optional
 from redvector import ai_integration as _ai
 from redvector import planner as _planner
 from redvector import evidence as _evidence
+from redvector import session_trace as _trace
 
 
 # ============================================================================
@@ -145,10 +146,21 @@ class AgentSession:
     current_target: Optional[str] = None
     last_stage: Optional[str] = None
     last_tool: Optional[str] = None
+    last_intent: Optional[str] = None
+    last_action: Optional[str] = None
+    last_raw_result: Optional[Dict[str, Any]] = None
+    last_parsed_result: Optional[Any] = None
+    discovered_hosts: List[str] = field(default_factory=list)
+    discovered_ports: List[str] = field(default_factory=list)
     discovered_services: List[str] = field(default_factory=list)
+    discovered_technologies: List[str] = field(default_factory=list)
     candidate_findings: List[Dict[str, Any]] = field(default_factory=list)
     validated_findings: List[Dict[str, Any]] = field(default_factory=list)
+    rejected_findings: List[Dict[str, Any]] = field(default_factory=list)
+    inconclusive_findings: List[Dict[str, Any]] = field(default_factory=list)
+    evidence_references: List[Dict[str, Any]] = field(default_factory=list)
     completed_actions: List[Dict[str, Any]] = field(default_factory=list)
+    failed_actions: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -188,6 +200,9 @@ class AgentResponse:
     stage: Optional[str] = None
     target: Optional[str] = None
     duration_ms: float = 0.0
+    # Raw tool evidence kept SEPARATE from the grounded summary (never auto-dumped
+    # into the summary; the client shows it on demand). Capped for transport.
+    raw_evidence: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -207,6 +222,7 @@ class AgentResponse:
             "stage": self.stage,
             "target": self.target,
             "duration_ms": self.duration_ms,
+            "raw_evidence": self.raw_evidence,
         }
 
 
@@ -739,7 +755,10 @@ class RedVectorAgent:
 
     def handle(self, req: AgentRequest) -> AgentResponse:
         t0 = time.time()
+        existing = self.conv.get(req.session_id) is not None if req.session_id else False
         sess = self.conv.get_or_create(req.session_id)
+        target_before = sess.current_target
+        scope_before = list(sess.authorization.targets)
         # Session-level authorization (Phase 10.5 Fix #4). Scope belongs to the
         # engagement/session, not to a single message:
         #   * authorization is None  -> no update supplied -> reuse session scope;
@@ -753,6 +772,12 @@ class RedVectorAgent:
             elif auth.targets:
                 sess.authorization = auth
         ctx = sess.authorization
+        _trace.trace("BACKEND", session_id=sess.session_id, existing_session=existing,
+                     authorization=("omitted" if auth is None else
+                                    ("revoked" if not auth.authorized else "supplied")),
+                     current_target_before=target_before, scope_before=len(scope_before),
+                     scope_after=len(ctx.targets), candidates=len(sess.candidate_findings),
+                     validated=len(sess.validated_findings))
         sess.messages.append(AgentMessage("user", req.message))
         events: List[str] = ["Understanding request"]
         prov = None
@@ -789,6 +814,10 @@ class RedVectorAgent:
         # STRUCTURED PLAN: classify the lifecycle stage + dynamic capability, using
         # grouped signals and session context (not a single-keyword->tool shortcut).
         plan = self.planner.plan(req.message, sess, intent)
+        _trace.trace("PLANNER", stage=plan.stage, target_source=plan.target_source,
+                     requires_previous_context=plan.requires_previous_context,
+                     requires_execution=plan.requires_execution,
+                     capability_query=plan.capability_query, reason_code=plan.reason_code)
         events.append("Planning: %s" % plan.stage)
 
         # ---- unknown intent: ask for clarification; NEVER silently run recon ----
@@ -824,7 +853,7 @@ class RedVectorAgent:
         #      run blind recon and never fabricate exploitability ----
         if plan.reason_code == "exploit_requires_validated_finding":
             events.append("Completed")
-            ncand = len(sess.candidate_findings)
+            ncand = len(sess.candidate_findings) + len(sess.inconclusive_findings)
             if ncand:
                 tail = ("I have %d candidate/inconclusive finding(s) on record but none are VALIDATED. "
                         "I can run a validation step against an authorized target to establish evidence "
@@ -847,7 +876,7 @@ class RedVectorAgent:
 
         # ---- action stages: dynamic capability -> real tool ----
         return self._run_action(sess, plan, intent, req.message, prov, prov_id, prov_model,
-                                events, t0, ctx, req.confirm)
+                                events, t0, ctx, req.confirm, scope_inherited=(auth is None))
 
     # ---- intent execution (shared by the normal path and alternative selection) ----
     def _run_intent(self, sess, intent, question, prov, prov_id, prov_model, events, t0, ctx,
@@ -907,13 +936,34 @@ class RedVectorAgent:
         events.append("Analyzing results")
         return self._execute_and_answer(sess, inv, question, prov, prov_id, prov_model, events, t0, ctx)
 
+    @staticmethod
+    def _no_capability_message(plan) -> str:
+        """Honest, stage-specific resolver-failure message. NEVER suggests or falls
+        back to reconnaissance (Phase 10.5 Fix #5)."""
+        label = {
+            _planner.Stage.VULN_VALIDATION: "validation",
+            _planner.Stage.EXPLOITATION: "exploitation",
+            _planner.Stage.VULN_DISCOVERY: "vulnerability discovery",
+            _planner.Stage.ENUMERATION: "enumeration",
+            _planner.Stage.RECON: "reconnaissance",
+        }.get(plan.stage, plan.stage.replace("_", " "))
+        return ("No registered %s capability is available for this step, so I did not run anything "
+                "(I will not substitute a reconnaissance tool). You can install a suitable integration "
+                "or choose a different action." % label)
+
     # ---- plan-driven action execution (dynamic capability -> real tool) ----
     def _run_action(self, sess, plan, intent, question, prov, prov_id, prov_model, events, t0, ctx,
-                    confirm) -> AgentResponse:
-        # 1) resolve the target dynamically: explicit message > current session.
+                    confirm, scope_inherited: bool = False) -> AgentResponse:
+        # 1) resolve the target dynamically (precedence: explicit message >
+        #    current session > last session > a single unambiguous *inherited*
+        #    authorized target). The authorized-scope fallback applies only when the
+        #    scope was inherited from the session (not freshly supplied this message),
+        #    so a malformed/explicit target in the message is never silently swapped.
         target = intent.target
-        if target is None and plan.target_source == "session":
+        if target is None:
             target = sess.current_target or sess.last_target
+        if target is None and scope_inherited and len(ctx.targets) == 1:
+            target = ctx.targets[0]
         if target is None:
             events.append("Completed")
             return self._finish(sess, "I need an authorized target for this %s step. Tell me which "
@@ -927,12 +977,28 @@ class RedVectorAgent:
         terms = _query_terms(getattr(intent, "raw_message", None) or question)
         candidate = self.capresolver.resolve(plan.capability_categories, query_terms=terms,
                                              prefer_active=plan.requires_confirmation)
+        _trace.trace("RESOLVER", stage=plan.stage, capability=plan.capability_query,
+                     categories=plan.capability_categories,
+                     selected=(candidate.tool_id if candidate else None),
+                     selected_category=(candidate.category if candidate else None))
         if candidate is None:
             events.append("Completed")
-            return self._finish(sess, "I could not find a registered tool providing the %s capability." %
-                                (plan.capability_query or plan.stage), prov_id, prov_model,
+            return self._finish(sess, self._no_capability_message(plan), prov_id, prov_model,
                                 [{"status": "no_capability_tool", "stage": plan.stage}], events, t0,
                                 None, target, ctx.authorized, "read_only", False)
+
+        # 2b) STAGE-COMPATIBILITY GUARD (absolute, Phase 10.5 Fix #5): the resolved
+        #     tool's category MUST belong to the stage's capability categories. This
+        #     makes it impossible for a validation/exploitation request to execute a
+        #     recon-only tool, even if resolution somehow returned one.
+        if plan.capability_categories and candidate.category not in plan.capability_categories:
+            _trace.trace("RESOLVER", incompatible=candidate.tool_id, tool_category=candidate.category,
+                         stage=plan.stage)
+            events.append("Completed")
+            return self._finish(sess, self._no_capability_message(plan), prov_id, prov_model,
+                                [{"tool": candidate.tool_id, "status": "incompatible_capability",
+                                  "stage": plan.stage}], events, t0, candidate.tool_id, target,
+                                ctx.authorized, "read_only", False)
 
         # 3) scope / authorization
         decision = self.guard.check(target, ctx)
@@ -1161,7 +1227,16 @@ class RedVectorAgent:
         return self._finish(sess, answer, prov_id, prov_model,
                             [{"tool": inv.tool_id, "status": result.status, "stage": stage}], events, t0,
                             inv.tool_id, sess.last_target, ctx.authorized, inv.action_class.value, result.ok,
-                            stage=stage, findings=self._findings_snapshot(sess))
+                            stage=stage, findings=self._findings_snapshot(sess),
+                            raw_evidence=self._raw_evidence(result))
+
+    @staticmethod
+    def _raw_evidence(result) -> Optional[str]:
+        d = result.data or {}
+        out = d.get("stdout") or d.get("parsed") or ""
+        text = out if isinstance(out, str) else str(out)
+        text = text.strip()
+        return text[:8000] if text else None
 
     @staticmethod
     def _findings_snapshot(sess) -> List[Dict[str, Any]]:
@@ -1169,7 +1244,7 @@ class RedVectorAgent:
         (validated first). Raw evidence stays in the session; this is a summary view."""
         tgt = sess.current_target or sess.last_target
         out = []
-        for f in (sess.validated_findings + sess.candidate_findings):
+        for f in (sess.validated_findings + sess.candidate_findings + sess.inconclusive_findings):
             if tgt is None or f.get("target") == tgt:
                 out.append({"finding_id": f.get("finding_id"), "title": f.get("title"),
                             "tool": f.get("tool"), "status": f.get("status"),
@@ -1204,15 +1279,19 @@ class RedVectorAgent:
         user calling something "validated" never mutates this state."""
         sess.current_target = sess.last_target
         sess.last_tool = inv.tool_id
+        sess.last_action = inv.tool_id
+        sess.last_raw_result = result.data if result.data else None
+        sess.last_parsed_result = (result.data or {}).get("parsed")
         if stage:
             sess.last_stage = stage
-        sess.completed_actions.append({"stage": stage, "tool": inv.tool_id,
-                                       "target": sess.last_target, "status": result.status})
+        rec = {"stage": stage, "tool": inv.tool_id, "target": sess.last_target, "status": result.status}
+        (sess.completed_actions if result.ok else sess.failed_actions).append(rec)
 
         if stage == _planner.Stage.VULN_DISCOVERY and self._has_output(result):
             f = _evidence.new_finding("Candidate from %s" % inv.tool_id, inv.tool_id,
                                       sess.last_target, stage, _evidence.FindingStatus.CANDIDATE)
             sess.candidate_findings.append(f)
+            sess.evidence_references.append({"finding_id": f["finding_id"], "tool": inv.tool_id})
         elif stage == _planner.Stage.VULN_VALIDATION:
             ev = _evidence.derive_verdict(inv.tool_id, result, sess.last_target)
             if ev.verdict == _evidence.Verdict.CONFIRMED:
@@ -1222,18 +1301,19 @@ class RedVectorAgent:
                 f["provenance"].append(ev.to_dict())
                 sess.validated_findings.append(f)
             elif ev.verdict == _evidence.Verdict.REJECTED:
-                sess.candidate_findings.append(_evidence.new_finding(
+                sess.rejected_findings.append(_evidence.new_finding(
                     "Rejected by %s" % inv.tool_id, inv.tool_id, sess.last_target, stage,
                     _evidence.FindingStatus.REJECTED, ev.evidence_excerpt))
             else:  # INCONCLUSIVE: execution completed, no deterministic positive proof
-                sess.candidate_findings.append(_evidence.new_finding(
+                sess.inconclusive_findings.append(_evidence.new_finding(
                     "Inconclusive from %s" % inv.tool_id, inv.tool_id, sess.last_target, stage,
                     _evidence.FindingStatus.INCONCLUSIVE, ev.evidence_excerpt))
 
     def _finish(self, sess, msg, prov_id, prov_model, actions, events, t0=None, tool=None,
                 target=None, authorized=None, action_class=None, success=True,
                 needs_confirmation=False, tool_state=None, choices=None,
-                install_options=None, alternatives=None, stage=None, findings=None) -> AgentResponse:
+                install_options=None, alternatives=None, stage=None, findings=None,
+                raw_evidence=None) -> AgentResponse:
         sess.messages.append(AgentMessage("agent", msg))
         dur = (time.time() - t0) * 1000.0 if t0 else 0.0
         return AgentResponse(success=success, session_id=sess.session_id, message=msg,
@@ -1242,7 +1322,7 @@ class RedVectorAgent:
                              tool_state=tool_state, choices=choices or [],
                              install_options=install_options, alternatives=alternatives or [],
                              findings=findings or [], stage=stage,
-                             target=target, duration_ms=round(dur, 1))
+                             target=target, duration_ms=round(dur, 1), raw_evidence=raw_evidence)
 
     def _audit(self, sess, prov_id, prov_model, tool, target, authorized, status, t0, error_class) -> None:
         try:

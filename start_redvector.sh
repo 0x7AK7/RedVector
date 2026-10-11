@@ -114,15 +114,26 @@ if [ "$SETUP_CMD" = true ]; then
     exec "$VENV_PY" -m redvector.setup "$@"
 fi
 
-# First-run / interactive preflight. Exit 10 means "start RedVector normally";
-# any other code means the menu handled things and we should stop. Non-interactive
-# (MCP-client) launches always return 10 and never block on a menu.
-set +e
-"$VENV_PY" -m redvector.setup
-PREFLIGHT_RC=$?
-set -e
-if [ "$PREFLIGHT_RC" != "10" ]; then
-    exit "$PREFLIGHT_RC"
+# --chat is intercepted here: it needs the backend (for real tool execution) but
+# must NOT be forwarded to redvector.mcp.server. It runs the chat loop instead of MCP.
+CHAT_MODE=false
+for _a in "$@"; do
+    case "$_a" in --chat) CHAT_MODE=true ;; esac
+done
+
+# First-run / interactive preflight. Exit 10 means "start RedVector + MCP", 11 means
+# "start RedVector + chat"; any other code means the menu handled things and we stop.
+# Non-interactive (MCP-client) launches always return 10 and never block on a menu.
+if [ "$CHAT_MODE" != true ]; then
+    set +e
+    "$VENV_PY" -m redvector.setup "$@"   # forwards --menu; no args -> smart auto-start vs menu
+    PREFLIGHT_RC=$?
+    set -e
+    if [ "$PREFLIGHT_RC" = "11" ]; then
+        CHAT_MODE=true
+    elif [ "$PREFLIGHT_RC" != "10" ]; then
+        exit "$PREFLIGHT_RC"
+    fi
 fi
 
 # ---- 12/13/14. start backend if not already healthy ----
@@ -149,6 +160,10 @@ fi
 # ---- concise aggregated status (read-only) ----
 "$VENV_PY" -m redvector.setup --status || true
 
-# ---- 15. start the MCP client (replaces this process) ----
+# ---- 15. start the chat loop, or the MCP client (each replaces this process) ----
+if [ "$CHAT_MODE" = true ]; then
+    log "Starting RedVector AI chat..."
+    exec "$VENV_PY" -m redvector.setup --chat
+fi
 log "Starting MCP..."
 exec "$VENV_PY" -m redvector.mcp.server --server "http://${SERVER_HOST}:${SERVER_PORT}" "$@"

@@ -154,28 +154,38 @@ Connect an MCP client with `python -m redvector.mcp.server` (see [docs/AI_INTEGR
 
 ## Set up AI clients, providers, and harnesses
 
-The launcher includes a guided setup manager so you do not hand-edit MCP config files. On the first interactive run it shows a menu; later runs start RedVector directly.
+Usually you only need:
+
+```bash
+./start_redvector.sh
+```
+
+When an AI provider is configured, validated, and reachable, RedVector starts straight into the classic interface; otherwise it shows the main menu. Use `./start_redvector.sh --menu` to always show the menu.
 
 ```
 RedVector 8.0.0
 
-1. Start RedVector
-2. Connect an AI client
-3. Configure an AI provider
-4. Install or configure an AI harness
-5. Diagnostics
-6. Exit
+1. AI Providers      Choose the AI RedVector uses
+2. AI Clients        Connect external AI applications to RedVector
+3. Start RedVector
+4. AI Harnesses      Advanced: optional execution backends for specific workflows
+5. Diagnostics       Full installation / configuration / connection details
+6. Status            Quick system summary
+0. Exit
 ```
 
-You can also run commands directly:
+Every submenu offers `0. Main menu`, so you move between areas without restarting the launcher. "Start RedVector" shows the classic interface and, when an AI provider/model is active, opens the provider-agnostic chat (type `exit`, `quit`, or `0` to return to the menu).
+
+Power users can also jump straight to an action:
 
 ```bash
+./start_redvector.sh --chat                # RedVector AI chat
 ./start_redvector.sh --connect-claude      # add the RedVector MCP entry to Claude Desktop
 ./start_redvector.sh --connect-cursor      # add it to Cursor (~/.cursor/mcp.json)
 ./start_redvector.sh --setup-ai            # configure an AI provider (Ollama / Claude / Gemini / DeepSeek)
 ./start_redvector.sh --setup-harness       # DeepSeek Harness (optional)
 ./start_redvector.sh --diagnostics         # read-only health and capability report
-./start_redvector.sh --status             # concise startup status
+./start_redvector.sh --status              # concise startup status
 ```
 
 Windows uses the same flags with `.\start_redvector.ps1`. Client config changes are backup-first, atomic, preserve unrelated MCP servers, and repair stale entries; a valid config is reported `CONFIGURED` (RedVector never fakes `CONNECTED` for a desktop client). For Ollama, the recommended model is `dolphin-llama3:8b` (a recommendation only, not a dependency); custom models are validated and never pulled without confirmation. Secrets are stored through RedVector's credential store and never displayed. Full details, including supported vs unvalidated platforms and connection states, are in [docs/AI_SETUP.md](docs/AI_SETUP.md).

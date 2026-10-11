@@ -12,8 +12,32 @@ Keep these categories separate:
 
 Linux / Kali:
 
+RedVector is menu-first. Run the launcher with no arguments:
+
 ```bash
-./start_redvector.sh                 # first run shows a setup menu; later runs start RedVector
+./start_redvector.sh
+```
+
+```
+RedVector 8.0.0
+
+1. AI Providers      Choose the AI RedVector uses
+2. AI Clients        Connect external AI applications to RedVector
+3. Start RedVector
+4. AI Harnesses      Advanced: optional execution backends for specific workflows
+5. Diagnostics       Full installation / configuration / connection details
+6. Status            Quick system summary
+0. Exit
+```
+
+RedVector starts straight into the classic interface when an AI provider is configured, validated, and reachable; otherwise it shows this menu. Use `./start_redvector.sh --menu` to always show the menu.
+
+The menu runs in-process and loops: every submenu offers `0. Main menu`, actions return to the relevant menu, and you never restart the launcher to move between areas. Option 1 ensures the backend is running, loads the active AI provider/model, and opens the provider-agnostic chat (type `exit`, `quit`, or `0` to return to the menu). If no provider is configured, RedVector shows a short message and offers to configure one.
+
+Power users may still use flags directly (Windows PowerShell uses the same flags with `.\start_redvector.ps1`):
+
+```bash
+./start_redvector.sh --chat
 ./start_redvector.sh --connect-claude
 ./start_redvector.sh --connect-cursor
 ./start_redvector.sh --setup-ai
@@ -25,22 +49,7 @@ Linux / Kali:
 ./start_redvector.sh --disconnect-cursor
 ```
 
-Windows PowerShell uses the same flags with `.\start_redvector.ps1`.
-
-First-run menu:
-
-```
-RedVector 8.0.0
-
-1. Start RedVector
-2. Connect an AI client
-3. Configure an AI provider
-4. Install or configure an AI harness
-5. Diagnostics
-6. Exit
-```
-
-The menu appears only on the first interactive run (tracked by a local, git-ignored marker under `.redvector/`). Normal, non-interactive launches (for example when an MCP client starts RedVector) start RedVector directly and never block on a menu.
+Non-interactive launches (for example when an MCP client starts RedVector through `start_redvector.sh`) start the backend and MCP directly and never show a menu.
 
 ## AI clients
 

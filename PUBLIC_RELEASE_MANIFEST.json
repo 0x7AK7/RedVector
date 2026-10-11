@@ -1,7 +1,7 @@
 {
  "release_name": "redvector-public",
  "version": "8.0.0",
- "date": "2026-10-10",
+ "date": "2026-10-11",
  "purpose": "Curated public GitHub release, rebuilt byte-identically from the private candidate.",
  "source": "validated private release candidate",
  "layout": "redvector/ package + data/ + docs/ + launchers",
@@ -16,8 +16,8 @@
  "files": [
   {
    "path": ".gitignore",
-   "sha256": "14ab943162d48e1a5aec96870aa7bd9504bcd7133234285abe62dcf2eec97fa3",
-   "bytes": 688
+   "sha256": "b6f6c2ccb51ea746f338666c433c0fc449de0150bf07d22d8bfb3d6f1c8af706",
+   "bytes": 742
   },
   {
    "path": "LICENSE",
@@ -26,8 +26,8 @@
   },
   {
    "path": "README.md",
-   "sha256": "07d834ad01cc46605fb35e4f21576b54ee364b6b7854ddbe190d96cdd12bb29e",
-   "bytes": 20163
+   "sha256": "0345a0ee43e778efb2213749666ee4ae131383ba90e4d80c21bad5e8bde46128",
+   "bytes": 20829
   },
   {
    "path": "THIRD_PARTY_NOTICES.md",
@@ -46,28 +46,28 @@
   },
   {
    "path": "docs/AI_INTEGRATION.md",
-   "sha256": "552de74c0cf720b4c97c47bdaa5df28f6ef97fdb9bce34c66dd004754d0ee6a5",
-   "bytes": 2902
+   "sha256": "c931f79888915398dcb94fe2281f5331980d6793cd54b401acd8879bbce2639a",
+   "bytes": 2962
   },
   {
    "path": "docs/AI_SETUP.md",
-   "sha256": "7b978cbbdbefff081241a6f74c39b04e55de46f1290671f646ca1cb5a6b92cb5",
-   "bytes": 8567
+   "sha256": "2caa613c5e713d4f4fde158f48b8cfbfe29d0b67aa4312c145f67e9de080c89c",
+   "bytes": 9378
   },
   {
    "path": "docs/ARCHITECTURE.md",
-   "sha256": "659ef7269564cebd12a88deb355e7edd5a894ff39a27210b2d1fe99bf7cfde2f",
-   "bytes": 2607
+   "sha256": "9094267fd7fdf419df302db788931cc8185cc17d0550a32a5527613757de530b",
+   "bytes": 2659
   },
   {
    "path": "docs/CONFIGURATION.md",
-   "sha256": "54abc366e255cd9e8f268c271fb41e61627bf52763ddd40e72cf49d259a2cd71",
-   "bytes": 3566
+   "sha256": "b7c30958e4d6d4442c29f5b5960b11297aa053e993b0b5a8ae4502b1a2efdfb2",
+   "bytes": 3629
   },
   {
    "path": "docs/INSTALLATION.md",
-   "sha256": "320cc5b89c4f2d1f57865cf724de1ca3f2e0fdb2df27501dd2760e02d093c160",
-   "bytes": 1784
+   "sha256": "88e852e50f00f7051ee8064411af8a30fb252f6986484f6c1c8b198b4265def6",
+   "bytes": 1850
   },
   {
    "path": "docs/SECURITY.md",
@@ -76,8 +76,8 @@
   },
   {
    "path": "docs/SECURITY_TOOLS.md",
-   "sha256": "ed7bd4d33bcc686ea3001a5ec60f8c1287d907ff16e6b56015ab0869e1426a6d",
-   "bytes": 8011
+   "sha256": "711b3dec22947ff56ce2bf6d2148a28ac699c9f11a27b92c5ace1faede1b563a",
+   "bytes": 8176
   },
   {
    "path": "docs/examples/ollama-mcp.json",
@@ -185,6 +185,11 @@
    "bytes": 536
   },
   {
+   "path": "redvector/setup/chat.py",
+   "sha256": "693f49f98b43eaff038c04e0f9816d84c5ff9f486fcb5aaf6e09158b9661ecb3",
+   "bytes": 5494
+  },
+  {
    "path": "redvector/setup/clients.py",
    "sha256": "c8240ad5c9cc52860b9809e3d6a0d88a52b6dfd1b50d602f8427999e56db18b2",
    "bytes": 12228
@@ -201,8 +206,8 @@
   },
   {
    "path": "redvector/setup/manager.py",
-   "sha256": "01d4187821e01591ef0cc138b6eafd0c1c124016bf808050e9af8ad0e694463d",
-   "bytes": 21235
+   "sha256": "fafbc3b56e1ad083380d76c9788a719eada2428066b7afaada3c92125754a35f",
+   "bytes": 31410
   },
   {
    "path": "redvector/setup/platform_probe.py",
@@ -226,8 +231,8 @@
   },
   {
    "path": "redvector/setup/terminal.py",
-   "sha256": "c086f9a42ed522603f23862ea9645f81d9d12486a945db6f8bbfc52335a24f6f",
-   "bytes": 5315
+   "sha256": "c3c259c17cb0b02b1900e3478b7a274fa02a706ce2b77e8ae458587b181aa907",
+   "bytes": 6850
   },
   {
    "path": "redvector/setup/vendors.py",
@@ -256,13 +261,13 @@
   },
   {
    "path": "start_redvector.ps1",
-   "sha256": "5685f9dc822609e2ec0791fe2ff911654dbe29533e3a0e52abd08f6ed95bbefb",
-   "bytes": 6279
+   "sha256": "387823e36c2ea2309112159d0fa325d402d84fcd562a3ac58006392ca34904e7",
+   "bytes": 6814
   },
   {
    "path": "start_redvector.sh",
-   "sha256": "4d5cc93130fe544ec1e1e9faebca31ea21bfe2618dc16842c7c3c9d101ae98b7",
-   "bytes": 6104
+   "sha256": "383f9e0f2440a5f81aa248f8efeef965c6cc2c0ad30f5eb5b91c761e44069b58",
+   "bytes": 6724
   }
  ]
 }

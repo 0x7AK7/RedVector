@@ -103,10 +103,18 @@ if ($IsSetupCmd) {
     exit $LASTEXITCODE
 }
 
-# First-run / interactive preflight. Exit 10 means "start RedVector normally".
-& $VenvPy -m redvector.setup
-$PreflightRc = $LASTEXITCODE
-if ($PreflightRc -ne 10) { exit $PreflightRc }
+# --chat is intercepted here: it needs the backend but must NOT be forwarded to
+# redvector.mcp.server; it runs the chat loop instead of MCP.
+$ChatMode = $false
+foreach ($a in $args) { if ($a -eq "--chat") { $ChatMode = $true } }
+
+# First-run / interactive preflight. Exit 10 = start RedVector + MCP, 11 = start + chat.
+if (-not $ChatMode) {
+    & $VenvPy -m redvector.setup @args   # forwards --menu; no args -> smart auto-start vs menu
+    $PreflightRc = $LASTEXITCODE
+    if ($PreflightRc -eq 11) { $ChatMode = $true }
+    elseif ($PreflightRc -ne 10) { exit $PreflightRc }
+}
 
 # ---- 11/12/13. start backend if not already healthy ----
 $Running = $false
@@ -139,6 +147,11 @@ if ($Running) {
 # ---- concise aggregated status (read-only) ----
 & $VenvPy -m redvector.setup --status
 
-# ---- 14. start the MCP client ----
+# ---- 14. start the chat loop, or the MCP client ----
+if ($ChatMode) {
+    Log "Starting RedVector AI chat..."
+    & $VenvPy -m redvector.setup --chat
+    exit $LASTEXITCODE
+}
 Log "Starting MCP..."
 & $VenvPy -m redvector.mcp.server --server "http://${ServerHost}:${ServerPort}" @args

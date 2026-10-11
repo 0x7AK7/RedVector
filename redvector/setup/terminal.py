@@ -23,6 +23,7 @@ _CODES = {
 _STATUS_COLOR = {
     "READY": "green", "CONNECTED": "green", "PASS": "green", "OK": "green",
     "CONFIGURED": "green", "ADDED": "green", "UPDATED": "green", "INSTALLED": "green",
+    "LIVE": "green", "ARMED": "red",
     "INFO": "cyan", "DETECTED": "cyan",
     "WARN": "yellow", "RESTART REQUIRED": "yellow", "MANUAL REQUIRED": "yellow",
     "NOT CONFIGURED": "yellow", "NOT INSTALLED": "yellow", "PREVIEW": "yellow",
@@ -107,6 +108,26 @@ class Terminal:
             self.write(ln)
         return lines
 
+    def classic_banner(self, host: str = "127.0.0.1", port: str = "8888") -> None:
+        """The classic RedVector red-team startup identity (compact, not a giant
+        ASCII replacement). Preserves branding, By Adam K., the pipeline lines, and
+        ARMED. Respects NO_COLOR / non-TTY."""
+        self.write()
+        self.write(self.colorize("R E D V E C T O R", "red"))
+        self.write(self.colorize("By Adam K.", "dim"))
+        self.write(self.colorize("-" * 60, "dim"))
+        rows = [
+            ("THREAT FRAMEWORK", "325 attack vectors across 33 autonomous engines"),
+            ("EXECUTION MODE", "real tool chains (recon -> exploit -> report)"),
+            ("OFFENSIVE PIPELINE", "8-stage lifecycle: recon > exploit > persist > exfil"),
+            ("AI DECISION ENGINE", "adaptive replanning with fallback chains"),
+        ]
+        for label, value in rows:
+            self.write("  %s %s %s" % (self.colorize("|> " + label.ljust(18), "cyan"),
+                                       self.colorize("|", "red"), self.colorize(value, "green")))
+        self.write(self.colorize("-" * 60, "dim"))
+        self.status("ARMED", "Authorized red team operations only on %s:%s." % (host, port))
+
     def menu(self, title: str, options: List[str]) -> None:
         self.write()
         self.write(self.colorize(title, "cyan"))
@@ -123,19 +144,23 @@ class Terminal:
             self.write()
             return ""
 
-    EOF = -1   # choose() sentinel: input stream ended (no interactive responder)
+    EOF = -1       # input stream ended (no interactive responder)
+    INVALID = -2   # garbage / out-of-range input -> caller should reprompt
 
-    def choose(self, title: str, options: List[str]) -> int:
-        """Render a menu and return the 1-based choice, 0 for invalid/out-of-range,
-        or Terminal.EOF (-1) when the input stream ended with no response."""
+    def choose(self, title: str, options: List[str], back_label: str = "Main menu") -> int:
+        """Render a numbered menu (1..N) plus a '0. <back_label>' entry and return:
+        the 1-based choice, 0 for the back/exit entry, Terminal.EOF (-1) on end-of-
+        input, or Terminal.INVALID (-2) for unrecognized input."""
         self.menu(title, options)
+        if back_label:
+            self.write("%s %s" % (self.colorize("0.", "cyan"), back_label))
         raw = self.ask(self.colorize("Select> ", "cyan"))
         if self.eof:
             return self.EOF
-        if not raw:
-            return 0
         try:
             n = int(raw)
         except ValueError:
+            return self.INVALID
+        if n == 0:
             return 0
-        return n if 1 <= n <= len(options) else 0
+        return n if 1 <= n <= len(options) else self.INVALID

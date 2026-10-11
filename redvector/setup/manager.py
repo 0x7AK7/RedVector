@@ -29,9 +29,32 @@ from redvector.setup.diagnostics import Diagnostics
 from redvector.setup import reconnect as _reconnect
 from redvector.setup import vendors
 from redvector.setup import status as _S
+from redvector.setup.chat import ChatSession
 
-START_REDVECTOR = 10   # launcher exit-code contract
+START_REDVECTOR = 10   # launcher exit-code contract: start backend + MCP
+START_CHAT = 11        # launcher exit-code contract: start backend + chat
 HANDLED = 0
+
+
+def _default_chat_agent_call(env):
+    """POST a chat turn to the local backend's /api/agent/chat (real tool execution)."""
+    import json as _json
+    import urllib.request
+    host = env.get("REDVECTOR_HOST", "127.0.0.1")
+    port = env.get("REDVECTOR_PORT", "8888")
+    token = env.get("REDVECTOR_API_TOKEN", "redvector-dev-token")
+    url = "http://%s:%s/api/agent/chat" % (host, port)
+
+    def call(message, session_id, authorization, confirm):
+        payload = {"message": message, "session_id": session_id,
+                   "authorization": authorization, "confirm": bool(confirm)}
+        data = _json.dumps(payload).encode()
+        req = urllib.request.Request(url, data=data, method="POST",
+                                     headers={"Content-Type": "application/json",
+                                              "Authorization": "Bearer %s" % token})
+        with urllib.request.urlopen(req, timeout=300) as r:  # noqa: S310 (local backend)
+            return _json.loads(r.read().decode("utf-8", "replace"))
+    return call
 
 # DSH observable-state -> display tag (READY only when actually reachable).
 _DSH_TAG = {"READY": "READY", "INSTALLED_STOPPED": "INSTALLED / STOPPED",
@@ -60,6 +83,37 @@ def _default_backend_probe(env: Optional[dict] = None) -> Callable[[], bool]:
     return probe
 
 
+def _default_backend_starter(env, probe, sleeper):
+    """Start `python -m redvector` detached and wait (bounded) for health. Used by
+    the in-process menu so the user never has to manage the backend by hand."""
+    import subprocess
+    host = env.get("REDVECTOR_HOST", "127.0.0.1")
+    port = env.get("REDVECTOR_PORT", "8888")
+
+    def start() -> bool:
+        if probe():
+            return True
+        creationflags = 0
+        kwargs = {}
+        if os.name == "nt":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | \
+                getattr(subprocess, "DETACHED_PROCESS", 0)
+            kwargs["creationflags"] = creationflags
+        else:
+            kwargs["start_new_session"] = True   # detach so it survives this process
+        try:
+            subprocess.Popen([sys.executable, "-m", "redvector", "--port", str(port), "--host", str(host)],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)  # noqa: S603
+        except Exception:
+            return False
+        for _ in range(30):
+            if probe():
+                return True
+            sleeper(1)
+        return False
+    return start
+
+
 class AIIntegrationSetupManager:
     def __init__(self, terminal: Optional[Terminal] = None,
                  platform_probe: Optional[PlatformProbe] = None,
@@ -70,8 +124,15 @@ class AIIntegrationSetupManager:
                  backend_probe: Optional[Callable[[], bool]] = None,
                  marker_path: Optional[str] = None,
                  sleeper: Optional[Callable[[float], None]] = None,
-                 env: Optional[dict] = None) -> None:
+                 env: Optional[dict] = None,
+                 chat_agent_call: Optional[Callable[..., Dict[str, Any]]] = None,
+                 backend_starter: Optional[Callable[[], bool]] = None,
+                 readiness_fn: Optional[Callable[[str, str], bool]] = None) -> None:
         self.env = env if env is not None else os.environ
+        self._chat_agent_call = chat_agent_call
+        self._backend_starter = backend_starter
+        self._readiness_fn = readiness_fn
+        self._ai_disabled = False   # session-scoped "continue without AI"; never persisted
         self.t = terminal or Terminal(env=self.env)
         self.platform = platform_probe or PlatformProbe()
         self.clients = client_setup or ClientSetup()
@@ -88,6 +149,8 @@ class AIIntegrationSetupManager:
             self.clients, self.providers, self.harness, backend_probe=self.backend_probe)
         self.marker_path = marker_path or os.path.join(_project_root(), ".redvector", "firstrun")
         self.sleeper = sleeper or __import__("time").sleep
+        if self._backend_starter is None:
+            self._backend_starter = _default_backend_starter(self.env, self.backend_probe, self.sleeper)
 
     # ---- first-run marker (local, non-secret, git-ignored) ----
     def firstrun_done(self) -> bool:
@@ -113,6 +176,10 @@ class AIIntegrationSetupManager:
         args = list(argv or [])
         flags = {a for a in args if a.startswith("--")}
 
+        if "--menu" in flags:
+            return self.main_menu()        # always the menu, even when AI is ready
+        if "--chat" in flags:
+            self.chat_cli(); return HANDLED
         if "--diagnostics" in flags:
             self.print_diagnostics(); return HANDLED
         if "--status" in flags:
@@ -137,10 +204,32 @@ class AIIntegrationSetupManager:
 
         # no recognized command
         if not self._interactive():
-            return START_REDVECTOR            # MCP-client / piped launch -> start normally
-        if self.firstrun_done():
+            # MCP-client / piped / redirected launch -> start backend + MCP, never a menu.
             return START_REDVECTOR
+        # Smart auto-start: drop straight into the classic RedVector interface only when
+        # the AI is actually ready (persisted + valid + reachable + model usable). Stale or
+        # unreachable persistence does NOT count as ready; those get the main menu.
+        if self.ai_ready():
+            self.start_redvector()
         return self.main_menu()
+
+    def ai_ready(self) -> bool:
+        if self._ai_disabled:
+            return False
+        active = self.providers.manager.active()
+        pid = active.get("active_provider")
+        if not pid:
+            return False
+        model = active.get("active_model") or ""
+        if self._readiness_fn is not None:
+            try:
+                return bool(self._readiness_fn(pid, model))
+            except Exception:
+                return False
+        try:
+            return bool(self.providers.test(pid, model).get("ok"))
+        except Exception:
+            return False
 
     def _interactive(self) -> bool:
         """Interactive only when BOTH stdin and stdout are real TTYs (never for
@@ -167,42 +256,117 @@ class AIIntegrationSetupManager:
     # Menus
     # ======================================================================
     def main_menu(self) -> int:
+        """Menu-first entry. Runs in-process and loops: actions return here, never
+        restart the launcher. 0 = Exit. Items are ordered Providers, Clients, Start,
+        Harnesses, Diagnostics, Status (intentional)."""
         self.t.banner()
+        self.mark_firstrun()
         while True:
-            choice = self.t.choose("RedVector %s" % __version__, [
-                "Start RedVector", "Connect an AI client", "Configure an AI provider",
-                "Install or configure an AI harness", "Diagnostics", "Exit"])
-            if choice == self.t.EOF:
-                # No interactive responder (e.g. NUL stdin): start RedVector safely.
-                return START_REDVECTOR
-            if choice == 6:
+            # Warn (do not auto-start into) a configured-but-not-ready provider.
+            active = self.providers.manager.active()
+            if active.get("active_provider") and not self.ai_ready():
+                self.t.warn("Configured AI provider (%s) is not ready." % active["active_provider"])
+            c = self.t.choose("RedVector %s" % __version__, [
+                "AI Providers       (choose the AI RedVector uses)",
+                "AI Clients         (connect external AI apps to RedVector)",
+                "Start RedVector",
+                "AI Harnesses       (advanced: optional execution backends)",
+                "Diagnostics        (full installation / configuration / connection)",
+                "Status             (quick system summary)"], back_label="Exit")
+            if c in (self.t.EOF, 0):
                 return HANDLED
-            if choice == 1:
-                self.mark_firstrun(); return START_REDVECTOR
-            if choice == 2:
-                self.client_menu()
-            elif choice == 3:
+            if c == self.t.INVALID:
+                continue
+            if c == 1:
                 self.provider_menu()
-            elif choice == 4:
-                self.harness_flow()
-            elif choice == 5:
+            elif c == 2:
+                self.client_menu()
+            elif c == 3:
+                self.start_redvector()
+            elif c == 4:
+                self.harness_menu()
+            elif c == 5:
                 self.print_diagnostics()
-            # choice == 0 (invalid/out-of-range): reprompt
+            elif c == 6:
+                self.print_status()
+
+    def classic_startup(self) -> None:
+        self.t.classic_banner(self.env.get("REDVECTOR_HOST", "127.0.0.1"),
+                              self.env.get("REDVECTOR_PORT", "8888"))
+
+    def start_redvector(self) -> None:
+        """Option 3 / auto-start: classic RedVector interface. Shows the classic
+        red-team identity, ensures the backend, and opens the provider-agnostic chat
+        when AI is ready (otherwise runs in manual mode). Returns to the main menu."""
+        self.classic_startup()
+        if not self.ensure_backend():
+            return
+        if self._ai_disabled or not self.ai_ready():
+            active = self.providers.manager.active()
+            if not active.get("active_provider"):
+                self.t.info("RedVector is running without an AI provider. "
+                            "Choose '1. AI Providers' to configure one.")
+            else:
+                self.t.warn("The configured AI provider is not ready; running in manual mode. "
+                            "Use '1. AI Providers' to repair or switch it.")
+            return
+        active = self.providers.manager.active()
+        self.t.write()
+        self.t.status("LIVE", "All systems operational. Awaiting engagement.")
+        self.t.info("AI: %s / %s" % (active["active_provider"], active.get("active_model") or "(default)"))
+        result = self.chat_cli()
+        if result == "switch_provider":
+            self.provider_menu()
+        elif result == "disable_ai":
+            self._ai_disabled = True   # session-scoped; a new process re-detects readiness
+
+    def ensure_backend(self) -> bool:
+        if self.backend_probe():
+            return True
+        self.t.status("INFO", "Starting RedVector backend...")
+        try:
+            ok = bool(self._backend_starter())
+        except Exception:
+            ok = False
+        if ok:
+            self.t.status("READY", "Backend ready.")
+            return True
+        self.t.status("FAILED", "Could not start the RedVector backend. Check logs and try again.")
+        return False
 
     def client_menu(self) -> None:
         info = self.platform.detect()
-        choice = self.t.choose("Connect an AI client", [
-            "Claude Desktop", "Cursor", "ChatGPT", "Other MCP client", "Back"])
-        if choice <= 0 or choice == 5:
-            return
-        if choice == 1:
-            self._client_flow("claude_desktop", vendors.ClaudeDesktopVendor(), info)
-        elif choice == 2:
-            self._client_flow("cursor", vendors.CursorVendor(), info)
-        elif choice == 3:
-            self._chatgpt_flow(vendors.ChatGPTVendor(), info)
-        elif choice == 4:
-            self._generic_client_flow()
+        while True:
+            c = self.t.choose("Connect an AI client", [
+                "Claude Desktop", "Claude Code", "Cursor", "ChatGPT", "Other MCP client"],
+                back_label="Main menu")
+            if c in (self.t.EOF, 0):
+                return
+            if c == self.t.INVALID:
+                continue
+            if c == 1:
+                self._client_flow("claude_desktop", vendors.ClaudeDesktopVendor(), info)
+            elif c == 2:
+                self._claude_code_flow()
+            elif c == 3:
+                self._client_flow("cursor", vendors.CursorVendor(), info)
+            elif c == 4:
+                self._chatgpt_flow(vendors.ChatGPTVendor(), info)
+            elif c == 5:
+                self._generic_client_flow()
+
+    def _claude_code_flow(self) -> None:
+        """Claude Code is the `claude` CLI, DISTINCT from Claude Desktop."""
+        cc = self.clients.claude_code()
+        if cc["installation"] == _S.INSTALLED:
+            self.t.status("INSTALLED", "Claude Code %s" % (cc.get("version") or ""))
+            self.t.hint("Claude Code manages its own MCP servers. Add RedVector with its CLI, e.g.:")
+            self.t.hint("  claude mcp add redvector -- python -m redvector.mcp.server --server "
+                        "http://%s:%s" % (self.env.get("REDVECTOR_HOST", "127.0.0.1"),
+                                          self.env.get("REDVECTOR_PORT", "8888")))
+        else:
+            self.t.status("NOT INSTALLED", "Claude Code (the `claude` CLI) was not found.")
+            self.t.hint("Install Claude Code from the official source, then re-run.")
 
     def _client_flow(self, client_id: str, vendor, info) -> None:
         support = vendor.support_for(info)
@@ -217,7 +381,8 @@ class AIIntegrationSetupManager:
             self.t.status("MANUAL REQUIRED", "Install %s, then re-run this setup." % vendor.display_name)
             return
         choice = self.t.choose("%s: %s" % (vendor.display_name, st["state"]), [
-            "Connect / update RedVector MCP entry", "Show status", "Disconnect RedVector", "Back"])
+            "Connect / update RedVector MCP entry", "Show status", "Disconnect RedVector"],
+            back_label="Back")
         if choice == 1:
             self._report_client_action(self.clients.connect(client_id))
         elif choice == 2:
@@ -241,20 +406,44 @@ class AIIntegrationSetupManager:
         self.t.hint("RedVector does not auto-edit unknown third-party configuration files.")
 
     def provider_menu(self) -> None:
-        choice = self.t.choose("Configure an AI provider", [
-            "Ollama", "Claude API", "Gemini API", "DeepSeek API", "Show provider status", "Back"])
-        if choice <= 0 or choice == 6:
-            return
-        if choice == 1:
-            self.provider_flow("ollama")
-        elif choice == 2:
-            self.provider_flow("claude")
-        elif choice == 3:
-            self.provider_flow("gemini")
-        elif choice == 4:
-            self.provider_flow("deepseek")
-        elif choice == 5:
-            self.print_provider_status()
+        while True:
+            c = self.t.choose("Configure an AI provider", [
+                "Ollama", "Claude API", "Gemini API", "DeepSeek API", "Provider status"],
+                back_label="Main menu")
+            if c in (self.t.EOF, 0):
+                return
+            if c == self.t.INVALID:
+                continue
+            if c == 1:
+                self.provider_flow("ollama")
+            elif c == 2:
+                self.provider_flow("claude")
+            elif c == 3:
+                self.provider_flow("gemini")
+            elif c == 4:
+                self.provider_flow("deepseek")
+            elif c == 5:
+                self.print_provider_status()
+
+    def harness_menu(self) -> None:
+        while True:
+            c = self.t.choose("Configure an AI harness", [
+                "DeepSeek Harness", "Harness status"], back_label="Main menu")
+            if c in (self.t.EOF, 0):
+                return
+            if c == self.t.INVALID:
+                continue
+            if c == 1:
+                self.harness_flow()
+            elif c == 2:
+                self._harness_status()
+
+    def _harness_status(self) -> None:
+        node = self.harness.node_entity()
+        self.t.status(node["installation"].replace("_", " "),
+                      "Node.js %s (prerequisite)" % (node["version"] or "absent"))
+        dsh = self.harness.unified()
+        self.t.status(_DSH_TAG.get(dsh["state"], "NOT INSTALLED"), "DeepSeek Harness")
 
     def provider_flow(self, provider_id: str) -> None:
         provider_id = (provider_id or "").lower()
@@ -291,10 +480,10 @@ class AIIntegrationSetupManager:
         self.t.info("Recommended model: %s" % rec["model"])
         self.t.hint(rec["note"])
         opts = ["Install recommended model: %s" % rec["model"],
-                "Choose an already installed model", "Enter a custom Ollama model name",
-                "Continue without selecting a model", "Back"]
-        choice = self.t.choose("Ollama model (installed: %s)" % (models or "none"), opts)
-        if choice <= 0 or choice in (4, 5):
+                "Choose an already installed model", "Enter a custom Ollama model name"]
+        choice = self.t.choose("Ollama model (installed: %s)" % (models or "none"), opts,
+                               back_label="Back")
+        if choice <= 0 or choice == self.t.INVALID:
             return
         if choice == 1:
             self._ollama_pull_and_activate(rec["model"])
@@ -302,7 +491,7 @@ class AIIntegrationSetupManager:
             if not models:
                 self.t.warn("No installed models found.")
                 return
-            sub = self.t.choose("Installed models", models + ["Back"])
+            sub = self.t.choose("Installed models", models, back_label="Back")
             if 1 <= sub <= len(models):
                 self._ollama_activate(models[sub - 1])
         elif choice == 3:
@@ -336,6 +525,14 @@ class AIIntegrationSetupManager:
             self.t.status("CONFIGURED", "Active provider: Ollama | Active model: %s" % name)
         else:
             self.t.status("WARN", "Activation: %s" % r["message"])
+
+    def chat_cli(self):
+        """Provider-agnostic chat loop over the existing agent (uses the active
+        provider/model; executes through the running backend). Returns the chat's
+        control signal ('exit' | 'switch_provider' | 'disable_ai')."""
+        agent_call = self._chat_agent_call or _default_chat_agent_call(self.env)
+        return ChatSession(self.t, active_fn=self.providers.manager.active,
+                           agent_call=agent_call).run()
 
     def harness_flow(self) -> None:
         pre = self.harness.prerequisites()
@@ -384,16 +581,27 @@ class AIIntegrationSetupManager:
             self.t.write("    Connection:    %s" % self.t.tagged(_S.disp(entity["connection"])))
 
     def print_status(self) -> Dict[str, Any]:
-        """Concise startup status (Step 37) with bounded backend recovery."""
-        self.t.banner()
-        rec = self.recover_backend()
+        """Concise, scannable system summary (shorter than Diagnostics)."""
+        backend_ok = self.backend_probe()
+        active = self.providers.manager.active()
+        pid = active.get("active_provider")
+        model = active.get("active_model")
+        ready = self.ai_ready()
+        self.t.write(self.t.colorize("RedVector %s status" % __version__, "cyan"))
+        self.t.write("  %-14s %s" % ("Backend", self.t.tagged("READY" if backend_ok else "NOT CONNECTED")))
+        self.t.write("  %-14s %s" % ("MCP", self.t.tagged("READY" if backend_ok else "NOT CONNECTED")))
+        self.t.write("  %-14s %s" % ("AI Provider", pid or self.t.tagged("NOT CONFIGURED")))
+        if pid:
+            self.t.write("  %-14s %s" % ("AI Model", model or "(provider default)"))
+            self.t.write("  %-14s %s" % ("AI Connection", self.t.tagged("CONNECTED" if ready else "NOT CONNECTED")))
         self.t.write()
-        self.t.write(self.t.colorize("Core", "cyan"))
-        self.t.status("READY" if rec.ok else "FAILED", "Backend")
-        self.t.status("READY" if rec.ok else "DEGRADED", "MCP (viability depends on backend)")
-        data = self.diagnostics.collect()
-        self._render_ai_sections(data)
-        return {"backend": rec.to_dict()}
+        self.t.write(self.t.colorize("Clients:", "cyan"))
+        for cid in ("claude_desktop", "cursor", "chatgpt"):
+            st = self.clients.unified(cid)
+            self.t.write("  %-15s %s" % (st.get("display_name", cid), self.t.tagged(_S.disp(st["installation"]))))
+        cc = self.clients.claude_code()
+        self.t.write("  %-15s %s" % ("Claude Code", self.t.tagged(_S.disp(cc["installation"]))))
+        return {"backend": backend_ok, "ai_ready": ready, "active_provider": pid}
 
     def print_diagnostics(self) -> Dict[str, Any]:
         data = self.diagnostics.collect()

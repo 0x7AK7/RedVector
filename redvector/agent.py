@@ -36,6 +36,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from redvector import ai_integration as _ai
 from redvector import planner as _planner
+from redvector import evidence as _evidence
 
 
 # ============================================================================
@@ -154,7 +155,12 @@ class AgentSession:
 class AgentRequest:
     message: str
     session_id: Optional[str] = None
-    authorization: AuthorizationContext = field(default_factory=AuthorizationContext)
+    # Optional/None semantics (Phase 10.5 Fix #4): None means "no authorization
+    # update supplied in this message" -> reuse the session's authorized scope. A
+    # provided context with targets validates/replaces scope; a provided context
+    # with authorized=False is an explicit revoke. A missing follow-up target is
+    # NEVER silently converted into an empty scope that wipes the engagement.
+    authorization: Optional[AuthorizationContext] = None
     confirm: bool = False            # user confirmed a pending higher-impact action
     # Structured follow-up to an install/alternative offer, e.g.
     # {"action": "install"|"use_alternative"|"cancel", "tool": <id>, "confirm": bool}
@@ -176,6 +182,12 @@ class AgentResponse:
     choices: List[str] = field(default_factory=list)
     install_options: Optional[Dict[str, Any]] = None
     alternatives: List[str] = field(default_factory=list)
+    # Structured finding snapshot (lifecycle status + provenance) for the result UX.
+    findings: List[Dict[str, Any]] = field(default_factory=list)
+    # Stage / target echo so the client can render a structured result header.
+    stage: Optional[str] = None
+    target: Optional[str] = None
+    duration_ms: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -191,6 +203,10 @@ class AgentResponse:
             "choices": self.choices,
             "install_options": self.install_options,
             "alternatives": self.alternatives,
+            "findings": self.findings,
+            "stage": self.stage,
+            "target": self.target,
+            "duration_ms": self.duration_ms,
         }
 
 
@@ -431,12 +447,13 @@ class ToolSelector:
         self._reg = registry_adapter
 
     def select(self, intent: ToolIntent) -> Optional[ToolCandidate]:
+        # Only an explicitly named, registered tool is honoured here. There is NO
+        # generic recon fallback (Phase 10.5 Fix #4): an unresolved action must never
+        # silently become an nmap/recon scan. Capability resolution + the planner's
+        # UNKNOWN clarification handle everything else.
         tid = intent.keyword
         if tid and self._reg.has(tid):
             return self._reg.candidate(tid)
-        # fall back to a safe default recon tool only if a target is present
-        if intent.target and self._reg.has("nmap"):
-            return self._reg.candidate("nmap")
         return None
 
     def validate_proposed(self, tool_id: str) -> Optional[ToolCandidate]:
@@ -723,14 +740,18 @@ class RedVectorAgent:
     def handle(self, req: AgentRequest) -> AgentResponse:
         t0 = time.time()
         sess = self.conv.get_or_create(req.session_id)
-        # Scope persistence: a request that carries NEW explicit targets overrides and
-        # rescopes the session; a follow-up that carries none (e.g. "exploit it") must
-        # keep the session's existing authorized scope instead of wiping it. A first
-        # authorization with no prior scope is also adopted.
-        if req.authorization and req.authorization.targets:
-            sess.authorization = req.authorization
-        elif req.authorization and req.authorization.authorized and not sess.authorization.targets:
-            sess.authorization = req.authorization
+        # Session-level authorization (Phase 10.5 Fix #4). Scope belongs to the
+        # engagement/session, not to a single message:
+        #   * authorization is None  -> no update supplied -> reuse session scope;
+        #   * authorized + targets   -> validate/replace the session scope;
+        #   * authorized=False       -> explicit revoke -> clear the session scope;
+        #   * authorized + no targets-> ambiguous no-op -> reuse (never silently wipe).
+        auth = req.authorization
+        if auth is not None:
+            if not auth.authorized:
+                sess.authorization = AuthorizationContext()
+            elif auth.targets:
+                sess.authorization = auth
         ctx = sess.authorization
         sess.messages.append(AgentMessage("user", req.message))
         events: List[str] = ["Understanding request"]
@@ -770,6 +791,17 @@ class RedVectorAgent:
         plan = self.planner.plan(req.message, sess, intent)
         events.append("Planning: %s" % plan.stage)
 
+        # ---- unknown intent: ask for clarification; NEVER silently run recon ----
+        if plan.stage == _planner.Stage.UNKNOWN:
+            events.append("Completed")
+            return self._finish(sess, "I could not determine a safe RedVector action from that request. "
+                                "Tell me the action you want (for example: reconnaissance, service "
+                                "enumeration, vulnerability discovery, validation, or exploitation) and "
+                                "an authorized target, and I will plan it.",
+                                prov_id, prov_model, [{"status": "needs_clarification", "stage": plan.stage}],
+                                events, t0, None, sess.current_target or sess.last_target,
+                                ctx.authorized, "read_only", False)
+
         # ---- follow-up: summarize / report from session, no re-execution ----
         if plan.stage in (_planner.Stage.SUMMARY, _planner.Stage.REPORT):
             if sess.last_result is not None:
@@ -792,10 +824,16 @@ class RedVectorAgent:
         #      run blind recon and never fabricate exploitability ----
         if plan.reason_code == "exploit_requires_validated_finding":
             events.append("Completed")
-            msg = ("No validated exploitable finding has been established for this engagement yet, so "
-                   "I will not attempt exploitation or assume the target is exploitable. The next step "
-                   "is to validate a candidate weakness against an authorized target; tell me which "
-                   "finding to validate (or run a vulnerability check first) and I will proceed.")
+            ncand = len(sess.candidate_findings)
+            if ncand:
+                tail = ("I have %d candidate/inconclusive finding(s) on record but none are VALIDATED. "
+                        "I can run a validation step against an authorized target to establish evidence "
+                        "first; say which to validate (or 'validate the findings') and I will proceed." % ncand)
+            else:
+                tail = ("There are no findings on record yet. Run a vulnerability discovery step first, "
+                        "then validation, and I will have evidence to work from.")
+            msg = ("No VALIDATED exploitable finding has been established for this engagement, so I will "
+                   "not attempt exploitation or assume the target is exploitable. " + tail)
             return self._finish(sess, msg, prov_id, prov_model,
                                 [{"status": "exploitation_blocked_no_validated_finding",
                                   "stage": plan.stage}], events, t0, None,
@@ -1122,72 +1160,89 @@ class RedVectorAgent:
                     result.status, t0, None if result.ok else "ToolError")
         return self._finish(sess, answer, prov_id, prov_model,
                             [{"tool": inv.tool_id, "status": result.status, "stage": stage}], events, t0,
-                            inv.tool_id, sess.last_target, ctx.authorized, inv.action_class.value, result.ok)
+                            inv.tool_id, sess.last_target, ctx.authorized, inv.action_class.value, result.ok,
+                            stage=stage, findings=self._findings_snapshot(sess))
 
     @staticmethod
-    def _finding_signal(result) -> str:
-        """Classify a tool result's evidentiary strength from its REAL data only -
-        never from the request wording, and never by interpreting output prose.
+    def _findings_snapshot(sess) -> List[Dict[str, Any]]:
+        """Compact, UI-ready view of the session's findings for the current target
+        (validated first). Raw evidence stays in the session; this is a summary view."""
+        tgt = sess.current_target or sess.last_target
+        out = []
+        for f in (sess.validated_findings + sess.candidate_findings):
+            if tgt is None or f.get("target") == tgt:
+                out.append({"finding_id": f.get("finding_id"), "title": f.get("title"),
+                            "tool": f.get("tool"), "status": f.get("status"),
+                            "evidence": (f.get("evidence") or "")[:160]})
+        return out
 
-        Returns:
-          * 'validated' - the integration emitted an explicit positive verdict
-            (a structured ``vulnerable``/``validated``/``exploited``/``confirmed`` key);
-          * 'output'    - the tool completed and returned SUBSTANTIVE output
-            (non-empty findings / parsed / stdout) for the operator to judge;
-          * 'none'      - did not complete, an explicit negative verdict, or an
-            empty / filtered / no-service result (no output to act on).
-        """
+    @staticmethod
+    def _has_output(result) -> bool:
+        """True when a completed result carries substantive output (used ONLY to
+        decide whether a discovery produced a CANDIDATE - never to mark VALIDATED)."""
         if not result.ok:
-            return "none"
+            return False
         d = result.data or {}
-        # explicit machine verdict wins both ways (positive or negative)
-        for k in ("vulnerable", "validated", "exploited", "confirmed"):
-            if k in d:
-                return "validated" if d.get(k) else "none"
-        # explicit, structured finding lists: present+truthy = real output, empty = none
         for k in ("findings", "finding", "vulnerabilities", "vulns"):
             if k in d:
-                return "output" if d.get(k) else "none"
+                return bool(d.get(k))
         if d.get("parsed"):
-            return "output"
+            return True
         out = d.get("stdout")
-        if isinstance(out, str) and out.strip():
-            return "output"
-        return "none"
+        return isinstance(out, str) and bool(out.strip())
 
     def _record_evidence(self, sess, inv, result, stage: Optional[str]) -> None:
         """Update the single session evidence store from REAL tool data only.
 
-        Exploitation is unlocked only when an explicit VULN_VALIDATION step has run
-        and returned either a structured positive verdict or substantive output (the
-        operator judges that output; RedVector never fabricates a verdict and still
-        requires explicit confirmation before any exploitation tool runs). Discovery
-        output is recorded as a candidate, never auto-promoted to validated; empty /
-        filtered / no-service results record nothing."""
+        Lifecycle (Phase 10.5 Fix #4):
+          * VULN_DISCOVERY output -> CANDIDATE findings (never auto-promoted);
+          * VULN_VALIDATION -> a DETERMINISTIC verdict (evidence.derive_verdict):
+              CONFIRMED  -> finding VALIDATED (provenance recorded) -> unlocks exploit;
+              REJECTED   -> finding REJECTED;
+              INCONCLUSIVE (incl. mere non-empty stdout) -> NOT validated.
+        Execution completing is NOT equivalent to a confirmed vulnerability, and the
+        user calling something "validated" never mutates this state."""
         sess.current_target = sess.last_target
         sess.last_tool = inv.tool_id
         if stage:
             sess.last_stage = stage
         sess.completed_actions.append({"stage": stage, "tool": inv.tool_id,
                                        "target": sess.last_target, "status": result.status})
-        signal = self._finding_signal(result)
-        if stage == _planner.Stage.VULN_DISCOVERY and signal in ("output", "validated"):
-            sess.candidate_findings.append({"tool": inv.tool_id, "target": sess.last_target,
-                                            "stage": stage, "signal": signal})
-        elif stage == _planner.Stage.VULN_VALIDATION and signal in ("output", "validated"):
-            sess.validated_findings.append({"tool": inv.tool_id, "target": sess.last_target,
-                                            "stage": stage, "evidence": signal})
+
+        if stage == _planner.Stage.VULN_DISCOVERY and self._has_output(result):
+            f = _evidence.new_finding("Candidate from %s" % inv.tool_id, inv.tool_id,
+                                      sess.last_target, stage, _evidence.FindingStatus.CANDIDATE)
+            sess.candidate_findings.append(f)
+        elif stage == _planner.Stage.VULN_VALIDATION:
+            ev = _evidence.derive_verdict(inv.tool_id, result, sess.last_target)
+            if ev.verdict == _evidence.Verdict.CONFIRMED:
+                f = _evidence.new_finding("Validated by %s" % inv.tool_id, inv.tool_id,
+                                          sess.last_target, stage,
+                                          _evidence.FindingStatus.VALIDATED, ev.evidence_excerpt)
+                f["provenance"].append(ev.to_dict())
+                sess.validated_findings.append(f)
+            elif ev.verdict == _evidence.Verdict.REJECTED:
+                sess.candidate_findings.append(_evidence.new_finding(
+                    "Rejected by %s" % inv.tool_id, inv.tool_id, sess.last_target, stage,
+                    _evidence.FindingStatus.REJECTED, ev.evidence_excerpt))
+            else:  # INCONCLUSIVE: execution completed, no deterministic positive proof
+                sess.candidate_findings.append(_evidence.new_finding(
+                    "Inconclusive from %s" % inv.tool_id, inv.tool_id, sess.last_target, stage,
+                    _evidence.FindingStatus.INCONCLUSIVE, ev.evidence_excerpt))
 
     def _finish(self, sess, msg, prov_id, prov_model, actions, events, t0=None, tool=None,
                 target=None, authorized=None, action_class=None, success=True,
                 needs_confirmation=False, tool_state=None, choices=None,
-                install_options=None, alternatives=None) -> AgentResponse:
+                install_options=None, alternatives=None, stage=None, findings=None) -> AgentResponse:
         sess.messages.append(AgentMessage("agent", msg))
+        dur = (time.time() - t0) * 1000.0 if t0 else 0.0
         return AgentResponse(success=success, session_id=sess.session_id, message=msg,
                              provider=prov_id, model=prov_model, actions=actions,
                              status_events=events, needs_confirmation=needs_confirmation,
                              tool_state=tool_state, choices=choices or [],
-                             install_options=install_options, alternatives=alternatives or [])
+                             install_options=install_options, alternatives=alternatives or [],
+                             findings=findings or [], stage=stage,
+                             target=target, duration_ms=round(dur, 1))
 
     def _audit(self, sess, prov_id, prov_model, tool, target, authorized, status, t0, error_class) -> None:
         try:

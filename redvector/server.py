@@ -31737,10 +31737,15 @@ def agent_chat():
         message = params.get("message", "")
         if not message:
             return jsonify({"error": "message is required"}), 400
+        # Optional/None authorization (Phase 10.5 Fix #4): a missing or null
+        # "authorization" means "no scope update in this message" -> reuse the
+        # session's authorized scope. Only a dict payload validates/updates scope.
+        _authz = params.get("authorization")
+        authorization = _agent.AuthorizationContext.from_dict(_authz) if isinstance(_authz, dict) else None
         req = _agent.AgentRequest(
             message=message,
             session_id=params.get("session_id"),
-            authorization=_agent.AuthorizationContext.from_dict(params.get("authorization")),
+            authorization=authorization,
             confirm=bool(params.get("confirm", False)),
             choice=params.get("choice") if isinstance(params.get("choice"), dict) else None,
         )

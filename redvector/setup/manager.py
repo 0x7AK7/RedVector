@@ -276,6 +276,10 @@ class AIIntegrationSetupManager:
             if c in (self.t.EOF, 0):
                 return HANDLED
             if c == self.t.INVALID:
+                # Non-numeric text at the menu is NOT an offensive command. Guide the
+                # operator to enter RedVector commands inside "Start RedVector".
+                self.t.status("INFO", 'Select 1-6, or choose "3. Start RedVector" '
+                                      "to enter natural-language commands.")
                 continue
             if c == 1:
                 self.provider_menu()

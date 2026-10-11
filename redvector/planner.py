@@ -53,6 +53,7 @@ class Stage:
     SUMMARY = "summary"
     REPORT = "report"
     RETEST = "retest"
+    UNKNOWN = "unknown"          # no confident action -> clarify, never recon-fallback
 
     ACTION_STAGES = {RECON, ENUMERATION, VULN_DISCOVERY, VULN_VALIDATION, EXPLOITATION}
     FOLLOWUP_STAGES = {SUMMARY, REPORT, RETEST}
@@ -71,6 +72,7 @@ _STAGE_SPEC = {
     Stage.SUMMARY:         ([],                     "",                                     False, True),
     Stage.REPORT:          ([],                     "",                                     False, True),
     Stage.RETEST:          ([],                     "",                                     False, True),
+    Stage.UNKNOWN:         ([],                     "",                                     False, False),
 }
 
 # Coarse offensive-intent family per stage (second reported dimension).
@@ -83,6 +85,7 @@ _STAGE_INTENT = {
     Stage.SUMMARY: "summary",
     Stage.REPORT: "report",
     Stage.RETEST: "retest",
+    Stage.UNKNOWN: "unknown",
 }
 
 
@@ -220,7 +223,8 @@ class StageClassifier:
         if top is None:
             if references_prior and not has_explicit_target:
                 return Stage.SUMMARY
-            return Stage.RECON
+            # No confident action cue. Do NOT silently default to recon/nmap; ask.
+            return Stage.UNKNOWN
 
         return top
 
@@ -374,6 +378,16 @@ class Planner:
 
         categories, cap_query, needs_confirm, needs_prev = _STAGE_SPEC[stage]
         intent_family = _STAGE_INTENT[stage]
+
+        # ---- unknown intent -> clarify, NEVER fall back to recon ----
+        if stage == Stage.UNKNOWN:
+            return Plan(
+                intent="unknown", stage=Stage.UNKNOWN,
+                requires_execution=False, requires_previous_context=False,
+                target_source=target_source, capability_query="",
+                requires_confirmation=False, reason_code="unknown_intent",
+                capability_categories=[], source=source,
+            )
 
         # ---- follow-up stages that need prior context ----
         if stage in (Stage.SUMMARY, Stage.REPORT):

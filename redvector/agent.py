@@ -154,6 +154,9 @@ class AgentSession:
     discovered_ports: List[str] = field(default_factory=list)
     discovered_services: List[str] = field(default_factory=list)
     discovered_technologies: List[str] = field(default_factory=list)
+    # Atomic port/service/version observations (one record per parsed line) so a
+    # port is never separated from its own service/version (Phase 10.5 result fix).
+    discovered_observations: List[Dict[str, Any]] = field(default_factory=list)
     candidate_findings: List[Dict[str, Any]] = field(default_factory=list)
     validated_findings: List[Dict[str, Any]] = field(default_factory=list)
     rejected_findings: List[Dict[str, Any]] = field(default_factory=list)
@@ -200,9 +203,12 @@ class AgentResponse:
     stage: Optional[str] = None
     target: Optional[str] = None
     duration_ms: float = 0.0
-    # Raw tool evidence kept SEPARATE from the grounded summary (never auto-dumped
-    # into the summary; the client shows it on demand). Capped for transport.
+    # Raw tool evidence kept SEPARATE from the grounded summary (retained internally
+    # for provenance/audit/reports; not surfaced through a chat command). Capped.
     raw_evidence: Optional[str] = None
+    # Atomic recon observations ({port, protocol, state, service, version}) for the
+    # result table; each record is self-contained (never zipped from arrays).
+    observations: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -223,6 +229,7 @@ class AgentResponse:
             "target": self.target,
             "duration_ms": self.duration_ms,
             "raw_evidence": self.raw_evidence,
+            "observations": self.observations,
         }
 
 
@@ -847,7 +854,8 @@ class RedVectorAgent:
                                       "stage": plan.stage}], events, t0,
                                     sess.last_result.tool_id, sess.current_target or sess.last_target,
                                     ctx.authorized, "read_only", True, stage=plan.stage,
-                                    findings=self._findings_snapshot(sess))
+                                    findings=self._findings_snapshot(sess),
+                                    observations=list(sess.discovered_observations))
             events.append("Completed")
             return self._finish(sess, "There are no results from this session yet, so there is nothing "
                                 "to %s. Give me an authorized target and an action to begin." %
@@ -948,18 +956,17 @@ class RedVectorAgent:
         fabricate a vulnerability. Uses the active provider when available, with a
         deterministic concise fallback over the real evidence."""
         tgt = sess.current_target or sess.last_target
-        services = list(sess.discovered_services)
-        ports = list(sess.discovered_ports)
+        obs = list(sess.discovered_observations)          # atomic records; never zipped
         nval, ncand = len(sess.validated_findings), len(sess.candidate_findings)
         ninc, nrej = len(sess.inconclusive_findings), len(sess.rejected_findings)
 
         evidence = []
         if tgt:
             evidence.append("Target: %s" % tgt)
-        if services:
-            evidence.append("Observed services: %s" % ", ".join(services))
-        if ports:
-            evidence.append("Open ports: %s" % ", ".join(ports))
+        for o in obs:
+            evidence.append("  %s/%s %s %s%s" % (
+                o["port"], o["protocol"], o["state"], o["service"],
+                (" " + o["version"]) if o.get("version") else ""))
         evidence.append("Findings: %d validated, %d candidate, %d inconclusive, %d rejected"
                         % (nval, ncand, ninc, nrej))
         evidence_text = "\n".join(evidence)
@@ -967,18 +974,20 @@ class RedVectorAgent:
         if prov is not None:
             try:
                 system = ("You are RedVector's assistant. Write a short, grounded engagement summary "
-                          "using ONLY the evidence provided. Do not invent hosts, services, or "
-                          "vulnerabilities. Be concise.")
+                          "using ONLY the evidence provided (each service is already paired with its "
+                          "own port and version). Do not invent hosts, services, or vulnerabilities. "
+                          "Be concise.")
                 return prov.complete(system, "Evidence:\n%s" % evidence_text)
             except ProviderError:
                 pass
 
         out = ["Host %s reachable." % tgt if tgt else "Session summary."]
-        if services:
+        if obs:
             out.append("Observed services:")
-            for i, s in enumerate(services):
-                port = (" (port %s)" % ports[i]) if i < len(ports) else ""
-                out.append("  - %s%s" % (s, port))
+            for o in obs:
+                ver = (" %s" % o["version"]) if o.get("version") else ""
+                out.append("  - %s/%s %s (%s%s)" % (o["port"], o["protocol"], o["service"],
+                                                    o["state"], ver))
         else:
             out.append("No structured services were parsed from the recorded output.")
         out.append("Findings: %d validated, %d candidate, %d inconclusive "
@@ -1309,7 +1318,8 @@ class RedVectorAgent:
                             [{"tool": inv.tool_id, "status": result.status, "stage": stage}], events, t0,
                             inv.tool_id, sess.last_target, ctx.authorized, inv.action_class.value, result.ok,
                             stage=stage, findings=self._findings_snapshot(sess),
-                            raw_evidence=self._raw_evidence(result))
+                            raw_evidence=self._raw_evidence(result),
+                            observations=list(sess.discovered_observations))
 
     @staticmethod
     def _raw_evidence(result) -> Optional[str]:
@@ -1326,31 +1336,14 @@ class RedVectorAgent:
         tgt = sess.current_target or sess.last_target
         out = []
         for f in (sess.validated_findings + sess.candidate_findings + sess.inconclusive_findings):
-            if tgt is None or f.get("target") == tgt:
+            if tgt is None or f.get("target") in (None, tgt):
                 out.append({"finding_id": f.get("finding_id"), "title": f.get("title"),
                             "tool": f.get("tool"), "status": f.get("status"),
-                            "evidence": (f.get("evidence") or "")[:160]})
+                            "severity": f.get("severity"), "service": f.get("service"),
+                            "port": f.get("port"), "url": f.get("url") or f.get("matched_at"),
+                            "cve": f.get("cve"), "target": f.get("target"),
+                            "evidence": (f.get("evidence") or "")[:200]})
         return out
-
-    _SERVICE_RE = re.compile(r"(\d{1,5})/(?:tcp|udp)\s+open\s+([a-zA-Z][\w\-]*)", re.IGNORECASE)
-
-    @classmethod
-    def _extract_services(cls, result) -> tuple:
-        """Deterministically extract (services, ports) from real tool stdout, e.g.
-        '21/tcp open ftp' -> service 'ftp', port '21'. Pure parsing of actual output;
-        nothing is invented. Returns ([services], [ports])."""
-        d = getattr(result, "data", None) or {}
-        out = d.get("stdout")
-        if not isinstance(out, str) or not out:
-            return [], []
-        services, ports = [], []
-        for m in cls._SERVICE_RE.finditer(out):
-            port, svc = m.group(1), m.group(2).lower()
-            if svc not in services:
-                services.append(svc)
-            if port not in ports:
-                ports.append(port)
-        return services, ports
 
     @staticmethod
     def _has_output(result) -> bool:
@@ -1388,24 +1381,33 @@ class RedVectorAgent:
         rec = {"stage": stage, "tool": inv.tool_id, "target": sess.last_target, "status": result.status}
         (sess.completed_actions if result.ok else sess.failed_actions).append(rec)
 
-        # Deterministic service/port extraction from REAL output (no fabrication):
-        # feeds discovered_services, finding metadata, and the grounded summary.
-        services, ports = self._extract_services(result)
-        for s in services:
-            if s not in sess.discovered_services:
-                sess.discovered_services.append(s)
-        for p in ports:
-            if p not in sess.discovered_ports:
-                sess.discovered_ports.append(p)
+        # ATOMIC service/port/version observations from REAL output (no zipping of
+        # independent arrays; each record is one parsed line). Feeds the result table,
+        # finding metadata, and the grounded summary.
+        stdout = (result.data or {}).get("stdout") if result.data else None
+        observations = _evidence.parse_service_observations(stdout or "")
+        for obs in observations:
+            if obs not in sess.discovered_observations:
+                sess.discovered_observations.append(obs)
+            if obs["service"] not in sess.discovered_services:
+                sess.discovered_services.append(obs["service"])
+            ps = "%s/%s" % (obs["port"], obs["protocol"])
+            if ps not in sess.discovered_ports:
+                sess.discovered_ports.append(ps)
 
         if stage == _planner.Stage.VULN_DISCOVERY and self._has_output(result):
-            f = _evidence.new_finding("Candidate from %s" % inv.tool_id, inv.tool_id,
-                                      sess.last_target, stage, _evidence.FindingStatus.CANDIDATE)
-            if services:
-                f["service"] = services[0]
-            f["services"] = services
-            sess.candidate_findings.append(f)
-            sess.evidence_references.append({"finding_id": f["finding_id"], "tool": inv.tool_id})
+            # Parse ACTUAL findings - one structured CANDIDATE per real finding - and
+            # fall back to a single evidence-bearing candidate only when the output has
+            # no parseable finding lines (never a bare "Candidate from <tool>").
+            parsed = _evidence.parse_findings(inv.tool_id, stdout or "", sess.last_target, stage)
+            if not parsed:
+                parsed = [_evidence.new_finding(
+                    "%s result" % inv.tool_id, inv.tool_id, sess.last_target, stage,
+                    _evidence.FindingStatus.CANDIDATE, (self._raw_evidence(result) or "")[:200],
+                    source_tool=inv.tool_id)]
+            for f in parsed:
+                sess.candidate_findings.append(f)
+                sess.evidence_references.append({"finding_id": f["finding_id"], "tool": inv.tool_id})
         elif stage == _planner.Stage.VULN_VALIDATION:
             ev = _evidence.derive_verdict(inv.tool_id, result, sess.last_target)
             if ev.verdict == _evidence.Verdict.CONFIRMED:
@@ -1427,7 +1429,7 @@ class RedVectorAgent:
                 target=None, authorized=None, action_class=None, success=True,
                 needs_confirmation=False, tool_state=None, choices=None,
                 install_options=None, alternatives=None, stage=None, findings=None,
-                raw_evidence=None) -> AgentResponse:
+                raw_evidence=None, observations=None) -> AgentResponse:
         sess.messages.append(AgentMessage("agent", msg))
         dur = (time.time() - t0) * 1000.0 if t0 else 0.0
         return AgentResponse(success=success, session_id=sess.session_id, message=msg,
@@ -1436,7 +1438,8 @@ class RedVectorAgent:
                              tool_state=tool_state, choices=choices or [],
                              install_options=install_options, alternatives=alternatives or [],
                              findings=findings or [], stage=stage,
-                             target=target, duration_ms=round(dur, 1), raw_evidence=raw_evidence)
+                             target=target, duration_ms=round(dur, 1), raw_evidence=raw_evidence,
+                             observations=observations or [])
 
     def _audit(self, sess, prov_id, prov_model, tool, target, authorized, status, t0, error_class) -> None:
         try:

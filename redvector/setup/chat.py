@@ -67,22 +67,9 @@ class ChatSession:
                 continue
             if line.lower() in ("exit", "quit", "/exit", "0"):
                 return "exit"
-            if line.lower() in ("raw", "view raw", "raw evidence", "/raw"):
-                self._show_raw()
-                continue
             sig = self._handle(line)
             if sig:                 # "switch_provider" | "disable_ai"
                 return sig
-
-    def _show_raw(self) -> None:
-        raw = getattr(self, "_last_raw", None)
-        if not raw:
-            self.t.status("INFO", "No raw evidence captured yet.")
-            return
-        self.t.write(self.t.colorize("RAW EVIDENCE", "cyan"))
-        self.t.write(self.t.colorize("-" * 56, "dim"))
-        self.t.write(raw)
-        self.t.write()
 
     def _handle(self, message: str):
         self.t.status("THINKING", "Understanding request...")
@@ -198,9 +185,11 @@ class ChatSession:
             return "switch_provider"
         return "disable_ai"   # 0 / EOF / anything else -> continue without AI (session-scoped)
 
-    # finding severity/status -> semantic color (text label always present)
+    # finding status/severity -> semantic color (text label always present)
     _STATUS_COLOR = {"VALIDATED": "green", "CANDIDATE": "yellow", "VALIDATING": "yellow",
                      "INCONCLUSIVE": "yellow", "REJECTED": "dim"}
+    _SEVERITY_COLOR = {"CRITICAL": "red", "HIGH": "red", "MEDIUM": "yellow",
+                       "LOW": "cyan", "INFO": "dim", "UNKNOWN": "dim"}
 
     def _render(self, resp: Dict[str, Any], targets: List[str]) -> None:
         actions = resp.get("actions") or []
@@ -239,18 +228,15 @@ class ChatSession:
             self.t.write("  %s %s" % (self.t.colorize("STATUS  ", "cyan"), self.t.tagged(tag)))
         self.t.write("  %s %02d:%02d" % (self.t.colorize("DURATION", "cyan"), secs // 60, secs % 60))
 
-        # 3) Findings (lifecycle status per finding).
+        # 3) Primary result section, ordered per stage. Shown DIRECTLY (never behind
+        #    a command): a port/service/version table for recon, structured findings
+        #    for vulnerability discovery/validation.
+        observations = resp.get("observations") or []
         findings = resp.get("findings") or []
+        if observations and stage in ("recon", "enumeration"):
+            self._render_services(observations)
         if findings:
-            self.t.write()
-            self.t.write("  " + self.t.colorize("FINDINGS", "cyan"))
-            self.t.write("  " + self.t.colorize("-" * 54, "dim"))
-            for f in findings[:12]:
-                st = (f.get("status") or "").upper()
-                color = self._STATUS_COLOR.get(st, "cyan")
-                self.t.write("  %s %s" % (self.t.colorize("[%s]" % st, color), f.get("title") or f.get("tool")))
-                if f.get("evidence"):
-                    self.t.hint("        evidence: %s" % f["evidence"])
+            self._render_findings(findings, tgt)
 
         # 4) Tool-availability resolution (never a silent dead-end).
         tstate = resp.get("tool_state")
@@ -262,29 +248,60 @@ class ChatSession:
             if resp.get("alternatives"):
                 self.t.hint("  registered alternatives: %s" % ", ".join(resp["alternatives"]))
 
-        # 5) AI SUMMARY (grounded; raw output is NOT dumped here). Split a raw dump
-        #    from the summary if the deterministic interpreter included one.
+        # 5) AI SUMMARY (grounded; raw output is retained internally, not dumped here).
         message = resp.get("message", "(no response)")
-        summary, raw_from_msg = self._split_summary(message)
-        self._last_raw = resp.get("raw_evidence") or raw_from_msg
+        summary, _ = self._split_summary(message)
         self.t.write()
         self.t.write("  " + self.t.colorize("AI SUMMARY", "magenta"))
         self.t.write("  " + self.t.colorize("-" * 54, "dim"))
         self.t.write(summary)
 
-        # 6) NEXT ACTIONS (contextual, non-fabricated).
+        # 6) NEXT ACTIONS (contextual, non-fabricated; no hidden 'raw' command).
         self.t.write()
         self.t.write("  " + self.t.colorize("NEXT ACTIONS", "cyan"))
         self.t.write("  " + self.t.colorize("-" * 54, "dim"))
         nxt = []
+        if stage in ("recon", "enumeration") and observations:
+            nxt.append("Find vulnerabilities")
+            nxt.append("Enumerate services")
         if any((f.get("status") or "").upper() in ("CANDIDATE", "INCONCLUSIVE") for f in findings):
-            nxt.append("validate candidate findings")
-        if self._last_raw:
-            nxt.append("type 'raw' to view raw evidence")
-        nxt.append("continue the assessment")
+            nxt.append("Validate candidate findings")
+        nxt.append("Continue assessment")
         for n in nxt:
             self.t.hint("  - %s" % n)
         self.t.write()
+
+    def _render_services(self, observations: List[Dict[str, Any]]) -> None:
+        self.t.write()
+        self.t.write("  " + self.t.colorize("DISCOVERED SERVICES", "cyan"))
+        self.t.write("  " + self.t.colorize("-" * 54, "dim"))
+        self.t.write("  %-10s %-8s %-13s %s" % ("PORT", "STATE", "SERVICE", "VERSION"))
+        for o in observations[:50]:
+            port = "%s/%s" % (o.get("port"), o.get("protocol"))
+            self.t.write("  %-10s %-8s %-13s %s" % (
+                port, o.get("state", ""), o.get("service", ""), o.get("version") or ""))
+
+    def _render_findings(self, findings: List[Dict[str, Any]], target: Optional[str]) -> None:
+        self.t.write()
+        self.t.write("  " + self.t.colorize("FINDINGS", "cyan"))
+        self.t.write("  " + self.t.colorize("-" * 54, "dim"))
+        for f in findings[:50]:
+            st = (f.get("status") or "").upper()
+            sev = (f.get("severity") or st or "").upper()
+            color = self._SEVERITY_COLOR.get(sev, self._STATUS_COLOR.get(st, "cyan"))
+            self.t.write("  %s %s" % (self.t.colorize("[%s]" % (sev or st), color),
+                                      f.get("title") or f.get("tool") or "finding"))
+            tgt = f.get("target") or target
+            if tgt:
+                self.t.hint("        Target: %s" % tgt)
+            svc = f.get("service") or f.get("url") or (("port %s" % f.get("port")) if f.get("port") else None)
+            if svc:
+                self.t.hint("        Service: %s" % svc)
+            if f.get("cve"):
+                self.t.hint("        CVE: %s" % f["cve"])
+            self.t.hint("        State: %s" % (st or "CANDIDATE"))
+            if f.get("evidence"):
+                self.t.hint("        Evidence: %s" % f["evidence"])
 
     @staticmethod
     def _split_summary(message: str):

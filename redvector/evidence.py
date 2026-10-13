@@ -24,9 +24,10 @@ per-tool parsers interpret evidence only (provenance is recorded).
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 
 class FindingStatus:
@@ -134,10 +135,119 @@ def derive_verdict(tool_id: str, result, target: Optional[str]) -> ValidationEvi
                               "execution_completed_no_deterministic_verdict", True, excerpt)
 
 
+_FID_SEQ = [0]
+
+
+def _fid() -> str:
+    _FID_SEQ[0] += 1
+    return "F-%08x%03d" % (int(time.time() * 1000) % 0xFFFFFFFF, _FID_SEQ[0] % 1000)
+
+
 def new_finding(title: str, tool: str, target: Optional[str], stage: str,
-                status: str = FindingStatus.CANDIDATE, evidence: str = "") -> Dict[str, Any]:
-    """Create a finding record with a stable id + lifecycle status + provenance."""
-    fid = "F-%s" % format(int(time.time() * 1000) % 0xFFFFFFFF, "08x")
-    return {"finding_id": fid, "title": title, "tool": tool, "target": target,
-            "stage": stage, "status": status, "evidence": evidence,
-            "provenance": [], "ts": time.time()}
+                status: str = FindingStatus.CANDIDATE, evidence: str = "",
+                **extra: Any) -> Dict[str, Any]:
+    """Create a finding record with a stable id + lifecycle status + provenance.
+    ``extra`` carries optional structured metadata (severity, service, port, url,
+    cve, cwe, template_id, technology, matched_at, source_tool); absent values stay
+    absent (never inferred)."""
+    rec = {"finding_id": _fid(), "title": title, "tool": tool, "target": target,
+           "stage": stage, "status": status, "evidence": evidence,
+           "provenance": [], "ts": time.time()}
+    for k, v in extra.items():
+        if v is not None:
+            rec[k] = v
+    return rec
+
+
+# ============================================================================
+# ATOMIC parsers (Phase 10.5 result-UX fix): each observation/finding is one
+# record parsed from a SINGLE line, so a port is never separated from its own
+# service/version by zipping independent lists.
+# ============================================================================
+
+# Nmap-style port line: "22/tcp open ssh OpenSSH 8.2p1 Ubuntu" (version optional).
+_PORT_LINE = re.compile(
+    r"^[ \t]*(\d{1,5})/(tcp|udp)[ \t]+(open\|filtered|open|closed|filtered)[ \t]+(\S+)"
+    r"(?:[ \t]+([^\n]*\S))?[ \t]*$",
+    re.IGNORECASE | re.MULTILINE)
+
+
+def parse_service_observations(stdout: str) -> List[Dict[str, Any]]:
+    """Parse nmap-style port records atomically. Returns a list of
+    {port, protocol, state, service, version} dicts - port/service/version always
+    come from the SAME matched line (never zipped from separate arrays). Lines
+    between port records (script output, banners) are ignored, and a port with no
+    version yields version=None."""
+    out: List[Dict[str, Any]] = []
+    if not isinstance(stdout, str) or not stdout:
+        return out
+    seen = set()
+    for m in _PORT_LINE.finditer(stdout):
+        port = int(m.group(1))
+        proto = m.group(2).lower()
+        key = (port, proto)
+        if key in seen:
+            continue
+        seen.add(key)
+        version = (m.group(5) or "").strip() or None
+        out.append({"port": port, "protocol": proto, "state": m.group(3).lower(),
+                    "service": m.group(4).lower(), "version": version})
+    return out
+
+
+# Nuclei-style finding line: "[template-id] [http] [high] http://host/path [extracted]".
+_NUCLEI_LINE = re.compile(
+    r"\[([^\]]+)\][ \t]*\[([^\]]+)\][ \t]*\[(critical|high|medium|low|info|unknown)\][ \t]*(\S+)"
+    r"(?:[ \t]*\[([^\]]*)\])?", re.IGNORECASE)
+# Generic "[SEVERITY] title" fallback line.
+_SEV_LINE = re.compile(r"^\s*\[(critical|high|medium|low|info)\]\s+(.*\S)\s*$",
+                       re.IGNORECASE | re.MULTILINE)
+_CVE_RE = re.compile(r"CVE-\d{4}-\d{4,7}", re.IGNORECASE)
+
+
+def parse_findings(tool: str, stdout: str, target: Optional[str] = None,
+                   stage: str = "vuln_discovery") -> List[Dict[str, Any]]:
+    """Parse structured findings from real scanner output - one record per real
+    finding. Recognises the nuclei bracket format first, then a generic
+    "[SEVERITY] title" line. Severities/titles/urls/CVEs come only from the actual
+    output; nothing is fabricated. Returns [] when no finding line is present (the
+    caller then records a single evidence-bearing candidate)."""
+    findings: List[Dict[str, Any]] = []
+    if not isinstance(stdout, str) or not stdout:
+        return findings
+    seen = set()
+    for m in _NUCLEI_LINE.finditer(stdout):
+        template_id = m.group(1).strip()
+        proto = m.group(2).strip().lower()
+        severity = m.group(3).upper()
+        matched_at = m.group(4).strip()
+        line = m.group(0).strip()
+        key = (template_id, matched_at)
+        if key in seen:
+            continue
+        seen.add(key)
+        cve = None
+        cm = _CVE_RE.search(template_id) or _CVE_RE.search(line)
+        if cm:
+            cve = cm.group(0).upper()
+        findings.append(new_finding(
+            title=template_id, tool=tool, target=target, stage=stage,
+            status=FindingStatus.CANDIDATE, evidence=line[:200],
+            source_tool=tool, template_id=template_id, severity=severity,
+            protocol=proto, matched_at=matched_at, url=matched_at, cve=cve))
+    if findings:
+        return findings
+    # fallback: generic "[SEVERITY] title" lines
+    for m in _SEV_LINE.finditer(stdout):
+        severity = m.group(1).upper()
+        title = m.group(2).strip()
+        key = (severity, title)
+        if key in seen:
+            continue
+        seen.add(key)
+        cm = _CVE_RE.search(title)
+        findings.append(new_finding(
+            title=title, tool=tool, target=target, stage=stage,
+            status=FindingStatus.CANDIDATE, evidence=m.group(0).strip()[:200],
+            source_tool=tool, severity=severity, cve=(cm.group(0).upper() if cm else None)))
+    return findings

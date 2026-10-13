@@ -1,7 +1,7 @@
 {
  "release_name": "redvector-public",
  "version": "8.0.0",
- "date": "2026-10-13",
+ "date": "2026-10-14",
  "purpose": "Curated public GitHub release, rebuilt byte-identically from the private candidate.",
  "source": "validated private release candidate",
  "layout": "redvector/ package + data/ + docs/ + launchers",
@@ -101,8 +101,8 @@
   },
   {
    "path": "redvector/agent.py",
-   "sha256": "8336496c8db4e6be6aaa6ea1f85e9995f31878a3212d500a1ea2aebf895b7a64",
-   "bytes": 75414
+   "sha256": "3f6734db3c59539a7502d0ad085e86c7e6f66ab7d90f1eaee07718d22f56b5cf",
+   "bytes": 76534
   },
   {
    "path": "redvector/ai_integration.py",
@@ -141,8 +141,8 @@
   },
   {
    "path": "redvector/evidence.py",
-   "sha256": "36446b942e091f3e3404c3320c38e4eb2757038ed3aebaad694c648f1dadd78d",
-   "bytes": 6348
+   "sha256": "feee737b8d08a921edff31a3e8b4d6832c247f7f67c511c61a93bb42c04d9aad",
+   "bytes": 10951
   },
   {
    "path": "redvector/mcp/__init__.py",
@@ -206,8 +206,8 @@
   },
   {
    "path": "redvector/setup/chat.py",
-   "sha256": "e770efe0a5cf90020b464111d440d623256d19fe4d1347b35ded34aac36be5e8",
-   "bytes": 13567
+   "sha256": "7b03cf14aa3f680280c0a8ce33ea2743e303bcbebd4dfb57536f2fe6be23c41c",
+   "bytes": 14791
   },
   {
    "path": "redvector/setup/clients.py",

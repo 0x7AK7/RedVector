@@ -84,15 +84,18 @@ def _default_backend_probe(env: Optional[dict] = None) -> Callable[[], bool]:
 
 
 def _default_backend_starter(env, probe, sleeper):
-    """Start `python -m redvector` detached and wait (bounded) for health. Used by
-    the in-process menu so the user never has to manage the backend by hand."""
+    """Start `python -m redvector` detached and wait (bounded) for liveness. Used by
+    the in-process menu so the user never has to manage the backend by hand.
+
+    NOTE (Phase 10.5 migration fix): this NO LONGER short-circuits on a generic
+    /health probe. A foreign or stale process merely answering on the port must not
+    be accepted as a freshly-started backend; the authoritative build-identity check
+    lives in ``ensure_backend._start_and_verify`` after this launches a process."""
     import subprocess
     host = env.get("REDVECTOR_HOST", "127.0.0.1")
     port = env.get("REDVECTOR_PORT", "8888")
 
     def start() -> bool:
-        if probe():
-            return True
         creationflags = 0
         kwargs = {}
         if os.name == "nt":
@@ -138,15 +141,10 @@ def _default_backend_identity(env: Optional[dict] = None) -> Callable[[], Option
 
 
 def backend_reuse_decision(current_fingerprint: str, identity: Optional[dict]) -> str:
-    """Decide what to do with whatever is answering on the backend port. Pure and
-    testable. Returns one of:
-      'start'    - nothing is running -> start the current backend;
-      'reuse'    - a RedVector backend with a MATCHING fingerprint -> reuse it;
-      'restart'  - a RedVector backend with a DIFFERENT fingerprint (stale) -> it
-                   must be terminated (identity-verified) and restarted;
-      'conflict' - something that is NOT the RedVector backend is on the port -> do
-                   NOT touch it; report the conflict.
-    """
+    """Modern-identity quick decision (used by the legacy-free fast path and tests).
+    Returns 'start' | 'reuse' | 'restart' | 'conflict'. For the full 5-state
+    migration logic (including a pre-fingerprint LEGACY backend) see
+    ``classify_backend_state``."""
     if not identity:
         return "start"
     if identity.get("service") != "redvector-backend":
@@ -156,12 +154,125 @@ def backend_reuse_decision(current_fingerprint: str, identity: Optional[dict]) -
     return "restart"
 
 
-def _terminate_backend_process(identity: dict) -> bool:
-    """Terminate ONLY a verified RedVector backend process. Verifies the pid's
-    process really is a RedVector backend (command line mentions redvector) before
-    signalling it; never kills an arbitrary process that merely holds the port."""
-    pid = identity.get("pid")
-    if not isinstance(pid, int) or pid <= 0 or identity.get("service") != "redvector-backend":
+# ---- 5-state backend classification (Phase 10.5 legacy-migration fix) ----
+BACKEND_NOTHING = "nothing_running"
+BACKEND_CURRENT = "current_redvector"
+BACKEND_STALE = "stale_redvector"
+BACKEND_LEGACY = "legacy_redvector"
+BACKEND_FOREIGN = "foreign_process"
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "[::1]", "0.0.0.0"}
+
+
+def _is_local_host(host: str) -> bool:
+    """True only for a loopback/local host; process inspection + termination are
+    permitted ONLY for a local backend (never a remote one)."""
+    h = str(host or "").strip().lower()
+    if h in _LOOPBACK_HOSTS:
+        return True
+    return h.startswith("127.")
+
+
+def _legacy_health_shape(identity: Optional[dict]) -> bool:
+    """Signal D: the response looks like a PRE-fingerprint RedVector /health (no new
+    identity fields, but the RedVector health marker is present). This alone never
+    authorizes termination - process ownership (A/B/C) must also agree."""
+    if not identity or "service" in identity:
+        return False
+    msg = str(identity.get("message", "")).lower()
+    return "redvector" in msg
+
+
+def _argv_is_redvector(argv: List[str], port: int) -> bool:
+    """Exact argv/token test (not a weak substring) that ``argv`` launches the
+    RedVector backend: ``-m redvector`` (or a redvector entrypoint), with a matching
+    --port when one is present."""
+    low = [str(a).lower() for a in (argv or [])]
+    module_ok = False
+    if "-m" in low:
+        i = low.index("-m")
+        if i + 1 < len(low) and low[i + 1] in ("redvector", "redvector.__main__", "redvector.server"):
+            module_ok = True
+    if not module_ok:
+        for a in low:
+            base = os.path.basename(a)
+            if base in ("redvector", "redvector.py", "__main__.py") and "redvector" in a:
+                module_ok = True
+                break
+    if not module_ok:
+        return False
+    if "--port" in low:
+        j = low.index("--port")
+        if j + 1 < len(low) and low[j + 1] != str(port):
+            return False
+    return True
+
+
+def _default_legacy_owner(env: Optional[dict] = None,
+                          project_root: Optional[str] = None) -> Callable[[], dict]:
+    """Return a callable that verifies the process LISTENING on the configured local
+    RedVector port is genuinely a RedVector backend, by exact signals:
+      A. a process listens on exactly the configured port;
+      B. its argv is a RedVector launch (``-m redvector`` / redvector entrypoint),
+         with a matching --port when present;
+      C. its working directory resolves to the current project root.
+    Returns {"verified": bool, "pid": int|None}. Never guesses from a substring or
+    from the port alone."""
+    env = env if env is not None else os.environ
+    host = env.get("REDVECTOR_HOST", "127.0.0.1")
+    try:
+        port = int(env.get("REDVECTOR_PORT", "8888"))
+    except (TypeError, ValueError):
+        port = 8888
+    root = os.path.realpath(project_root or _project_root())
+
+    def owner() -> dict:
+        try:
+            import psutil  # type: ignore
+        except Exception:
+            return {"verified": False, "pid": None}
+        pid = None
+        try:
+            for conn in psutil.net_connections(kind="inet"):
+                laddr = getattr(conn, "laddr", None)
+                if conn.status == psutil.CONN_LISTEN and laddr and int(getattr(laddr, "port", -1)) == port:
+                    pid = conn.pid
+                    break
+        except Exception:
+            return {"verified": False, "pid": None}
+        if not pid:
+            return {"verified": False, "pid": None}
+        try:
+            proc = psutil.Process(pid)
+            argv = proc.cmdline()
+            cwd = os.path.realpath(proc.cwd())
+        except Exception:
+            return {"verified": False, "pid": pid}
+        verified = _argv_is_redvector(argv, port) and (cwd == root)
+        return {"verified": verified, "pid": pid}
+    return owner
+
+
+def classify_backend_state(current_fingerprint: str, identity: Optional[dict],
+                           is_local: bool, legacy_owner: Optional[dict]) -> str:
+    """Full 5-state classification driving ensure_backend. ``legacy_owner`` is the
+    result of the process-ownership verifier (only consulted for a legacy-shaped
+    local identity)."""
+    if not identity:
+        return BACKEND_NOTHING
+    if identity.get("service") == "redvector-backend":
+        return (BACKEND_CURRENT if identity.get("build_fingerprint") == current_fingerprint
+                else BACKEND_STALE)
+    # No modern identity -> possibly a pre-fingerprint RedVector backend.
+    if _legacy_health_shape(identity) and is_local and legacy_owner and legacy_owner.get("verified"):
+        return BACKEND_LEGACY
+    return BACKEND_FOREIGN
+
+
+def _terminate_pid(pid) -> bool:
+    """Terminate ONLY a process whose command line is a verified RedVector backend.
+    Refuses on any uncertainty; never kills by port alone."""
+    if not isinstance(pid, int) or pid <= 0:
         return False
     try:
         import psutil  # type: ignore
@@ -169,8 +280,7 @@ def _terminate_backend_process(identity: dict) -> bool:
         return False
     try:
         proc = psutil.Process(pid)
-        cmdline = " ".join(proc.cmdline()).lower()
-        if "redvector" not in cmdline:
+        if "redvector" not in " ".join(proc.cmdline()).lower():
             return False   # identity not confirmed -> refuse to kill
         proc.terminate()
         try:
@@ -180,6 +290,14 @@ def _terminate_backend_process(identity: dict) -> bool:
         return True
     except Exception:
         return False
+
+
+def _terminate_backend_process(identity: dict) -> bool:
+    """Terminate a verified RedVector backend named by ``identity`` (needs a pid and
+    the redvector service marker). Delegates the argv verification to _terminate_pid."""
+    if not identity or identity.get("service") != "redvector-backend":
+        return False
+    return _terminate_pid(identity.get("pid"))
 
 
 class AIIntegrationSetupManager:
@@ -198,12 +316,14 @@ class AIIntegrationSetupManager:
                  readiness_fn: Optional[Callable[[str, str], bool]] = None,
                  backend_identity: Optional[Callable[[], Optional[dict]]] = None,
                  fingerprint_fn: Optional[Callable[[], str]] = None,
-                 terminate_fn: Optional[Callable[[dict], bool]] = None) -> None:
+                 terminate_fn: Optional[Callable[[dict], bool]] = None,
+                 legacy_owner_fn: Optional[Callable[[], dict]] = None) -> None:
         self.env = env if env is not None else os.environ
         self._chat_agent_call = chat_agent_call
         self._backend_starter = backend_starter
         self._backend_identity = backend_identity or _default_backend_identity(self.env)
         self._terminate_fn = terminate_fn or _terminate_backend_process
+        self._legacy_owner_fn = legacy_owner_fn or _default_legacy_owner(self.env)
         if fingerprint_fn is not None:
             self._fingerprint_fn = fingerprint_fn
         else:
@@ -403,32 +523,86 @@ class AIIntegrationSetupManager:
             self._ai_disabled = True   # session-scoped; a new process re-detects readiness
 
     def ensure_backend(self) -> bool:
-        # Stale-backend protection (BUG 8): a backend process can survive a code
-        # update and keep serving old code. Compare the running backend's build
-        # fingerprint against this checkout; reuse only on a match.
+        """Start / reuse / migrate the backend with build-identity awareness
+        (Phase 10.5 legacy-migration fix). Five states:
+          NOTHING  -> start the current build;
+          CURRENT  -> reuse (fingerprint matches);
+          STALE    -> terminate the verified RedVector backend and restart;
+          LEGACY   -> a pre-fingerprint RedVector backend with verified process
+                      ownership -> terminate and restart ONCE into the current build;
+          FOREIGN  -> cannot prove RedVector ownership -> NEVER terminate; report.
+        No manual ss/ps/kill is ever required of the operator."""
         current = self._fingerprint_fn()
+        host = self.env.get("REDVECTOR_HOST", "127.0.0.1")
+        is_local = _is_local_host(host)
         identity = self._backend_identity()
-        decision = backend_reuse_decision(current, identity)
 
-        if decision == "reuse":
+        # Verify process ownership only for a legacy-shaped LOCAL identity.
+        legacy_owner = None
+        if (is_local and identity is not None
+                and identity.get("service") != "redvector-backend"
+                and _legacy_health_shape(identity)):
+            try:
+                legacy_owner = self._legacy_owner_fn()
+            except Exception:
+                legacy_owner = {"verified": False, "pid": None}
+
+        state = classify_backend_state(current, identity, is_local, legacy_owner)
+
+        if state == BACKEND_CURRENT:
             self.t.status("READY", "Backend ready (build matches).")
             return True
-        if decision == "conflict":
-            self.t.status("FAILED", "The backend port is held by a non-RedVector process; "
-                                    "I will not terminate it. Free the port and retry.")
+
+        if state == BACKEND_FOREIGN:
+            if identity is not None and not is_local:
+                self.t.status("FAILED", "A remote backend is configured; its build identity could not "
+                                        "be migrated automatically and no local process will be touched.")
+            else:
+                self.t.status("FAILED", "The backend port is held by a process that cannot be verified "
+                                        "as RedVector; I will not terminate it. Free the port and retry.")
             return False
-        if decision == "restart":
+
+        if state == BACKEND_NOTHING:
+            return self._start_and_verify(current)
+
+        if state == BACKEND_STALE:
             self.t.status("WARN", "A stale RedVector backend (different build) is running; "
                                   "restarting it with the current build.")
             if not self._terminate_fn(identity or {}):
                 self.t.status("FAILED", "Could not safely terminate the stale backend "
                                         "(identity unverified). Stop it manually and retry.")
                 return False
-            for _ in range(10):
-                if self._backend_identity() is None:
-                    break
-                self.sleeper(1)
+            self._wait_port_free()
+            return self._start_and_verify(current)
 
+        if state == BACKEND_LEGACY:
+            self.t.status("INFO", "Legacy RedVector backend detected")
+            self.t.status("INFO", "Upgrading backend runtime...")
+            pid = (legacy_owner or {}).get("pid")
+            if not self._terminate_fn({"service": "redvector-backend", "pid": pid}):
+                self.t.status("FAILED", "Could not safely migrate the legacy backend "
+                                        "(ownership unverified). Stop it manually and retry.")
+                return False
+            self._wait_port_free()
+            if not self._start_and_verify(current, announce_ready=False):
+                return False
+            self.t.status("READY", "Backend restarted with current build")
+            return True
+
+        self.t.status("FAILED", "Unrecognized backend state.")
+        return False
+
+    def _wait_port_free(self, attempts: int = 10) -> None:
+        """Wait (bounded) until nothing answers on the backend port."""
+        for _ in range(attempts):
+            if self._backend_identity() is None:
+                return
+            self.sleeper(1)
+
+    def _start_and_verify(self, current_fingerprint: str, announce_ready: bool = True) -> bool:
+        """Launch the backend and PROVE the CURRENT build became healthy: the running
+        backend must report service==redvector-backend AND the current fingerprint.
+        A generic /health 200 is NOT accepted on its own."""
         self.t.status("INFO", "Starting RedVector backend...")
         try:
             ok = bool(self._backend_starter())
@@ -437,12 +611,16 @@ class AIIntegrationSetupManager:
         if not ok:
             self.t.status("FAILED", "Could not start the RedVector backend. Check logs and try again.")
             return False
-        # Verify the freshly started backend reports the current fingerprint.
-        fresh = self._backend_identity()
-        if fresh is not None and fresh.get("build_fingerprint") not in (None, current):
-            self.t.status("WARN", "Started backend reports a different build fingerprint than expected.")
-        self.t.status("READY", "Backend ready.")
-        return True
+        for _ in range(15):
+            ident = self._backend_identity()
+            if (ident and ident.get("service") == "redvector-backend"
+                    and ident.get("build_fingerprint") == current_fingerprint):
+                if announce_ready:
+                    self.t.status("READY", "Backend ready.")
+                return True
+            self.sleeper(1)
+        self.t.status("FAILED", "The started backend did not report the current build; not accepting it.")
+        return False
 
     def client_menu(self) -> None:
         info = self.platform.detect()

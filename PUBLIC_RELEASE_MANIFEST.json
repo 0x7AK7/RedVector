@@ -226,8 +226,8 @@
   },
   {
    "path": "redvector/setup/manager.py",
-   "sha256": "8eda538a2fdb3cbaf2641a686b6d00e3aef6788cb6ccfdba9c9c976515a08efb",
-   "bytes": 36700
+   "sha256": "e094abfc6d7df9a3cb13664d5c80564ac2b640a893ea635fe648e242da73c26d",
+   "bytes": 44614
   },
   {
    "path": "redvector/setup/platform_probe.py",

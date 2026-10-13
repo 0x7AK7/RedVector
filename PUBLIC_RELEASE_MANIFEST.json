@@ -1,7 +1,7 @@
 {
  "release_name": "redvector-public",
  "version": "8.0.0",
- "date": "2026-10-11",
+ "date": "2026-10-13",
  "purpose": "Curated public GitHub release, rebuilt byte-identically from the private candidate.",
  "source": "validated private release candidate",
  "layout": "redvector/ package + data/ + docs/ + launchers",
@@ -101,8 +101,8 @@
   },
   {
    "path": "redvector/agent.py",
-   "sha256": "db8f1180ad7679868d47ea33debe93e82a7d000907ab073e90b901eb48940880",
-   "bytes": 69405
+   "sha256": "8336496c8db4e6be6aaa6ea1f85e9995f31878a3212d500a1ea2aebf895b7a64",
+   "bytes": 75414
   },
   {
    "path": "redvector/ai_integration.py",
@@ -176,8 +176,8 @@
   },
   {
    "path": "redvector/planner.py",
-   "sha256": "71de546908006789e72d6eb63ffc37d810573cce7f3185797fd7b4926f84abeb",
-   "bytes": 22080
+   "sha256": "5e95a8bb55990785aa66b3de3cebca3c54a7eeee8e10f01b2c279a2a4b5ca0fe",
+   "bytes": 23398
   },
   {
    "path": "redvector/security_tools.py",
@@ -186,8 +186,8 @@
   },
   {
    "path": "redvector/server.py",
-   "sha256": "6474f012d346c4b79184326b7990c6f112c166943278cb1db30d2c4ae02be254",
-   "bytes": 1440523
+   "sha256": "599b78d4fd73dc5efc5924182293f03800245689d8e48592077831d20dce2e7d",
+   "bytes": 1440821
   },
   {
    "path": "redvector/session_trace.py",
@@ -226,8 +226,8 @@
   },
   {
    "path": "redvector/setup/manager.py",
-   "sha256": "8d8628b8da6f5c5fe024540a694f9bea9749998b94e84b70c68330bacea62784",
-   "bytes": 31738
+   "sha256": "8eda538a2fdb3cbaf2641a686b6d00e3aef6788cb6ccfdba9c9c976515a08efb",
+   "bytes": 36700
   },
   {
    "path": "redvector/setup/platform_probe.py",
@@ -266,8 +266,8 @@
   },
   {
    "path": "redvector/version.py",
-   "sha256": "f05cf2400e71d56acb92374c4f314bfd596d20500ae6b90ac2b3910b4dfba5c1",
-   "bytes": 453
+   "sha256": "7cd57d48184c2b1134efcf7f24c91dade02a0eb75512339bbd5f7a7cfa6bf38f",
+   "bytes": 1900
   },
   {
    "path": "redvector/workflows.py",

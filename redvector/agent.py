@@ -334,7 +334,9 @@ _KEYWORD_TOOL = [
 ]
 
 _PRIOR_REFS = ("previous", "last", "that finding", "the finding", "earlier", "which services",
-               "outdated", "show me the", "it ", "those ", "again")
+               "outdated", "show me the", "it ", "those ", "again",
+               # finding-reference cues (contextual validation / recall)
+               "finding", "discovered", "candidate", "prior", "already found")
 
 # Stop-words excluded from capability-search terms (so generic verbs/articles do
 # not accidentally match tool ids). Not a phrase->tool table; just noise removal.
@@ -361,7 +363,10 @@ class IntentParser:
         msg = message.strip()
         low = msg.lower()
         target = self._extract_target(msg)
-        references_prior = any(k in low for k in _PRIOR_REFS) and target is None
+        # BUG 2 (Phase 10.5 surgical fix): references_prior is INDEPENDENT of whether
+        # a target is present. "validate those findings on <TARGET>" references prior
+        # context AND names a target; the two are separate dimensions.
+        references_prior = any(k in low for k in _PRIOR_REFS)
         keyword_tool = None
         for keys, tool in _KEYWORD_TOOL:
             if any(k in low for k in keys):
@@ -835,13 +840,14 @@ class RedVectorAgent:
         if plan.stage in (_planner.Stage.SUMMARY, _planner.Stage.REPORT):
             if sess.last_result is not None:
                 events.append("Analyzing prior results")
-                answer = self.interpreter.interpret(req.message, sess.last_result, prov)
+                answer = self._summarize_session(sess, prov)   # BUG 7: grounded summary
                 events.append("Completed")
                 return self._finish(sess, answer, prov_id, prov_model,
                                     [{"tool": sess.last_result.tool_id, "status": "recalled",
                                       "stage": plan.stage}], events, t0,
                                     sess.last_result.tool_id, sess.current_target or sess.last_target,
-                                    ctx.authorized, "read_only", True)
+                                    ctx.authorized, "read_only", True, stage=plan.stage,
+                                    findings=self._findings_snapshot(sess))
             events.append("Completed")
             return self._finish(sess, "There are no results from this session yet, so there is nothing "
                                 "to %s. Give me an authorized target and an action to begin." %
@@ -936,6 +942,63 @@ class RedVectorAgent:
         events.append("Analyzing results")
         return self._execute_and_answer(sess, inv, question, prov, prov_id, prov_model, events, t0, ctx)
 
+    def _summarize_session(self, sess, prov) -> str:
+        """BUG 7: produce a concise GROUNDED summary from stored session evidence
+        (discovered services/ports + finding counts) - never rerun a tool, never
+        fabricate a vulnerability. Uses the active provider when available, with a
+        deterministic concise fallback over the real evidence."""
+        tgt = sess.current_target or sess.last_target
+        services = list(sess.discovered_services)
+        ports = list(sess.discovered_ports)
+        nval, ncand = len(sess.validated_findings), len(sess.candidate_findings)
+        ninc, nrej = len(sess.inconclusive_findings), len(sess.rejected_findings)
+
+        evidence = []
+        if tgt:
+            evidence.append("Target: %s" % tgt)
+        if services:
+            evidence.append("Observed services: %s" % ", ".join(services))
+        if ports:
+            evidence.append("Open ports: %s" % ", ".join(ports))
+        evidence.append("Findings: %d validated, %d candidate, %d inconclusive, %d rejected"
+                        % (nval, ncand, ninc, nrej))
+        evidence_text = "\n".join(evidence)
+
+        if prov is not None:
+            try:
+                system = ("You are RedVector's assistant. Write a short, grounded engagement summary "
+                          "using ONLY the evidence provided. Do not invent hosts, services, or "
+                          "vulnerabilities. Be concise.")
+                return prov.complete(system, "Evidence:\n%s" % evidence_text)
+            except ProviderError:
+                pass
+
+        out = ["Host %s reachable." % tgt if tgt else "Session summary."]
+        if services:
+            out.append("Observed services:")
+            for i, s in enumerate(services):
+                port = (" (port %s)" % ports[i]) if i < len(ports) else ""
+                out.append("  - %s%s" % (s, port))
+        else:
+            out.append("No structured services were parsed from the recorded output.")
+        out.append("Findings: %d validated, %d candidate, %d inconclusive "
+                   "(no unverified vulnerabilities asserted)." % (nval, ncand, ninc))
+        return "\n".join(out)
+
+    @staticmethod
+    def _finding_capability_terms(findings: List[Dict[str, Any]]) -> List[str]:
+        """Derive validation capability search terms from REAL candidate finding
+        metadata (service / technology / title tokens). Finding-aware selection
+        (BUG 6): a validator is chosen for what the finding actually is, not merely
+        because it belongs to a broad category. No CVEs/products/tools hard-coded."""
+        terms: List[str] = []
+        for f in findings:
+            for key in ("service", "technology", "protocol"):
+                v = f.get(key)
+                if v and v not in terms:
+                    terms.append(str(v).lower())
+        return terms
+
     @staticmethod
     def _no_capability_message(plan) -> str:
         """Honest, stage-specific resolver-failure message. NEVER suggests or falls
@@ -971,10 +1034,28 @@ class RedVectorAgent:
                                 prov_id, prov_model, [{"status": "needs_target", "stage": plan.stage}],
                                 events, t0, None, None, ctx.authorized, "read_only", False)
 
+        # 1b) CONTEXTUAL VALIDATION (BUG 5/6): "validate the discovered/prior findings"
+        #     must consume stored candidate/inconclusive findings. With none on record,
+        #     block with a clear message and run NOTHING. With candidates, derive the
+        #     validation capability from REAL finding metadata (finding-aware, not just
+        #     a broad web category).
+        finding_terms: List[str] = []
+        if getattr(plan, "consume_findings", False):
+            cands = [f for f in (sess.candidate_findings + sess.inconclusive_findings)
+                     if f.get("target") in (None, target)]
+            if not cands:
+                events.append("Completed")
+                return self._finish(sess, "No candidate findings are available to validate. Run a "
+                                    "vulnerability discovery step first, then I can validate what it "
+                                    "finds.", prov_id, prov_model,
+                                    [{"status": "no_candidate_findings", "stage": plan.stage}], events, t0,
+                                    None, target, ctx.authorized, "read_only", False)
+            finding_terms = self._finding_capability_terms(cands)
+
         # 2) dynamic capability search -> a REAL registered tool (capability match +
         #    action-class preference + registry order); nothing is hard-coded.
         events.append("Selecting tool")
-        terms = _query_terms(getattr(intent, "raw_message", None) or question)
+        terms = finding_terms + _query_terms(getattr(intent, "raw_message", None) or question)
         candidate = self.capresolver.resolve(plan.capability_categories, query_terms=terms,
                                              prefer_active=plan.requires_confirmation)
         _trace.trace("RESOLVER", stage=plan.stage, capability=plan.capability_query,
@@ -1251,6 +1332,26 @@ class RedVectorAgent:
                             "evidence": (f.get("evidence") or "")[:160]})
         return out
 
+    _SERVICE_RE = re.compile(r"(\d{1,5})/(?:tcp|udp)\s+open\s+([a-zA-Z][\w\-]*)", re.IGNORECASE)
+
+    @classmethod
+    def _extract_services(cls, result) -> tuple:
+        """Deterministically extract (services, ports) from real tool stdout, e.g.
+        '21/tcp open ftp' -> service 'ftp', port '21'. Pure parsing of actual output;
+        nothing is invented. Returns ([services], [ports])."""
+        d = getattr(result, "data", None) or {}
+        out = d.get("stdout")
+        if not isinstance(out, str) or not out:
+            return [], []
+        services, ports = [], []
+        for m in cls._SERVICE_RE.finditer(out):
+            port, svc = m.group(1), m.group(2).lower()
+            if svc not in services:
+                services.append(svc)
+            if port not in ports:
+                ports.append(port)
+        return services, ports
+
     @staticmethod
     def _has_output(result) -> bool:
         """True when a completed result carries substantive output (used ONLY to
@@ -1287,9 +1388,22 @@ class RedVectorAgent:
         rec = {"stage": stage, "tool": inv.tool_id, "target": sess.last_target, "status": result.status}
         (sess.completed_actions if result.ok else sess.failed_actions).append(rec)
 
+        # Deterministic service/port extraction from REAL output (no fabrication):
+        # feeds discovered_services, finding metadata, and the grounded summary.
+        services, ports = self._extract_services(result)
+        for s in services:
+            if s not in sess.discovered_services:
+                sess.discovered_services.append(s)
+        for p in ports:
+            if p not in sess.discovered_ports:
+                sess.discovered_ports.append(p)
+
         if stage == _planner.Stage.VULN_DISCOVERY and self._has_output(result):
             f = _evidence.new_finding("Candidate from %s" % inv.tool_id, inv.tool_id,
                                       sess.last_target, stage, _evidence.FindingStatus.CANDIDATE)
+            if services:
+                f["service"] = services[0]
+            f["services"] = services
             sess.candidate_findings.append(f)
             sess.evidence_references.append({"finding_id": f["finding_id"], "tool": inv.tool_id})
         elif stage == _planner.Stage.VULN_VALIDATION:

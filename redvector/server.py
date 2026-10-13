@@ -119,6 +119,7 @@ from redvector import ai_integration as _ai  # Phase 7: AI Integration Manager
 from redvector import agent as _agent  # Phase 8: provider-agnostic AI chat agent
 from redvector import toolmanager as _tm  # Phase 8: tool resolution + installation manager
 from redvector.version import __version__ as REDVECTOR_VERSION  # Phase 9: single version source
+from redvector import version as _rv_version  # Phase 10.5: build fingerprint (BUG 8)
 app.config['JSON_SORT_KEYS'] = False
 
 # API Configuration
@@ -6251,7 +6252,11 @@ def health_check():
         "status": "healthy",
         "message": "RedVector AI Tools API Server is operational",
         "version": REDVECTOR_VERSION,
-        "uptime": time.time() - telemetry.stats["start_time"]
+        "uptime": time.time() - telemetry.stats["start_time"],
+        # Identity for stale-backend detection (Phase 10.5 surgical fix, BUG 8).
+        "service": "redvector-backend",
+        "pid": os.getpid(),
+        "build_fingerprint": _rv_version.build_fingerprint(),
     })
 
 

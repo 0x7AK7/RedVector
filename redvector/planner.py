@@ -163,6 +163,13 @@ _ACTION_VERB_RE = re.compile(
     r"exploit|probe|attack|validate|verify|sweep|fuzz|brute|discover|launch|execute|"
     r"perform|map out|map the)(?![a-z])", re.IGNORECASE)
 
+# Specific attack-type cues. A validation naming one of these is a DIRECT active
+# test (not a contextual "validate the discovered findings" request).
+_SPECIFIC_VULN_RE = re.compile(
+    r"(?<![a-z])(sql injection|sqli|injection|xss|cross-site|lfi|rfi|ssrf|xxe|"
+    r"path traversal|directory traversal|command injection|csrf|idor|deserialization)"
+    r"(?![a-z])", re.IGNORECASE)
+
 
 class StageClassifier:
     """Scores and ranks lifecycle stages from grouped signals + session context.
@@ -193,35 +200,29 @@ class StageClassifier:
             except Exception:
                 hinted = None
             if hinted in _STAGE_SPEC:
-                # provider may only pick a follow-up stage when context allows it
-                if hinted in Stage.FOLLOWUP_STAGES and has_explicit_target:
-                    pass
-                else:
-                    return hinted
+                return hinted
 
+        # ACTION-FIRST classification (Phase 10.5 surgical fix, BUG 1): the presence
+        # of an explicit target NEVER removes a follow-up stage. "summarize prior
+        # results for <TARGET>" is still SUMMARY; the target only says WHICH
+        # engagement. Action and target are independent dimensions.
         fired = [s for s in _PRECEDENCE if scores.get(s, 0) > 0]
-
-        # Follow-up stages apply only when the user did not give a NEW explicit
-        # target (a new target means "do something to this", not "summarize").
-        if has_explicit_target:
-            fired = [s for s in fired if s not in Stage.FOLLOWUP_STAGES]
-
         top = fired[0] if fired else None
 
         # An explicitly fired follow-up stage (retest / summary / report) wins by
-        # precedence - e.g. "run it again" is a retest, not a summary.
+        # precedence - e.g. "run it again" is a retest, not a recon scan.
         if top in Stage.FOLLOWUP_STAGES:
             return top
 
-        # Recall override: a referential QUESTION with no new target and no action
-        # verb is a request to interpret prior results, not to run a new tool - even
-        # if it mentions "services" or "outdated".
+        # Recall override: a referential QUESTION with no action verb is a request to
+        # interpret prior results, not to run a new tool - INDEPENDENT of whether a
+        # target is present (BUG 2). Any explicit action verb skips this (action-first).
         has_action_verb = bool(_ACTION_VERB_RE.search(message))
-        if references_prior and not has_explicit_target and not has_action_verb:
+        if references_prior and not has_action_verb:
             return Stage.SUMMARY
 
         if top is None:
-            if references_prior and not has_explicit_target:
+            if references_prior:
                 return Stage.SUMMARY
             # No confident action cue. Do NOT silently default to recon/nmap; ask.
             return Stage.UNKNOWN
@@ -335,6 +336,9 @@ class Plan:
     reason_code: str                   # machine-readable routing reason
     capability_categories: List[str] = field(default_factory=list)
     source: str = "deterministic"      # "deterministic" | "provider"
+    # Contextual validation: consume stored candidate/inconclusive findings rather
+    # than run a generic validator (BUG 5). Set only for referential validation.
+    consume_findings: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -348,6 +352,7 @@ class Plan:
             "reason_code": self.reason_code,
             "capability_categories": list(self.capability_categories),
             "source": self.source,
+            "consume_findings": self.consume_findings,
         }
 
 
@@ -418,20 +423,33 @@ class Planner:
             return self._action_plan(fresh, session, has_target, target_source, source,
                                      reason_suffix="_no_prior_retest")
 
-        # ---- exploitation gate: never treat the word "exploit" as evidence ----
+        # ---- exploitation gate (BUG 3): never treat the word "exploit" as evidence,
+        #      and NEVER mutate the requested stage. The user asked to exploit; if no
+        #      VALIDATED finding exists the system BLOCKS exploitation - the stage
+        #      stays EXPLOITATION with requires_execution=False so the agent can show
+        #      "[PLAN] Exploitation / blocked" and suggest validation. ----
         if stage == Stage.EXPLOITATION:
             validated = list(getattr(session, "validated_findings", []) or [])
             if not validated:
-                # route to validation; the agent explains and offers to validate.
-                vcats, vquery, _, _ = _STAGE_SPEC[Stage.VULN_VALIDATION]
                 return Plan(
-                    intent="exploitation", stage=Stage.VULN_VALIDATION,
+                    intent="exploitation", stage=Stage.EXPLOITATION,
                     requires_execution=False, requires_previous_context=True,
-                    target_source=target_source, capability_query=vquery,
+                    target_source=target_source, capability_query="exploitation framework",
                     requires_confirmation=True,
                     reason_code="exploit_requires_validated_finding",
-                    capability_categories=vcats, source=source,
+                    capability_categories=[], source=source,
                 )
+
+        # ---- contextual validation (BUG 5): "validate the discovered/prior findings"
+        #      must consume stored candidate/inconclusive findings, not run a generic
+        #      validator. A SPECIFIC validation ("validate the sql injection") names an
+        #      attack type and is a direct active test (not contextual). ----
+        if stage == Stage.VULN_VALIDATION:
+            specific = bool(_SPECIFIC_VULN_RE.search(message))
+            contextual = references_prior and not specific
+            plan = self._action_plan(stage, session, has_target, target_source, source)
+            plan.consume_findings = contextual
+            return plan
 
         return self._action_plan(stage, session, has_target, target_source, source)
 

@@ -114,6 +114,74 @@ def _default_backend_starter(env, probe, sleeper):
     return start
 
 
+# ---- stale-backend protection (Phase 10.5 surgical fix, BUG 8) ----
+
+def _default_backend_identity(env: Optional[dict] = None) -> Callable[[], Optional[dict]]:
+    """Return a callable that GETs /health and returns the backend's identity
+    ({service, pid, build_fingerprint, version}) or None if nothing responds."""
+    env = env if env is not None else os.environ
+    host = env.get("REDVECTOR_HOST", "127.0.0.1")
+    port = env.get("REDVECTOR_PORT", "8888")
+    url = "http://%s:%s/health" % (host, port)
+
+    def identity() -> Optional[dict]:
+        import json as _json
+        try:
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=3) as r:  # noqa: S310 (localhost health)
+                if r.status != 200:
+                    return None
+                return _json.loads(r.read().decode("utf-8", "replace"))
+        except Exception:
+            return None
+    return identity
+
+
+def backend_reuse_decision(current_fingerprint: str, identity: Optional[dict]) -> str:
+    """Decide what to do with whatever is answering on the backend port. Pure and
+    testable. Returns one of:
+      'start'    - nothing is running -> start the current backend;
+      'reuse'    - a RedVector backend with a MATCHING fingerprint -> reuse it;
+      'restart'  - a RedVector backend with a DIFFERENT fingerprint (stale) -> it
+                   must be terminated (identity-verified) and restarted;
+      'conflict' - something that is NOT the RedVector backend is on the port -> do
+                   NOT touch it; report the conflict.
+    """
+    if not identity:
+        return "start"
+    if identity.get("service") != "redvector-backend":
+        return "conflict"
+    if identity.get("build_fingerprint") == current_fingerprint:
+        return "reuse"
+    return "restart"
+
+
+def _terminate_backend_process(identity: dict) -> bool:
+    """Terminate ONLY a verified RedVector backend process. Verifies the pid's
+    process really is a RedVector backend (command line mentions redvector) before
+    signalling it; never kills an arbitrary process that merely holds the port."""
+    pid = identity.get("pid")
+    if not isinstance(pid, int) or pid <= 0 or identity.get("service") != "redvector-backend":
+        return False
+    try:
+        import psutil  # type: ignore
+    except Exception:
+        return False
+    try:
+        proc = psutil.Process(pid)
+        cmdline = " ".join(proc.cmdline()).lower()
+        if "redvector" not in cmdline:
+            return False   # identity not confirmed -> refuse to kill
+        proc.terminate()
+        try:
+            proc.wait(timeout=8)
+        except Exception:
+            proc.kill()
+        return True
+    except Exception:
+        return False
+
+
 class AIIntegrationSetupManager:
     def __init__(self, terminal: Optional[Terminal] = None,
                  platform_probe: Optional[PlatformProbe] = None,
@@ -127,10 +195,20 @@ class AIIntegrationSetupManager:
                  env: Optional[dict] = None,
                  chat_agent_call: Optional[Callable[..., Dict[str, Any]]] = None,
                  backend_starter: Optional[Callable[[], bool]] = None,
-                 readiness_fn: Optional[Callable[[str, str], bool]] = None) -> None:
+                 readiness_fn: Optional[Callable[[str, str], bool]] = None,
+                 backend_identity: Optional[Callable[[], Optional[dict]]] = None,
+                 fingerprint_fn: Optional[Callable[[], str]] = None,
+                 terminate_fn: Optional[Callable[[dict], bool]] = None) -> None:
         self.env = env if env is not None else os.environ
         self._chat_agent_call = chat_agent_call
         self._backend_starter = backend_starter
+        self._backend_identity = backend_identity or _default_backend_identity(self.env)
+        self._terminate_fn = terminate_fn or _terminate_backend_process
+        if fingerprint_fn is not None:
+            self._fingerprint_fn = fingerprint_fn
+        else:
+            from redvector import version as _v
+            self._fingerprint_fn = _v.build_fingerprint
         self._readiness_fn = readiness_fn
         self._ai_disabled = False   # session-scoped "continue without AI"; never persisted
         self.t = terminal or Terminal(env=self.env)
@@ -325,18 +403,46 @@ class AIIntegrationSetupManager:
             self._ai_disabled = True   # session-scoped; a new process re-detects readiness
 
     def ensure_backend(self) -> bool:
-        if self.backend_probe():
+        # Stale-backend protection (BUG 8): a backend process can survive a code
+        # update and keep serving old code. Compare the running backend's build
+        # fingerprint against this checkout; reuse only on a match.
+        current = self._fingerprint_fn()
+        identity = self._backend_identity()
+        decision = backend_reuse_decision(current, identity)
+
+        if decision == "reuse":
+            self.t.status("READY", "Backend ready (build matches).")
             return True
+        if decision == "conflict":
+            self.t.status("FAILED", "The backend port is held by a non-RedVector process; "
+                                    "I will not terminate it. Free the port and retry.")
+            return False
+        if decision == "restart":
+            self.t.status("WARN", "A stale RedVector backend (different build) is running; "
+                                  "restarting it with the current build.")
+            if not self._terminate_fn(identity or {}):
+                self.t.status("FAILED", "Could not safely terminate the stale backend "
+                                        "(identity unverified). Stop it manually and retry.")
+                return False
+            for _ in range(10):
+                if self._backend_identity() is None:
+                    break
+                self.sleeper(1)
+
         self.t.status("INFO", "Starting RedVector backend...")
         try:
             ok = bool(self._backend_starter())
         except Exception:
             ok = False
-        if ok:
-            self.t.status("READY", "Backend ready.")
-            return True
-        self.t.status("FAILED", "Could not start the RedVector backend. Check logs and try again.")
-        return False
+        if not ok:
+            self.t.status("FAILED", "Could not start the RedVector backend. Check logs and try again.")
+            return False
+        # Verify the freshly started backend reports the current fingerprint.
+        fresh = self._backend_identity()
+        if fresh is not None and fresh.get("build_fingerprint") not in (None, current):
+            self.t.status("WARN", "Started backend reports a different build fingerprint than expected.")
+        self.t.status("READY", "Backend ready.")
+        return True
 
     def client_menu(self) -> None:
         info = self.platform.detect()

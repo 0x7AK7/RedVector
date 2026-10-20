@@ -1,0 +1,40 @@
+# Private development material
+private/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+redvector-env/
+
+# Test / coverage artifacts
+.coverage
+coverage.xml
+htmlcov/
+pytest*.txt
+pytest*.log
+*_test_output.txt
+test_output.txt
+test_results*.txt
+test_results*.log
+test_summary.txt
+
+# Logs and runtime artifacts
+*.log
+*.pid
+*.tmp
+*.cache
+
+# Environment / secrets
+.env
+.env.*
+*.key
+*.pem
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

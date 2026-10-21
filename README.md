@@ -16,7 +16,7 @@
 
 RedVector connects MCP-compatible AI clients with a large collection of real cybersecurity tools through a Python MCP layer and a Flask execution backend.
 
-[Overview](#overview) • [Architecture](#architecture) • [Installation](#installation) • [Security Tools](#security-tools) • [AI Systems](#ai-systems-and-workflow-components) • [Workflow](#how-redvector-works) • [MCP Tools](#complete-mcp-tool-index) • [License](#license-and-attribution)
+[Overview](#overview) • [Architecture](#architecture) • [Installation](#installation) • [Security Tools](#security-tools) • [AI Systems](#ai-systems-and-workflow-components) • [Workflow](#how-redvector-works) • [MCP Tools](#complete-mcp-tool-index) • [License](#license)
 
 </div>
 
@@ -979,15 +979,9 @@ The operator is responsible for obtaining authorization and complying with appli
 
 ---
 
-## License and Attribution
+## License
 
-RedVector is distributed under the **MIT License**. See [`LICENSE`](LICENSE).
-
-RedVector is based in part on and contains work derived from **HexStrike AI** by Muhammad Osama (`0x4m4`), which is also distributed under the MIT License:
-
-https://github.com/0x4m4/hexstrike-ai
-
-The original HexStrike AI copyright and MIT permission notice are preserved in [`LICENSE`](LICENSE) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+[Read License](LICENSE)
 
 ---
 

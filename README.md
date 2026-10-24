@@ -65,7 +65,10 @@ graph TD
 | `redvector_mcp.py` | FastMCP interface exposing RedVector capabilities to AI clients |
 | `redvector-mcp.json` | Example MCP configuration |
 | `ollama-mcp.json` | Example local/Ollama-oriented MCP configuration |
-| `start_redvector.sh` | Linux/macOS launcher |
+| `start_redvector.sh` | Linux launcher, verifies backend ownership, starts backend on demand and runs MCP client |
+| `redvector_backend_check.py` | Linux socket/process ownership check used by the launcher |
+| `install_claude_desktop_kali.sh` | Optional Claude Desktop installer for Kali, Debian and Ubuntu |
+| `install_redvector_claude_mcp.sh` | Registers RedVector with Claude Desktop on Linux using its own directory |
 | `start_redvector.ps1` | Windows PowerShell launcher |
 | `requirements.txt` | Python dependencies |
 
@@ -117,6 +120,8 @@ RedVector also contains specialized workflow managers and autonomous engines for
 
 ### Kali Linux / Linux
 
+Clone RedVector and install its Python dependencies:
+
 ```bash
 git clone https://github.com/0x7AK7/RedVector.git
 cd RedVector
@@ -124,15 +129,66 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-chmod +x start_redvector.sh
-./start_redvector.sh
 ```
+
+**Choose how to run RedVector:**
+
+- **Claude Desktop integration (recommended for desktop users):** Follow [Claude Desktop automatic setup](#claude-desktop-automatic-setup-kali-linux) below. Do not start `start_redvector.sh` separately when Claude Desktop is configured to launch it.
+- **Standalone or another MCP client:** Run `bash start_redvector.sh` in a dedicated terminal. This starts the backend if necessary and launches the MCP client using stdio. For a backend-only session, see below.
 
 Or start the backend directly:
 
 ```bash
 python redvector_server.py
 ```
+
+### Claude Desktop automatic setup (Kali Linux)
+
+Claude Desktop on Linux is currently a beta release. Kali Linux is Debian-based, but it is not among Anthropic's officially tested distributions. An x86_64 or arm64 Debian-based desktop is required. If you use **Kali through WSL2**, Anthropic recommends installing Claude Desktop on **Windows** and running sessions in WSL rather than installing the Linux desktop app inside WSL.
+
+The following installers must be included in the cloned RedVector directory before you run them: `install_claude_desktop_kali.sh` and `install_redvector_claude_mcp.sh`. If either is missing from your checkout, obtain it from the project's published installation assets or wait until it has been added to the repository. Do not run a non-existent script.
+
+**One-time setup**, after cloning and installing the Python dependencies above:
+
+```bash
+# Install Claude Desktop if it is not already installed.
+bash ./install_claude_desktop_kali.sh
+
+# Register RedVector with Claude Desktop automatically.
+bash ./install_redvector_claude_mcp.sh
+```
+
+The MCP installer locates RedVector from the actual location of its own script, including when called from another working directory or through a symbolic link. You can also pass the RedVector directory explicitly:
+
+```bash
+bash /path/to/RedVector/install_redvector_claude_mcp.sh /path/to/RedVector
+```
+
+It creates or updates `~/.config/Claude/claude_desktop_config.json`, backs up an existing configuration, and **preserves other MCP server entries**. The generated `redvector-ai` entry launches `start_redvector.sh` using an absolute path. Use your existing API token configuration when applicable; avoid publishing secrets in Git.
+
+**Everyday use**, after fully quitting and restarting Claude Desktop once to load the configuration:
+
+```bash
+claude-desktop
+```
+
+Claude Desktop is expected to launch RedVector's `start_redvector.sh` automatically through MCP. The launcher resolves its own installation directory (including symbolic links), uses that project's `.venv` Python when available, and verifies the listening process through Linux `/proc` before reusing a backend. It checks `http://127.0.0.1:8888/health`, starts the RedVector backend when the port is free, and runs `redvector_mcp.py` via stdio. A foreign process or unverifiable owner causes a clear error; no process is stopped automatically. You normally **do not need to execute `start_redvector.sh` manually**. The backend may remain running after Claude Desktop closes because the launcher detaches it.
+
+The MCP client obtains tool availability from `/health/details`, including the essential count (for example, `8/8`). Missing or invalid availability fields are reported as `Unknown`. Launcher and MCP diagnostics go to stderr; backend output goes to `server.log`, keeping MCP stdout reserved for the protocol. If ownership cannot be read (for example, restricted `/proc` access or a different user), run the backend under the same user with visible process metadata or resolve the port conflict manually.
+
+**Verify the connection:** Open **Claude Desktop → Settings → Developer → Local MCP servers** and check that `redvector-ai` is running. In a Claude chat, request a read-only `server_health` check. Do not assume a reported scan was executed unless the corresponding MCP tool call and output are visible.
+
+**If `redvector-ai` shows Failed:**
+
+```bash
+curl -fsS http://127.0.0.1:8888/health
+cat ~/.config/Claude/claude_desktop_config.json
+ls -lah ~/.config/Claude/logs/
+```
+
+Inspect the `redvector-ai` log through **View logs** in Claude Desktop. Ensure the configured project path exists and `start_redvector.sh` is present. Avoid sharing API tokens when pasting configuration or logs publicly.
+
+This setup is for **Claude Desktop**. Claude Code launched independently with the `claude` terminal command may require separate MCP registration.
 
 ### Windows PowerShell
 
@@ -918,6 +974,9 @@ RedVector/
 ├── redvector-mcp.json
 ├── ollama-mcp.json
 ├── start_redvector.sh
+├── redvector_backend_check.py
+├── install_claude_desktop_kali.sh
+├── install_redvector_claude_mcp.sh
 ├── start_redvector.ps1
 └── .gitignore
 ```
@@ -953,7 +1012,7 @@ Install missing third-party tools from their official package or upstream projec
 Check that:
 
 1. `redvector_server.py` is running.
-2. The MCP configuration points to the correct absolute path for `redvector_mcp.py`.
+2. The MCP configuration points to the correct absolute path for either `start_redvector.sh` (automatic Claude Desktop setup) or `redvector_mcp.py` (direct integration).
 3. The client uses the intended Python environment.
 4. The configured backend host and port match the running server.
 5. The AI client has been restarted after changing MCP configuration.

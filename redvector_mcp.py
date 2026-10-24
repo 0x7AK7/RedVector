@@ -9833,9 +9833,26 @@ def main():
             logger.info(f"🎯 Successfully connected to RedVector AI API server at {args.server}")
             logger.info(f"🏥 Server health status: {health['status']}")
             logger.info(f"📊 Version: {health.get('version', 'unknown')}")
-            if not health.get("all_essential_tools_available", False):
+            # Liveness and tool availability are separate backend endpoints.
+            details = redvector_client.safe_get("health/details")
+            details = details if isinstance(details, dict) else {}
+            categories = details.get("category_stats")
+            essential = categories.get("essential") if isinstance(categories, dict) else None
+            available = essential.get("available") if isinstance(essential, dict) else None
+            total = essential.get("total") if isinstance(essential, dict) else None
+            valid_counts = (type(available) is int and type(total) is int
+                            and 0 <= available <= total and total > 0)
+            count = f"{available}/{total}" if valid_counts else "Unknown"
+            logger.info(f"📊 Essential tools: {count}")
+            essential_status = details.get("all_essential_tools_available")
+            if type(essential_status) is not bool:
+                logger.info("📊 Essential tools status: Unknown")
+            elif essential_status is False:
                 logger.warning("⚠️  Not all essential tools are available on the RedVector server")
-                missing_tools = [tool for tool, available in health.get("tools_status", {}).items() if not available]
+                statuses = details.get("tools_status")
+                statuses = statuses if isinstance(statuses, dict) else {}
+                essential_names = ("nmap", "gobuster", "dirb", "nikto", "sqlmap", "hydra", "john", "hashcat")
+                missing_tools = [tool for tool in essential_names if statuses.get(tool) is False]
                 if missing_tools:
                     logger.warning(f"❌ Missing tools: {', '.join(missing_tools[:5])}{'...' if len(missing_tools) > 5 else ''}")
 

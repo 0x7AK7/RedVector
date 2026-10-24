@@ -22,6 +22,10 @@ LICENSE: MIT. RedVector includes work derived from HexStrike AI under the MIT Li
 """
 
 import argparse
+from redvector_banner import (
+    API_HOST, API_PORT, CACHE_SIZE, CACHE_TTL, COMMAND_TIMEOUT, DEBUG_MODE,
+    COLORS as BANNER_COLORS, render_banner, render_startup_panel,
+)
 import hmac
 import json
 import logging
@@ -106,8 +110,6 @@ app = Flask(__name__)
 app.config['JSON_SORT_KEYS'] = False
 
 # API Configuration
-API_PORT = int(os.environ.get('REDVECTOR_PORT', 8888))
-API_HOST = os.environ.get('REDVECTOR_HOST', '127.0.0.1')
 API_TOKEN = os.environ.get('REDVECTOR_API_TOKEN', 'redvector-dev-token')
 AUTH_EXEMPT_PATHS = {'/health', '/health/details'}
 MAX_CACHED_RESULT_BYTES = 10 * 1024 * 1024
@@ -373,61 +375,7 @@ class ModernVisualEngine:
     """Beautiful, modern output formatting with animations and colors"""
 
     # Enhanced color palette with reddish tones and better highlighting
-    COLORS = {
-        'MATRIX_GREEN': '\033[38;5;46m',
-        'NEON_BLUE': '\033[38;5;51m',
-        'ELECTRIC_PURPLE': '\033[38;5;129m',
-        'CYBER_ORANGE': '\033[38;5;208m',
-        'HACKER_RED': '\033[38;5;196m',
-        'TERMINAL_GRAY': '\033[38;5;240m',
-        'BRIGHT_WHITE': '\033[97m',
-        'RESET': '\033[0m',
-        'BOLD': '\033[1m',
-        'DIM': '\033[2m',
-        # New reddish tones and highlighting colors
-        'BLOOD_RED': '\033[38;5;124m',
-        'CRIMSON': '\033[38;5;160m',
-        'DARK_RED': '\033[38;5;88m',
-        'FIRE_RED': '\033[38;5;202m',
-        'ROSE_RED': '\033[38;5;167m',
-        'BURGUNDY': '\033[38;5;52m',
-        'SCARLET': '\033[38;5;197m',
-        'RUBY': '\033[38;5;161m',
-    # Unified theme primary/secondary (used going forward instead of legacy blue/green accents)
-    'PRIMARY_BORDER': '\033[38;5;160m',  # CRIMSON
-    'ACCENT_LINE': '\033[38;5;196m',      # HACKER_RED
-    'ACCENT_GRADIENT': '\033[38;5;124m',  # BLOOD_RED (for subtle alternation)
-        # Highlighting colors
-        'HIGHLIGHT_RED': '\033[48;5;196m\033[38;5;15m',  # Red background, white text
-        'HIGHLIGHT_YELLOW': '\033[48;5;226m\033[38;5;16m',  # Yellow background, black text
-        'HIGHLIGHT_GREEN': '\033[48;5;46m\033[38;5;16m',  # Green background, black text
-        'HIGHLIGHT_BLUE': '\033[48;5;51m\033[38;5;16m',  # Blue background, black text
-        'HIGHLIGHT_PURPLE': '\033[48;5;129m\033[38;5;15m',  # Purple background, white text
-        # Status colors with reddish tones
-        'SUCCESS': '\033[38;5;46m',  # Bright green
-        'WARNING': '\033[38;5;208m',  # Orange
-        'ERROR': '\033[38;5;196m',  # Bright red
-        'CRITICAL': '\033[48;5;196m\033[38;5;15m\033[1m',  # Red background, white bold text
-        'INFO': '\033[38;5;51m',  # Cyan
-        'DEBUG': '\033[38;5;240m',  # Gray
-        # Vulnerability severity colors
-        'VULN_CRITICAL': '\033[48;5;124m\033[38;5;15m\033[1m',  # Dark red background
-        'VULN_HIGH': '\033[38;5;196m\033[1m',  # Bright red bold
-        'VULN_MEDIUM': '\033[38;5;208m\033[1m',  # Orange bold
-        'VULN_LOW': '\033[38;5;226m',  # Yellow
-        'VULN_INFO': '\033[38;5;51m',  # Cyan
-        # Tool status colors
-        'TOOL_RUNNING': '\033[38;5;46m\033[5m',  # Blinking green
-        'TOOL_SUCCESS': '\033[38;5;46m\033[1m',  # Bold green
-        'TOOL_FAILED': '\033[38;5;196m\033[1m',  # Bold red
-        'TOOL_TIMEOUT': '\033[38;5;208m\033[1m',  # Bold orange
-        'TOOL_RECOVERY': '\033[38;5;129m\033[1m',  # Bold purple
-        # Progress and animation colors
-        'PROGRESS_BAR': '\033[38;5;46m',  # Green
-        'PROGRESS_EMPTY': '\033[38;5;240m',  # Gray
-        'SPINNER': '\033[38;5;51m',  # Cyan
-        'PULSE': '\033[38;5;196m\033[5m'  # Blinking red
-    }
+    COLORS = BANNER_COLORS
 
     # Progress animation styles
     PROGRESS_STYLES = {
@@ -440,41 +388,7 @@ class ModernVisualEngine:
     @staticmethod
     def create_banner() -> str:
         """Create the enhanced RedVector banner"""
-        border_color = ModernVisualEngine.COLORS['PRIMARY_BORDER']
-        accent = ModernVisualEngine.COLORS['ACCENT_LINE']
-        gradient = ModernVisualEngine.COLORS['ACCENT_GRADIENT']
-        RESET = ModernVisualEngine.COLORS['RESET']
-        BOLD = ModernVisualEngine.COLORS['BOLD']
-        CRIM = ModernVisualEngine.COLORS['CRIMSON']
-        RED = ModernVisualEngine.COLORS['HACKER_RED']
-        GRN = ModernVisualEngine.COLORS['MATRIX_GREEN']
-        CYAN = ModernVisualEngine.COLORS['NEON_BLUE']
-        DIM = ModernVisualEngine.COLORS['DIM']
-        WHT = ModernVisualEngine.COLORS['BRIGHT_WHITE']
-        GRAY = ModernVisualEngine.COLORS['TERMINAL_GRAY']
-        PULSE = ModernVisualEngine.COLORS['PULSE']
-        YEL = ModernVisualEngine.COLORS['CYBER_ORANGE']
-        title_block = f"{accent}{BOLD}"
-
-        banner = f"""
-{title_block}
-██████╗ ███████╗██████╗ ██╗   ██╗███████╗ ██████╗████████╗ ██████╗ ██████╗
-██╔══██╗██╔════╝██╔══██╗██║   ██║██╔════╝██╔════╝╚══██╔══╝██╔═══██╗██╔══██╗
-██████╔╝█████╗  ██║  ██║██║   ██║█████╗  ██║        ██║   ██║   ██║██████╔╝
-██╔══██╗██╔══╝  ██║  ██║╚██╗ ██╔╝██╔══╝  ██║        ██║   ██║   ██║██╔══██╗
-██║  ██║███████╗██████╔╝ ╚████╔╝ ███████╗╚██████╗   ██║   ╚██████╔╝██║  ██║
-╚═╝  ╚═╝╚══════╝╚═════╝   ╚═══╝  ╚══════╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
-                                                                    {gradient}By Adam K.{RESET}
-{DIM}{GRAY}  ──────────────────────────────────────────────────────────────────────{RESET}
-{CRIM}{BOLD}  ▸ {WHT}THREAT FRAMEWORK    {RED}│{RESET} {GRN}325 attack vectors{RESET} {DIM}across 33 autonomous engines{RESET}
-{CRIM}{BOLD}  ▸ {WHT}EXECUTION MODE     {RED}│{RESET} {GRN}real tool chains{RESET}  {DIM}nmap > nuclei > netexec > msf{RESET}
-{CRIM}{BOLD}  ▸ {WHT}OFFENSIVE PIPELINE {RED}│{RESET} {GRN}8-stage lifecycle{RESET} {DIM}recon > exploit > persist > exfil{RESET}
-{CRIM}{BOLD}  ▸ {WHT}AI DECISION ENGINE {RED}│{RESET} {GRN}adaptive replanning{RESET} {DIM}on failure with fallback chains{RESET}
-{DIM}{GRAY}  ──────────────────────────────────────────────────────────────────────{RESET}
-{RED}{BOLD}  [{PULSE} ARMED {RESET}{RED}{BOLD}]{RESET}  {GRAY}Waiting for targets on {CYAN}{API_HOST}:{API_PORT}{RESET}
-{YEL}{BOLD}  Authorized red team operations only. Unauthorized use is prohibited.{RESET}
-"""
-        return banner
+        return render_banner(API_HOST, API_PORT)
 
     @staticmethod
     def create_progress_bar(current: int, total: int, width: int = 50, tool: str = "") -> str:
@@ -7208,10 +7122,6 @@ def setup_logging():
     return logger
 
 # Configuration (using existing API_PORT from top of file)
-DEBUG_MODE = os.environ.get("DEBUG_MODE", "0").lower() in ("1", "true", "yes", "y")
-COMMAND_TIMEOUT = 300  # 5 minutes default timeout
-CACHE_SIZE = 1000
-CACHE_TTL = 3600  # 1 hour
 
 class RedVectorCache:
     """Advanced caching system for command results (thread-safe)"""
@@ -35894,21 +35804,7 @@ if __name__ == "__main__":
 
     # Enhanced startup messages with hacker-style formatting
     C = ModernVisualEngine.COLORS
-    startup_info = f"""
-{C['HACKER_RED']}{C['BOLD']}  ┌──────────────────────────────────────────────────────────────────┐{C['RESET']}
-{C['HACKER_RED']}{C['BOLD']}  │{C['RESET']}  {C['CRIMSON']}root@redvector{C['RESET']}{C['TERMINAL_GRAY']}:{C['NEON_BLUE']}~/{C['RESET']} {C['MATRIX_GREEN']}./redvector --deploy{C['RESET']}
-{C['HACKER_RED']}{C['BOLD']}  ├──────────────────────────────────────────────────────────────────┤{C['RESET']}
-{C['HACKER_RED']}{C['BOLD']}  │{C['RESET']}  {C['MATRIX_GREEN']}[+]{C['RESET']} {C['BRIGHT_WHITE']}BIND      {C['RESET']}{C['TERMINAL_GRAY']}....{C['RESET']} {C['NEON_BLUE']}{API_HOST}:{API_PORT}{C['RESET']}
-{C['HACKER_RED']}{C['BOLD']}  │{C['RESET']}  {C['MATRIX_GREEN']}[+]{C['RESET']} {C['BRIGHT_WHITE']}SYSTEMS   {C['RESET']}{C['TERMINAL_GRAY']}....{C['RESET']} {C['MATRIX_GREEN']}33 autonomous engines online{C['RESET']}
-{C['HACKER_RED']}{C['BOLD']}  │{C['RESET']}  {C['MATRIX_GREEN']}[+]{C['RESET']} {C['BRIGHT_WHITE']}ROUTES    {C['RESET']}{C['TERMINAL_GRAY']}....{C['RESET']} {C['MATRIX_GREEN']}325 attack vectors loaded{C['RESET']}
-{C['HACKER_RED']}{C['BOLD']}  │{C['RESET']}  {C['MATRIX_GREEN']}[+]{C['RESET']} {C['BRIGHT_WHITE']}MCP TOOLS {C['RESET']}{C['TERMINAL_GRAY']}....{C['RESET']} {C['MATRIX_GREEN']}321 tool handlers armed{C['RESET']}
-{C['HACKER_RED']}{C['BOLD']}  │{C['RESET']}  {C['MATRIX_GREEN']}[+]{C['RESET']} {C['BRIGHT_WHITE']}CACHE     {C['RESET']}{C['TERMINAL_GRAY']}....{C['RESET']} {C['CYBER_ORANGE']}{CACHE_SIZE} slots | {CACHE_TTL}s TTL{C['RESET']}
-{C['HACKER_RED']}{C['BOLD']}  │{C['RESET']}  {C['MATRIX_GREEN']}[+]{C['RESET']} {C['BRIGHT_WHITE']}TIMEOUT   {C['RESET']}{C['TERMINAL_GRAY']}....{C['RESET']} {C['CYBER_ORANGE']}{COMMAND_TIMEOUT}s per command{C['RESET']}
-{C['HACKER_RED']}{C['BOLD']}  │{C['RESET']}  {C['MATRIX_GREEN']}[+]{C['RESET']} {C['BRIGHT_WHITE']}DEBUG     {C['RESET']}{C['TERMINAL_GRAY']}....{C['RESET']} {C['CYBER_ORANGE']}{DEBUG_MODE}{C['RESET']}
-{C['HACKER_RED']}{C['BOLD']}  │{C['RESET']}  {C['MATRIX_GREEN']}[+]{C['RESET']} {C['BRIGHT_WHITE']}ENGINE    {C['RESET']}{C['TERMINAL_GRAY']}....{C['RESET']} {C['MATRIX_GREEN']}AI decision + fallback chains active{C['RESET']}
-{C['HACKER_RED']}{C['BOLD']}  └──────────────────────────────────────────────────────────────────┘{C['RESET']}
-{C['HACKER_RED']}{C['BOLD']}  [{C['PULSE']} LIVE {C['RESET']}{C['HACKER_RED']}{C['BOLD']}]{C['RESET']}  {C['TERMINAL_GRAY']}All systems operational. Awaiting engagement.{C['RESET']}
-"""
+    startup_info = render_startup_panel(API_HOST, API_PORT, CACHE_SIZE, CACHE_TTL, COMMAND_TIMEOUT, DEBUG_MODE)
 
     for line in startup_info.strip().split('\n'):
         if line.strip():

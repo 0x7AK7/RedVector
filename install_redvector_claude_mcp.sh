@@ -26,7 +26,7 @@ if [[ -z "$PROJECT" || ! -d "$PROJECT" ]]; then
   exit 1
 fi
 PROJECT="$(cd "$PROJECT" && pwd -P)"
-for file in start_redvector.sh redvector_mcp.py redvector_server.py redvector_backend_check.py; do
+for file in start_redvector.sh redvector_mcp.py redvector_server.py redvector_backend_check.py redvector_banner.py; do
   if [[ ! -f "$PROJECT/$file" ]]; then
     echo "Saknad fil: $PROJECT/$file" >&2
     exit 1

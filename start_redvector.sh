@@ -84,6 +84,12 @@ else
     echo "[RedVector] Backend already running on ${SERVER_HOST}:${SERVER_PORT}" >&2
 fi
 
+# The original artwork is terminal-only; stdout remains exclusively MCP stdio.
+# Render after ownership/health validation, without importing or starting the server.
+if [ -t 0 ] && [ -t 2 ]; then
+    "$PYTHON" "$SCRIPT_DIR/redvector_banner.py" --host "$SERVER_HOST" --port "$SERVER_PORT" >&2
+fi
+
 # ── Launch the MCP client (this replaces the current process) ─────────────────
 exec "$PYTHON" "$SCRIPT_DIR/redvector_mcp.py" \
     --server "http://${SERVER_HOST}:${SERVER_PORT}" \

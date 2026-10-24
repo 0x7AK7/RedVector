@@ -67,6 +67,7 @@ graph TD
 | `ollama-mcp.json` | Example local/Ollama-oriented MCP configuration |
 | `start_redvector.sh` | Linux launcher, verifies backend ownership, starts backend on demand and runs MCP client |
 | `redvector_backend_check.py` | Linux socket/process ownership check used by the launcher |
+| `redvector_banner.py` | Shared original terminal banner and startup panel; never starts the backend |
 | `install_claude_desktop_kali.sh` | Optional Claude Desktop installer for Kali, Debian and Ubuntu |
 | `install_redvector_claude_mcp.sh` | Registers RedVector with Claude Desktop on Linux using its own directory |
 | `start_redvector.ps1` | Windows PowerShell launcher |
@@ -175,6 +176,8 @@ claude-desktop
 Claude Desktop is expected to launch RedVector's `start_redvector.sh` automatically through MCP. The launcher resolves its own installation directory (including symbolic links), uses that project's `.venv` Python when available, and verifies the listening process through Linux `/proc` before reusing a backend. It checks `http://127.0.0.1:8888/health`, starts the RedVector backend when the port is free, and runs `redvector_mcp.py` via stdio. A foreign process or unverifiable owner causes a clear error; no process is stopped automatically. You normally **do not need to execute `start_redvector.sh` manually**. The backend may remain running after Claude Desktop closes because the launcher detaches it.
 
 The MCP client obtains tool availability from `/health/details`, including the essential count (for example, `8/8`). Missing or invalid availability fields are reported as `Unknown`. Launcher and MCP diagnostics go to stderr; backend output goes to `server.log`, keeping MCP stdout reserved for the protocol. If ownership cannot be read (for example, restricted `/proc` access or a different user), run the backend under the same user with visible process metadata or resolve the port conflict manually.
+
+When run manually with `bash start_redvector.sh` from an interactive terminal, the launcher also displays the original red logo and startup panel on stderr, including when it reuses this installation's running backend. The server and launcher share the same renderer; displaying the banner does not start another server. The MCP tool count is read from the current registrations. Claude Desktop's piped MCP launch suppresses the banner and keeps stdout exclusively for the protocol.
 
 **Verify the connection:** Open **Claude Desktop → Settings → Developer → Local MCP servers** and check that `redvector-ai` is running. In a Claude chat, request a read-only `server_health` check. Do not assume a reported scan was executed unless the corresponding MCP tool call and output are visible.
 
@@ -975,6 +978,7 @@ RedVector/
 ├── ollama-mcp.json
 ├── start_redvector.sh
 ├── redvector_backend_check.py
+├── redvector_banner.py
 ├── install_claude_desktop_kali.sh
 ├── install_redvector_claude_mcp.sh
 ├── start_redvector.ps1

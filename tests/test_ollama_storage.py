@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock,patch
 import psutil
-from redvector_ollama_storage import StorageInfo,StorageError,detect_storage,filesystem_path
+from redvector_ollama_storage import StorageInfo,StorageError,detect_storage,filesystem_path,directory_permissions
 from redvector_ollama_setup import Ollama,Wizard,Terminal,SetupError
 
 class StorageDetection(unittest.TestCase):
@@ -80,6 +80,16 @@ class StorageDetection(unittest.TestCase):
         result=self.systemd()
         self.assertEqual(result.path,self.home/".ollama"/"models")
         self.assertIn("systemd",result.source)
+
+    def test_user_manager_service_uses_actual_process_uid_when_user_is_implicit(self):
+        self.properties["User"]=""
+        self.properties["_UserManager"]="yes"
+        self.assertEqual(self.systemd().path,self.home/".ollama"/"models")
+
+    def test_unresolvable_service_name_can_still_use_verified_uid_and_explicit_override(self):
+        self.properties["Environment"]='OLLAMA_MODELS="'+str(self.root/"explicit-models")+'"'
+        with patch("redvector_ollama_storage.account",side_effect=KeyError("name unavailable")):
+            self.assertEqual(self.systemd().path,self.root/"explicit-models")
 
     def test_systemd_custom_environment_overrides_account_home(self):
         self.properties["Environment"]='HOME="'+str(self.root/"custom home")+'" OLLAMA_MODELS="'+str(self.root/"custom weights")+'"'
@@ -209,11 +219,16 @@ class StorageFilesystem(unittest.TestCase):
                 with self.assertRaisesRegex(StorageError,"read-only"):
                     filesystem_path(StorageInfo(Path(d),"test"))
 
+    def test_capacity_path_does_not_require_service_file_access(self):
+        metadata=SimpleNamespace(st_mode=0o40700,st_uid=2001,st_gid=2001)
+        with patch("pathlib.Path.stat",return_value=metadata),patch("os.statvfs",create=True,return_value=SimpleNamespace(f_flag=0)),patch("redvector_ollama_storage.directory_permissions",side_effect=AssertionError("Capacity must not inspect file-access ACLs")):
+            self.assertEqual(filesystem_path(StorageInfo(Path.cwd(),"test",uid=2002,gids=(2002,))),Path.cwd())
+
     def test_known_service_user_without_write_access_is_not_repaired(self):
         metadata=SimpleNamespace(st_mode=0o40700,st_uid=2001,st_gid=2001)
         with patch("pathlib.Path.stat",return_value=metadata),patch("os.statvfs",create=True,return_value=SimpleNamespace(f_flag=0)):
-            with self.assertRaisesRegex(StorageError,"access"):
-                filesystem_path(StorageInfo(Path.cwd(),"test",uid=2002,gids=(2002,)))
+            self.assertNotEqual(directory_permissions(Path.cwd(),metadata,2002,(2002,)),7)
+            self.assertEqual(filesystem_path(StorageInfo(Path.cwd(),"test",uid=2002,gids=(2002,))),Path.cwd())
 
     def test_remote_environment_endpoint_is_not_silently_replaced_with_localhost(self):
         with patch.dict(os.environ,{"OLLAMA_HOST":"http://remote.invalid:11434"}):
@@ -236,7 +251,7 @@ class StorageFilesystem(unittest.TestCase):
             (1,7,0xffffffff),(2,7,2002),(4,0,0xffffffff),(16,7,0xffffffff),(32,0,0xffffffff)])
         metadata=SimpleNamespace(st_mode=0o40770,st_uid=2001,st_gid=2001)
         with patch("pathlib.Path.stat",return_value=metadata),patch("os.statvfs",create=True,return_value=SimpleNamespace(f_flag=0)),patch("os.getxattr",create=True,return_value=acl):
-            self.assertEqual(filesystem_path(StorageInfo(Path.cwd(),"test",uid=2002,gids=(2002,))),Path.cwd())
+            self.assertEqual(directory_permissions(Path.cwd(),metadata,2002,(2002,)),7)
 
     def test_split_group_acl_permissions_do_not_invent_combined_access(self):
         import struct
@@ -244,13 +259,38 @@ class StorageFilesystem(unittest.TestCase):
             (1,7,0xffffffff),(4,5,0xffffffff),(8,2,3001),(16,7,0xffffffff),(32,0,0xffffffff)])
         metadata=SimpleNamespace(st_mode=0o40770,st_uid=2001,st_gid=3000)
         with patch("pathlib.Path.stat",return_value=metadata),patch("os.statvfs",create=True,return_value=SimpleNamespace(f_flag=0)),patch("os.getxattr",create=True,return_value=acl):
-            with self.assertRaises(StorageError):
-                filesystem_path(StorageInfo(Path.cwd(),"test",uid=2002,gids=(3000,3001)))
+            self.assertNotEqual(directory_permissions(Path.cwd(),metadata,2002,(3000,3001)),7)
 
     def test_qwen_preset_uses_existing_model_and_exact_english_label(self):
         api=Mock();api.models.return_value=[{"name":"qwen3:8b"}]
         term=Terminal(io.StringIO())
         result=Wizard(api,term,lambda:"1").select_model()
         self.assertEqual(result,"qwen3:8b")
-        self.assertIn("1. Qwen3 8B | Approx. 5.2 GB | Tool Calling",term.stream.getvalue())
+        self.assertRegex(term.stream.getvalue(),r"1\. Qwen3 8B\s+\| Approx\. 5.2 GB \| Tool Calling")
         api.pull.assert_not_called()
+
+class ServiceManagerDiscovery(unittest.TestCase):
+    def test_custom_user_unit_is_discovered_from_verified_process_cgroup(self):
+        from redvector_ollama_storage import unit_properties
+        data="0::/user.slice/user-4007.slice/user@4007.service/app.slice/research-model.service"
+        response=SimpleNamespace(returncode=0,stdout="ActiveState=active\nMainPID=44\n")
+        with patch("pathlib.Path.read_text",return_value=data),patch("shutil.which",return_value="/discovered/systemctl"),patch("subprocess.run",return_value=response) as run:
+            properties=unit_properties(44)
+        args=run.call_args.args[0]
+        self.assertIn("--user",args)
+        self.assertIn("research-model.service",args)
+        self.assertEqual(properties["_UserManager"],"yes")
+
+class ConcreteListenerDiscovery(unittest.TestCase):
+    def listener(self,address,pid):
+        return SimpleNamespace(status=psutil.CONN_LISTEN,laddr=SimpleNamespace(ip=address,port=11434),pid=pid)
+
+    def test_ipv6_wildcard_is_not_assumed_to_serve_ipv4(self):
+        from redvector_ollama_storage import listener_pids
+        with patch("psutil.net_connections",return_value=[self.listener("::",11),self.listener("127.0.0.1",22)]):
+            self.assertEqual(listener_pids("127.0.0.1",11434),{22})
+
+    def test_ipv4_mapped_concrete_listener_is_recognized(self):
+        from redvector_ollama_storage import listener_pids
+        with patch("psutil.net_connections",return_value=[self.listener("::ffff:127.0.0.1",33)]):
+            self.assertEqual(listener_pids("127.0.0.1",11434),{33})

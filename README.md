@@ -1094,24 +1094,47 @@ Existing models are reused. To explicitly update an installed model, run
 `ollama pull MODEL:TAG`, then select it again. Pull progress is Ollama's native
 output; interrupted downloads can be resumed by repeating the selection.
 If registry size metadata is unavailable, supply a conservative download budget.
-The wizard detects the local server's effective model directory from its
-listening process and environment, or verified systemd service configuration.
-The running server's OLLAMA_MODELS override takes precedence over its HOME;
-systemd defaults use the configured service account's home, never an assumed
-username or the caller's home. Relative process paths use the server's working
-directory. Configuration changes after startup, inaccessible metadata and
-private filesystem mappings require explicit manual verification rather than
-a guessed directory. A manual path is requested only when safe automatic
-detection is unavailable. The detected directory and required storage are
-shown before a download; inaccessible/read-only filesystems and insufficient
-space stop the operation. Ownership and permissions are never repaired
-automatically. Downloads still go through the official Ollama CLI.
+The wizard identifies the configured local API and resolves the serving process,
+its effective environment, or matching systemd configuration. It supports
+custom service users and units, user-managed units, process-local overrides,
+non-default homes and numeric UIDs without a resolvable username. An existing
+service's environment takes precedence over the caller's shell. Its model
+directory is never guessed from a tester's username or installation path.
 
-Remote OLLAMA_HOST values and known local forwarders cannot use a local
-filesystem space assertion and are rejected under this agent's local-only
-policy. A shell OLLAMA_MODELS does not reconfigure a running service: set the
-override in that service's actual environment. For a new service started by
-this wizard, the caller's configured override is passed to the child.
+Capacity is separate from permission to list/read/write model files. A fixed
+metadata-only probe pins the actual blob and manifest directories independently,
+follows symlinks without suppressing traversal failures, and measures their
+filesystem availability. Proven missing tails may use their resolved existing
+parent; denied traversal, loops and untriggered automounts never silently fall
+back to another filesystem. Blob/manifest budgets are combined when they share
+a filesystem. Temporary/operational headroom is included.
+
+The English preflight shows real API connectivity, selected model, required
+download, detected storage, measured or unknown capacity and tool-call status.
+Filesystem availability is a snapshot, not a reservation or guarantee.
+Service-account/project quotas and other runtime restrictions are labeled
+unverified unless a filesystem itself reports a limit through available space.
+
+For private traversal or restricted metadata, cancellation is the default.
+Where verified process/UID information and trusted tools are available, the
+operator may explicitly approve a limited read-only check as that service UID.
+This uses an isolated interpreter, fixed source and no shell, namespace entry,
+permission repair or service restart. It does not require running the whole
+installer with sudo. If capacity remains unknown, only the explicit word
+UNVERIFIED followed by the normal download confirmation allows Ollama to attempt
+the pull; its service may still reject it. Verified insufficient space or a
+read-only filesystem always stops the attempt and cannot use this fallback.
+Cancelling returns to the startup menu instead of an installation retry loop.
+
+Only Ollama's official CLI/API manages model files. Existing models are reused.
+Remote endpoints remain blocked by the local-only policy. Known forwarders never
+use client disk space as server capacity, and unknown process location is not
+presented as a verified local engine. A manual path is requested only when
+automatic storage discovery is inconclusive; it may also be left explicitly
+unknown. Ownership and permissions are never changed to make validation pass.
+
+See [service-owned storage capacity validation](docs/ollama-capacity-validation.md)
+for architecture, representative portability cases, actual results and limits.
 
 Start subsequent sessions with:
 

@@ -115,6 +115,36 @@ class KaliAcceptance(unittest.TestCase):
             detected=detect_storage("127.0.0.1",11434)
             self.assertEqual(detected.path,models)
             self.assertEqual(filesystem_path(detected),models)
+            from redvector_ollama_capacity import probe_storage,current_identity
+            capacity=probe_storage(detected)
+            self.assertTrue(capacity.blobs.verified,capacity)
+            self.assertTrue(capacity.manifests.verified,capacity)
+            self.assertTrue(capacity.manifests_v2.verified,capacity)
+            self.assertEqual(capacity.model_path,models)
+            self.assertTrue(capacity.instance_verified,capacity)
+            self.assertEqual(capacity.blobs.measured_uid,current_identity().uid)
+            self.assertEqual(capacity.blobs.quota_status,"Unverified")
+            self.assertNotEqual(current_identity().uid,0,"Capacity acceptance must run as a regular user.")
+            # Exercise the actual preflight and decline its real confirmation.
+            # Only registry metadata may be read; this program never invokes pull.
+            code=(
+                "from redvector_ollama_setup import Wizard,DownloadCancelled\n"
+                "try: Wizard().resource_budget('qwen3:8b',5.2)\n"
+                "except DownloadCancelled: print('PREFLIGHT CANCELLED: no pull was invoked.',flush=True)\n"
+                "else: raise RuntimeError('Acceptance requires declining the download.')\n")
+            preflight=TerminalSession([str(python),"-c",code],env,ROOT,OUTPUT,"00-live-capacity-preflight")
+            sessions.append(preflight)
+            prompt=preflight.expect(r"(Maximum expected download size in GB|OLLAMA PREFLIGHT CHECK)",timeout=40)
+            if prompt.group(0).startswith("Maximum"):
+                preflight.send("5.3")
+                preflight.expect("OLLAMA PREFLIGHT CHECK",timeout=40)
+            preflight.expect("Verified filesystem capacity")
+            preflight.expect(r"Proceed with download\? \[y/N\]")
+            preflight.send("n")
+            preflight.expect("PREFLIGHT CANCELLED: no pull was invoked.")
+            preflight.finish()
+
+
             installer.send("3");installer.expect("Ollama: healthy");installer.expect("Selected model: qwen3:8b");menu(installer)
             installer.send("4");installer.expect("qwen3:8b");menu(installer)
             installer.send("2");installer.expect("Choose 1-7:");installer.send("4")
@@ -183,7 +213,7 @@ class KaliAcceptance(unittest.TestCase):
             for name,digest in before.items():self.assertEqual(hashlib.sha256((ROOT/name).read_bytes()).hexdigest(),digest)
             result={"model":"qwen3:8b","manifest_sha256":model_digest,"model_store_unchanged":True,
                     "native_kali_model_loop":True,"tool_count":328,"source_hashes_unchanged":True,
-                    "checks":["real Bash installer","actual local process model-storage detection","English/color terminal","installed-model selection",
+                    "checks":["real Bash installer","actual local process model-storage detection","unprivileged blobs/manifests capacity verification","actual preflight summary and declined confirmation without pull","English/color terminal","installed-model selection",
                               "invalid identifier recovery","real MCP diagnostics","actual UI model tool loop",
                               "launcher restart and selected-model persistence","unsupported-model error",
                               "backend/service PID reuse","native Kali model/API/MCP transcript",

@@ -14,6 +14,8 @@ import unittest
 from unittest.mock import Mock,AsyncMock,patch
 from redvector_ollama_setup import Ollama,Wizard,Terminal,SetupError,plain,save_model,load_model
 from redvector_ollama_policy import Policy,PolicyError
+from redvector_ollama_storage import StorageInfo
+from redvector_ollama_capacity import CapacityAssessment,CapacitySnapshot
 from redvector_ollama_agent import Agent,AgentError,discover,verify_tools,connection_test,result_data
 
 class LocalHTTPTests(unittest.TestCase):
@@ -48,12 +50,12 @@ class InstallerEdges(unittest.TestCase):
     def test_disk_check_enforces_actual_free_bytes(self):
         api=model_api();api.manifest_size.return_value=4_700_000_000
         wizard=self.wizard([],api)
-        with tempfile.TemporaryDirectory() as d,patch.object(wizard,"storage_path",return_value=Path(d)),patch("shutil.disk_usage",return_value=SimpleNamespace(free=4_000_000_000)):
+        with tempfile.TemporaryDirectory() as d,patch.object(wizard,"storage_location",return_value=StorageInfo(Path(d),"OS fixture")),patch("redvector_ollama_setup.probe_storage",return_value=CapacityAssessment(CapacitySnapshot("verified",available_bytes=4_000_000_000),CapacitySnapshot("verified",available_bytes=4_000_000_000))):
             with self.assertRaisesRegex(SetupError,"Insufficient storage"):wizard.resource_budget("dolphin-llama3:8b",4.7)
     def test_resource_check_reports_memory_gpu_and_requires_confirmation(self):
         api=model_api();api.manifest_size.return_value=1000
         wizard=self.wizard(["n"],api)
-        with tempfile.TemporaryDirectory() as d,patch.object(wizard,"storage_path",return_value=Path(d)),patch("shutil.disk_usage",return_value=SimpleNamespace(free=20_000_000_000)),patch("shutil.which",return_value=None):
+        with tempfile.TemporaryDirectory() as d,patch.object(wizard,"storage_location",return_value=StorageInfo(Path(d),"OS fixture")),patch("redvector_ollama_setup.probe_storage",return_value=CapacityAssessment(CapacitySnapshot("verified",available_bytes=20_000_000_000),CapacitySnapshot("verified",available_bytes=20_000_000_000))),patch("shutil.which",return_value=None):
             with self.assertRaisesRegex(SetupError,"cancelled"):wizard.resource_budget("custom")
             self.assertIn("RAM:",wizard.term.stream.getvalue())
             self.assertIn("GPU",wizard.term.stream.getvalue())

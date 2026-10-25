@@ -1,6 +1,7 @@
 """Read-only discovery of a LOCAL Ollama server's effective model filesystem."""
 from dataclasses import dataclass
 import os
+import ipaddress
 import errno
 import struct
 from pathlib import Path
@@ -11,6 +12,7 @@ import stat
 import subprocess
 from urllib.parse import urlsplit
 import psutil
+from types import SimpleNamespace
 
 class StorageError(ValueError):
     pass
@@ -23,6 +25,10 @@ class StorageInfo:
     uid: int | None = None
     gids: tuple = ()
     manual_allowed: bool = True
+    pid: int | None = None
+    started: float | None = None
+    host: str | None = None
+    port: int | None = None
 
 def value(raw):
     return str(raw).strip().strip("\"'")
@@ -41,11 +47,18 @@ def model_path(env, cwd=None, default_home=None):
     return path
 
 def listener_pids(host,port):
+    def concrete_match(raw):
+        try:
+            address=ipaddress.ip_address(raw);target=ipaddress.ip_address(host)
+            if address.version==target.version:return address==target or address.is_unspecified
+            return address.version==6 and target.version==4 and address.ipv4_mapped==target
+        except ValueError:return False
     try:
         connections=psutil.net_connections(kind="tcp")
         return {c.pid for c in connections if c.status==psutil.CONN_LISTEN and c.laddr.port==port
-                and c.laddr.ip in (host,"0.0.0.0","::","::1" if host=="::1" else "127.0.0.1") and c.pid}
+                and concrete_match(c.laddr.ip) and c.pid}
     except (psutil.Error,OSError):return set()
+
 
 def same_namespace(pid):
     try:
@@ -53,10 +66,14 @@ def same_namespace(pid):
                 and os.readlink(f"/proc/{pid}/root")==os.readlink("/proc/self/root"))
     except OSError:return None
 
-def is_server(process):
+def is_server(process,allow_restricted=False):
     args=process.cmdline()
-    return (len(args)>1 and Path(args[0]).name in ("ollama","ollama.exe")
-            and Path(process.exe()).name in ("ollama","ollama.exe") and args[1]=="serve")
+    if len(args)<2 or Path(args[0]).name not in ("ollama","ollama.exe") or args[1]!="serve":return False
+    try:executable=process.exe()
+    except psutil.AccessDenied:
+        if allow_restricted:return True
+        raise
+    return Path(executable).name in ("ollama","ollama.exe") or (allow_restricted and not executable)
 
 def ids(process):
     try:
@@ -72,7 +89,10 @@ def ids(process):
 
 def account(user):
     import pwd
-    return pwd.getpwuid(int(user)) if user.isdecimal() else pwd.getpwnam(user)
+    try:return pwd.getpwuid(int(user)) if user.isdecimal() else pwd.getpwnam(user)
+    except KeyError:
+        if user.isdecimal():return SimpleNamespace(pw_uid=int(user),pw_dir=None)
+        raise
 
 MAPPING_KEYS=("RootDirectory","RootImage","BindPaths","BindReadOnlyPaths","TemporaryFileSystem",
               "MountImages","ExtensionImages","ExtensionDirectories","ReadOnlyPaths","ReadWritePaths",
@@ -81,7 +101,18 @@ NAMESPACE_FLAGS=("PrivateMounts","PrivateTmp","ProtectHome","ProtectSystem","Pri
                  "PrivateUsers","RootEphemeral","MountAPIVFS","ProtectKernelTunables",
                  "ProtectKernelModules","ProtectKernelLogs","ProtectControlGroups")
 
-def unit_properties():
+def unit_properties(pid=None):
+    unit="ollama.service";user_manager=False
+    if pid is not None:
+        try:
+            entries=Path(f"/proc/{pid}/cgroup").read_text().splitlines()
+            services=[part for line in entries for part in line.split("/") if part.endswith(".service")]
+            specific=[name for name in services if not re.fullmatch(r"user@[0-9]+\.service",name)]
+            if specific:
+                unit=specific[-1]
+                user_manager=any(re.fullmatch(r"user@[0-9]+\.service",name) for name in services)
+            if not re.fullmatch(r"[A-Za-z0-9_@.\\:-]+\.service",unit):return {}
+        except OSError:pass
     command=shutil.which("systemctl")
     if not command:return {}
     keys=("ActiveState","MainPID","User","Environment","EnvironmentFiles","PassEnvironment",
@@ -89,10 +120,12 @@ def unit_properties():
           "RootDirectory","RootImage","PrivateMounts","PrivateTmp","ProtectHome","ProtectSystem",
           "BindPaths","BindReadOnlyPaths","TemporaryFileSystem","SetLoginEnvironment")+MAPPING_KEYS+NAMESPACE_FLAGS
     try:
-        result=subprocess.run([command,"show","ollama.service","--no-pager","--property="+",".join(keys)],
+        result=subprocess.run([command]+(["--user"] if user_manager else [])+["show",unit,"--no-pager","--property="+",".join(keys)],
             capture_output=True,text=True,timeout=3,check=False,env=dict(os.environ,LC_ALL="C"))
         if result.returncode:return {}
-        return dict(line.split("=",1) for line in result.stdout.splitlines() if "=" in line)
+        properties=dict(line.split("=",1) for line in result.stdout.splitlines() if "=" in line)
+        properties["_UserManager"]="yes" if user_manager else "no"
+        return properties
     except (OSError,subprocess.TimeoutExpired):return {}
 
 def environment_files(raw):
@@ -139,17 +172,23 @@ def endpoint_matches(raw,host,port):
     except ValueError:return False
 
 def systemd_storage(host,port,expected_pid=None):
-    props=unit_properties()
+    props=unit_properties(expected_pid)
+    candidate=None
     try:
         pid=int(props.get("MainPID","0"))
         if props.get("ActiveState")!="active" or pid<=0 or (expected_pid and expected_pid!=pid):
             raise StorageError("No matching active systemd Ollama service was verified.")
         process=psutil.Process(pid)
-        if not is_server(process):raise StorageError("The systemd main process is not ollama serve.")
-        user=props.get("User","")
-        if not user:raise StorageError("The systemd service user is not explicit.")
-        owner=account(user)
+        if not is_server(process,allow_restricted=True):raise StorageError("The systemd main process is not ollama serve.")
         uid,gids=ids(process)
+        candidate=StorageInfo(None,"systemd service candidate",uid=uid,gids=gids,
+                              pid=pid,started=process.create_time(),host=host,port=port)
+        user=props.get("User","") or (str(uid) if uid is not None else "")
+        if not user:raise StorageError("The actual service UID could not be verified.")
+        try:owner=account(user)
+        except (KeyError,OSError):
+            if uid is None:raise StorageError("The service account and actual UID are unavailable.")
+            owner=SimpleNamespace(pw_uid=uid,pw_dir=None)
         if uid is not None and uid!=owner.pw_uid:
             raise StorageError("The running service user differs from the loaded configuration.")
         # A different root/mount mapping cannot be measured as a host directory.
@@ -191,8 +230,11 @@ def systemd_storage(host,port,expected_pid=None):
             home=owner.pw_dir
         path=model_path(env,props.get("WorkingDirectory") or "/",home)
         return StorageInfo(path,"systemd effective configuration and service account",
-                           uid=owner.pw_uid,gids=gids)
+                           uid=owner.pw_uid,gids=gids,pid=pid,started=process.create_time(),host=host,port=port)
     except (StorageError,psutil.Error,OSError,ValueError,KeyError,ImportError) as exc:
+        if candidate is not None:
+            return StorageInfo(None,"systemd service candidate",str(exc),uid=candidate.uid,gids=candidate.gids,
+                               pid=candidate.pid,started=candidate.started,host=host,port=port)
         return StorageInfo(None,"systemd",str(exc))
 
 def detect_storage(host,port):
@@ -217,7 +259,7 @@ def detect_storage(host,port):
             path=model_path(env,process.cwd() if value(env.get("OLLAMA_MODELS","")) and not Path(value(env["OLLAMA_MODELS"])).is_absolute() else None)
         except StorageError as exc:return StorageInfo(None,"process",str(exc))
         uid,gids=ids(process)
-        return StorageInfo(path,"running Ollama process environment",uid=uid,gids=gids)
+        return StorageInfo(path,"running Ollama process environment",uid=uid,gids=gids,pid=pid,started=process.create_time(),host=host,port=port)
     except (psutil.AccessDenied,psutil.NoSuchProcess,OSError):
         return systemd_storage(host,port,pid)
 
@@ -261,9 +303,6 @@ def filesystem_path(info):
             raise StorageError("The model directory or its parent is not a directory.")
         if hasattr(os,"statvfs") and os.statvfs(path).f_flag & getattr(os,"ST_RDONLY",1):
             raise StorageError("The model filesystem is read-only. No installation changes were made.")
-        if info.uid is not None and info.uid!=0:
-            if directory_permissions(path,metadata,info.uid,info.gids)!=7:
-                raise StorageError("Unable to verify required service-user directory access; check permissions/ACLs manually.")
         return path
     except OSError as exc:
         raise StorageError("Cannot access the model filesystem to verify available space; no permissions were changed.") from exc

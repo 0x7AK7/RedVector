@@ -1,5 +1,6 @@
 """Setup regressions use temporary paths and controlled external boundaries."""
 import io
+import os
 import json
 from pathlib import Path
 import tempfile
@@ -18,6 +19,17 @@ class SetupTests(unittest.TestCase):
         for url in ("http://evil:11434","https://127.0.0.1:11434","http://user@127.0.0.1:11434",
                     "http://127.0.0.1:11434/path","http://127.0.0.1:11434?x=1"):
             with self.subTest(url=url),self.assertRaises(SetupError): Ollama(url)
+    def test_native_local_bind_endpoint_forms_use_concrete_loopback(self):
+        for supplied,expected in [
+            ("0.0.0.0:11434","http://127.0.0.1:11434"),
+            ("[::]:11434","http://[::1]:11434"),
+            ("::1","http://[::1]:11434"),
+            (":12345","http://127.0.0.1:12345"),
+            ("","http://127.0.0.1:11434")]:
+            with self.subTest(endpoint=supplied):
+                with patch.dict(os.environ,{"OLLAMA_HOST":supplied}):
+                    self.assertEqual(Ollama().url,expected)
+
     def test_configuration_is_separate_atomic_and_validated(self):
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/"ollama"/"config.json"; claude=Path(d)/"claude_desktop_config.json"

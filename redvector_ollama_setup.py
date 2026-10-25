@@ -17,6 +17,7 @@ import tempfile
 import time
 from urllib.parse import urlsplit
 from redvector_ollama_storage import StorageInfo, StorageError, detect_storage, filesystem_path, model_path
+from redvector_ollama_capacity import CapacityAssessment, current_identity, probe_storage, service_probe_command
 
 # Keep shared exception identities when the wizard is executed as a script.
 if __name__ == "__main__":
@@ -25,12 +26,15 @@ if __name__ == "__main__":
 ROOT = Path(__file__).resolve().parent
 PRESETS = [
     ("Qwen3 8B", "qwen3:8b", 5.2, "Tool Calling"),
-    ("Qwen3-Coder 30B", "qwen3-coder:30b", 19.0, "Agentic coding"),
-    ("GPT-OSS 20B", "gpt-oss:20b", 14.0, "Reasoning and analysis"),
+    ("Qwen3-Coder 30B", "qwen3-coder:30b", 19.0, "Agentic Coding"),
+    ("GPT-OSS 20B", "gpt-oss:20b", 14.0, "Reasoning"),
 ]
 INSTALL_URL = "https://ollama.com/install.sh"
 
 class SetupError(RuntimeError):
+    pass
+
+class DownloadCancelled(SetupError):
     pass
 
 def model_id(value):
@@ -40,7 +44,11 @@ def model_id(value):
     return value
 
 def config_path():
-    return Path(os.environ.get("XDG_CONFIG_HOME",Path.home()/".config"))/"redvector-ollama"/"config.json"
+    configured=os.environ.get("XDG_CONFIG_HOME")
+    if configured:return Path(configured)/"redvector-ollama"/"config.json"
+    home=os.environ.get("HOME") or current_identity().home
+    if not home:raise SetupError("Current home is unavailable. Set an absolute XDG_CONFIG_HOME; no home directory was guessed.")
+    return Path(home)/".config"/"redvector-ollama"/"config.json"
 
 def load_model(path=None):
     path=Path(path) if path else config_path()
@@ -102,16 +110,20 @@ def local_lock(name):
 class Ollama:
     def __init__(self,url=None):
         from requests import Session
-        url=url if url is not None else os.environ.get("OLLAMA_HOST","http://127.0.0.1:11434")
-        if "://" not in url:url="http://"+url
-        parsed=urlsplit(url)
-        try:port=11434 if parsed.port is None else parsed.port
-        except ValueError as exc:raise SetupError("Invalid local Ollama port.") from exc
-        if (parsed.scheme!="http" or parsed.hostname not in {"127.0.0.1","localhost","::1"}
+        url=(url if url is not None else os.environ.get("OLLAMA_HOST","")).strip() or "http://127.0.0.1:11434"
+        if "://" not in url:
+            if url in ("::","::1"):url="http://["+url+"]"
+            elif url.startswith(":") and url.count(":")==1:url="http://127.0.0.1"+url
+            else:url="http://"+url
+        try:
+            parsed=urlsplit(url)
+            port=11434 if parsed.port is None else parsed.port
+        except ValueError as exc:raise SetupError("Invalid local Ollama endpoint or port.") from exc
+        if (parsed.scheme!="http" or parsed.hostname not in {"127.0.0.1","localhost","::1","0.0.0.0","::"}
             or parsed.username or parsed.password or parsed.path not in ("","/")
             or parsed.query or parsed.fragment or not 1<=port<=65535):
             raise SetupError("Remote or non-local Ollama endpoints are disabled. Use a plain local HTTP endpoint; remote disk space cannot be checked here.")
-        self.host="::1" if parsed.hostname=="::1" else "127.0.0.1"
+        self.host="::1" if parsed.hostname in ("::1","::") else "127.0.0.1"
         self.port=port
         self.url=f"http://{'[::1]' if self.host=='::1' else self.host}:{port}"
         self.session=Session();self.session.trust_env=False
@@ -208,9 +220,12 @@ class Ollama:
             except (ConnectionRefusedError,TimeoutError,OSError):pass
             command=shutil.which("ollama")
             if not command:raise SetupError("Ollama is not installed.")
-            try:self.owned_models_path=model_path(dict(os.environ,HOME=os.environ.get("HOME") or str(Path.home())),os.getcwd())
+            home=os.environ.get("HOME") or current_identity().home
+            context=dict(os.environ)
+            if home:context["HOME"]=str(home)
+            try:self.owned_models_path=model_path(context,os.getcwd())
             except StorageError as exc:raise SetupError("Cannot determine the new service model directory: "+str(exc)) from exc
-            env=dict(os.environ,OLLAMA_HOST=self.url,OLLAMA_MODELS=str(self.owned_models_path))
+            env=dict(context,OLLAMA_HOST=self.url,OLLAMA_MODELS=str(self.owned_models_path))
             log=config_path().parent/"ollama-service.log"
             with open(log,"ab") as output:
                 os.chmod(log,0o600)
@@ -286,37 +301,142 @@ class Wizard:
         if not shutil.which("ollama"):raise SetupError("Installation completed but Ollama is not on PATH.")
         return True
 
-    def storage_path(self):
+    def storage_location(self):
         info=detect_storage(self.api.host,self.api.port)
         if info.path is None:
             self.term.message("warning","Automatic model storage detection: "+info.reason)
             if not info.manual_allowed:raise SetupError(info.reason)
-            raw=self.ask("Enter the actual local Ollama service model directory (blank cancels):")
-            if not raw:raise SetupError("Model storage check cancelled. No download was started.")
-            info=StorageInfo(Path(raw),"operator-specified local service directory")
-        self.term.write("Ollama model directory: "+str(info.path)+" ("+info.source+")")
+            if info.pid is not None:return info
+            raw=self.ask("Enter the actual local model directory, UNKNOWN to leave it unverified, or blank to cancel:")
+            if not raw:raise DownloadCancelled("Model storage check cancelled. No download was started.")
+            if raw=="UNKNOWN":return info
+            path=Path(raw)
+            if not path.is_absolute() or any(ord(c)<32 for c in raw):
+                raise SetupError("Use an absolute local model directory without control characters.")
+            info=StorageInfo(path,"operator-specified local service directory")
+        self.term.write("Model storage configuration: "+str(info.path)+" ("+info.source+")")
+        return info
+
+    def storage_path(self):
+        # Compatibility path resolver; download capacity uses pinned descriptors,
+        # not directory file-access or ACL checks.
+        info=self.storage_location()
         try:return filesystem_path(info)
         except StorageError as exc:raise SetupError(str(exc)) from exc
 
+    def preflight(self,model,size,info,capacity,installed=False,metadata=None):
+        path=capacity.model_path or info.path
+        known=capacity.complete
+        available=(f"{capacity.blobs.available_bytes/1e9:.2f} GB" if capacity.blobs.verified else "Unknown")
+        required="None (already installed)" if installed else f"Approx. {size/1e9:.2f} GB"
+        tools="To be verified after download"
+        if installed:
+            tools=("Advertised; agent verifies native tool calls" if isinstance(metadata,dict) and "tools" in metadata.get("capabilities",[])
+                   else "Not advertised; agent mode disabled")
+        local=self.api.host in ("127.0.0.1","localhost","::1")
+        engine=("Local process detected" if local and capacity.instance_verified else
+                "API responding; engine location unverified")
+        self.term.box("OLLAMA PREFLIGHT CHECK",[
+            "Ollama engine:     "+engine,
+            "Ollama API:        Connected",
+            f"Model:             {model}",
+            "Required download: "+required,
+            "Model storage:     "+(str(path) if path else "Unverified"),
+            "Storage source:    "+("Runtime process verified at the API endpoint" if capacity.instance_verified else info.source),
+            "Storage check:     "+("Verified filesystem capacity" if known else "Unverified"),
+            "Available space:   "+available,
+            "Blob filesystem:   "+(str(capacity.blobs.checked_path) if capacity.blobs.verified else "Unverified"),
+            "Manifest storage:  "+(f"{capacity.manifests.available_bytes/1e9:.2f} GB available" if capacity.manifests.verified else "Unverified"),
+            "Manifest v2:       "+(f"{capacity.manifests_v2.available_bytes/1e9:.2f} GB available" if capacity.manifests_v2 is not None and capacity.manifests_v2.verified else "Unverified" if capacity.manifests_v2 is not None else "Not part of this assessment"),
+            "Account quotas:    Unverified; reservations, project limits and future usage may differ",
+            "Tool calling:      "+tools])
+        if not installed:self.term.write(f"Required with temporary/operational headroom: {(int(size*1.15)+1_000_000_000)/1e9:.2f} GB for blobs; 16 MiB per manifest directory.")
+        for name,item in (("Blob",capacity.blobs),("Manifest",capacity.manifests),("Manifest v2",capacity.manifests_v2)):
+            if item is None:continue
+            if not item.verified and item.reason:self.term.message("warning",name+" capacity: "+item.reason)
+
+    def check_capacity(self,capacity,required):
+        destinations=[("blob",capacity.blobs,required),("manifest",capacity.manifests,16*1024*1024)]
+        if capacity.manifests_v2 is not None:destinations.append(("manifest v2",capacity.manifests_v2,16*1024*1024))
+        pools={}
+        for name,item,minimum in destinations:
+            if item.status=="error":raise SetupError(item.reason)
+            if item.verified and item.read_only:
+                raise SetupError(f"The verified {name} filesystem is read-only. No download was started.")
+            if item.verified and item.available_bytes<minimum:
+                raise SetupError(f"Insufficient storage on the verified {name} filesystem: {item.available_bytes} bytes available, {minimum} required. No download was started.")
+            if item.verified and item.device:pools.setdefault(item.device,[]).append((item,minimum))
+        for pool in pools.values():
+            if len(pool)<2:continue
+            combined=sum(minimum for _,minimum in pool)
+            available=min(item.available_bytes for item,_ in pool)
+            if available<combined:
+                raise SetupError(f"Insufficient storage on a shared model filesystem: {available} bytes available, {combined} required. No download was started.")
+
+    def confirm_unknown_capacity(self,model,size,info,capacity,required):
+        attempted=False
+        while not capacity.complete:
+            self.check_capacity(capacity,required)
+            command=None
+            if not attempted:
+                try:command=service_probe_command(info)
+                except (ValueError,OSError):pass
+            options=[
+                "No successful capacity check exists for every required storage filesystem.",
+                "Ollama may reject the pull or run out of storage; no available space is being assumed."]
+            if command:
+                options+=[f"1. Run a limited read-only check as detected service UID {info.uid} using sudo.",
+                          f"   Trusted tools: {command[0]} and {command[4]}. No files, permissions or services are changed."]
+            options+=["Type UNVERIFIED to consent to a download without full capacity verification.",
+                      "Any other answer cancels this download and returns to the startup menu."]
+            self.term.box("STORAGE CAPACITY UNVERIFIED",options)
+            choice=self.ask("Choose a read-only check, UNVERIFIED, or cancel [default]:")
+            if choice=="1" and command:
+                attempted=True
+                measured=probe_storage(info,as_service=True)
+                self.check_capacity(measured,required)
+                if not measured.complete:
+                    reasons={item.reason for item in (measured.blobs,measured.manifests,measured.manifests_v2)
+                             if item is not None and not item.verified and item.reason}
+                    self.term.message("warning","The read-only check did not verify all storage: "+"; ".join(sorted(reasons)))
+                if (capacity.model_path is not None and measured.model_path is not None
+                    and capacity.model_path!=measured.model_path):
+                    raise SetupError("The server model directory changed during preflight. Start the check again.")
+                capacity=CapacityAssessment(
+                    measured.blobs if measured.blobs.verified else capacity.blobs,
+                    measured.manifests if measured.manifests.verified else capacity.manifests,
+                    measured.model_path or capacity.model_path,
+                    measured.manifests_v2 if measured.manifests_v2 is not None and measured.manifests_v2.verified else capacity.manifests_v2,
+                    measured.instance_verified or capacity.instance_verified)
+                self.preflight(model,size,info,capacity)
+                continue
+            if choice=="UNVERIFIED":return capacity
+            raise DownloadCancelled("Download cancelled; capacity was not verified. No installation changes were made.")
+        return capacity
+
     def resource_budget(self,model,approx_gb=None):
         import psutil
+        if not self.api.healthy():raise SetupError("Ollama API is unavailable. Storage and download checks were not started.")
         size=self.api.manifest_size(model)
         if size:self.term.write(f"Official manifest download: approximately {size/1e9:.2f} GB.")
         else:
             if approx_gb:self.term.write(f"Catalog estimate: approximately {approx_gb:g} GB; exact size is unavailable.")
             self.term.message("warning","Reliable size metadata is unavailable. Choose a conservative storage budget.")
+            raw=self.ask("Maximum expected download size in GB (blank cancels):")
+            if not raw:raise DownloadCancelled("Download cancelled before storage checks.")
             try:
-                gb=float(self.ask("Maximum expected download size in GB (blank cancels):"))
+                gb=float(raw)
                 if not math.isfinite(gb) or gb<=0:raise ValueError()
                 size=int(gb*1e9)
                 if approx_gb and size<int(approx_gb*1e9):raise SetupError("Budget is below the catalog estimate.")
             except (ValueError,OverflowError) as exc:raise SetupError("A positive storage budget is required.") from exc
-        path=self.storage_path()
-        try:free=shutil.disk_usage(path).free
-        except OSError as exc:raise SetupError("Cannot access model filesystem free space; no download was started.") from exc
+        info=self.storage_location()
+        capacity=probe_storage(info)
         required=int(size*1.15)+1_000_000_000
-        self.term.write(f"Storage filesystem: {path}\nFree: {free/1e9:.1f} GB | Required with headroom: {required/1e9:.1f} GB")
-        if free<required:raise SetupError("Insufficient storage. No download was started.")
+        self.preflight(model,size,info,capacity)
+        self.check_capacity(capacity,required)
+        capacity=self.confirm_unknown_capacity(model,size,info,capacity,required)
+        self.check_capacity(capacity,required)
         ram=psutil.virtual_memory()
         self.term.write(f"RAM: {ram.total/1e9:.1f} GB total, {ram.available/1e9:.1f} GB available.")
         if ram.available<size:
@@ -329,12 +449,12 @@ class Wizard:
                 self.term.write("NVIDIA GPU: "+plain(result.stdout[:2000]) if result.returncode==0 else "GPU resource detection unavailable.")
             except (OSError,subprocess.TimeoutExpired):self.term.write("GPU resource detection unavailable.")
         else:self.term.write("GPU resources unavailable to detection. Ollama may use CPU, AMD or another supported runtime.")
-        self.term.message("warning","Download size is not a guaranteed RAM/VRAM requirement; context and runtime overhead need extra memory.")
-        if not self.confirm("Proceed with this model download?"):raise SetupError("Download cancelled before it started.")
+        self.term.message("warning","Measured free space is an estimate, not a guarantee. Model memory and quota limits are independent.")
+        if not self.confirm("Proceed with download?"):raise DownloadCancelled("Download cancelled before it started.")
 
     def select_model(self):
-        self.term.box("STEP 2 / MODEL SELECTION",
-            [f"{i}. {label} | Approx. {size:g} GB | {purpose}" for i,(label,_,size,purpose) in enumerate(PRESETS,1)]
+        self.term.box("REDVECTOR AI / OLLAMA MODEL SELECTION",
+            [f"{i}. {label:<17} | Approx. {size:g} GB | {purpose}" for i,(label,_,size,purpose) in enumerate(PRESETS,1)]
             +["4. Choose your own model","5. Use an already installed model","6. Back","7. Exit"])
         choice=self.ask("Choose 1-7:")
         if choice=="6":return None
@@ -356,6 +476,9 @@ class Wizard:
             self.api.pull(model)
         else:self.term.message("success",f"Reusing installed model: {model}")
         metadata=self.api.show(model)
+        if any(item.get("name")==normalized for item in models) and self.api.healthy():
+            info=detect_storage(self.api.host,self.api.port)
+            self.preflight(model,0,info,probe_storage(info),installed=True,metadata=metadata)
         if isinstance(metadata,dict) and "tools" not in metadata.get("capabilities",[]):
             self.term.message("warning","Model verified locally, but tool calling is not advertised. Agent mode will remain disabled for this model.")
         return model
@@ -379,6 +502,8 @@ class Wizard:
                     selected=self.select_model()
                     if selected:save_model(selected);model=selected
                     break
+                except DownloadCancelled as exc:
+                    self.term.message("warning",str(exc));break
                 except SetupError as exc:
                     self.term.message("error",str(exc))
                     if not self.confirm("Retry installation/model selection?"):break

@@ -1,3 +1,5 @@
+> The original capacity gate described here was superseded by the [service-owned storage fix](ollama-capacity-validation.md). Process/service discovery remains in use; file-access/ACL diagnostics are separate from filesystem capacity.
+
 # Portable Ollama model storage
 
 Scope: existing Ollama installer only, on the Ollama integration branch.

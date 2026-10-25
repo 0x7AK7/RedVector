@@ -1083,8 +1083,8 @@ bash install_redvector_ollama.sh
 
 The English terminal wizard reuses the original RedVector artwork. It detects
 Ollama, offers its official Linux installer with an explicit review/confirmation
-step, and provides five model choices: Dolphin Llama 3 8B
-(`dolphin-llama3:8b`, approximately 4.7 GB), Qwen3-Coder 30B
+step, and provides five model choices: Qwen3 8B
+(`qwen3:8b`, approximately 5.2 GB), Qwen3-Coder 30B
 (`qwen3-coder:30b`, approximately 19 GB), GPT-OSS 20B (`gpt-oss:20b`,
 approximately 14 GB), a custom identifier, or an already installed model.
 Back and Exit are separate navigation choices.
@@ -1094,8 +1094,24 @@ Existing models are reused. To explicitly update an installed model, run
 `ollama pull MODEL:TAG`, then select it again. Pull progress is Ollama's native
 output; interrupted downloads can be resumed by repeating the selection.
 If registry size metadata is unavailable, supply a conservative download budget.
-For an existing Ollama service, supply its actual model storage directory so the
-wizard checks the correct filesystem; this can differ from your user's home.
+The wizard detects the local server's effective model directory from its
+listening process and environment, or verified systemd service configuration.
+The running server's OLLAMA_MODELS override takes precedence over its HOME;
+systemd defaults use the configured service account's home, never an assumed
+username or the caller's home. Relative process paths use the server's working
+directory. Configuration changes after startup, inaccessible metadata and
+private filesystem mappings require explicit manual verification rather than
+a guessed directory. A manual path is requested only when safe automatic
+detection is unavailable. The detected directory and required storage are
+shown before a download; inaccessible/read-only filesystems and insufficient
+space stop the operation. Ownership and permissions are never repaired
+automatically. Downloads still go through the official Ollama CLI.
+
+Remote OLLAMA_HOST values and known local forwarders cannot use a local
+filesystem space assertion and are rejected under this agent's local-only
+policy. A shell OLLAMA_MODELS does not reconfigure a running service: set the
+override in that service's actual environment. For a new service started by
+this wizard, the caller's configured override is passed to the child.
 
 Start subsequent sessions with:
 

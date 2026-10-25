@@ -111,6 +111,10 @@ class KaliAcceptance(unittest.TestCase):
             choose_existing(installer,"qwen3:8b")
             menu(installer)
             daemon=listener(11434)
+            from redvector_ollama_storage import detect_storage,filesystem_path
+            detected=detect_storage("127.0.0.1",11434)
+            self.assertEqual(detected.path,models)
+            self.assertEqual(filesystem_path(detected),models)
             installer.send("3");installer.expect("Ollama: healthy");installer.expect("Selected model: qwen3:8b");menu(installer)
             installer.send("4");installer.expect("qwen3:8b");menu(installer)
             installer.send("2");installer.expect("Choose 1-7:");installer.send("4")
@@ -179,7 +183,7 @@ class KaliAcceptance(unittest.TestCase):
             for name,digest in before.items():self.assertEqual(hashlib.sha256((ROOT/name).read_bytes()).hexdigest(),digest)
             result={"model":"qwen3:8b","manifest_sha256":model_digest,"model_store_unchanged":True,
                     "native_kali_model_loop":True,"tool_count":328,"source_hashes_unchanged":True,
-                    "checks":["real Bash installer","English/color terminal","installed-model selection",
+                    "checks":["real Bash installer","actual local process model-storage detection","English/color terminal","installed-model selection",
                               "invalid identifier recovery","real MCP diagnostics","actual UI model tool loop",
                               "launcher restart and selected-model persistence","unsupported-model error",
                               "backend/service PID reuse","native Kali model/API/MCP transcript",

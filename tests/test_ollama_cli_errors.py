@@ -13,6 +13,7 @@ class CLIErrorRecovery(unittest.TestCase):
     def test_agent_error_returns_script_to_startup_menu_without_traceback(self):
         bootstrap="""
 import builtins,sys
+import psutil  # Load the real platform backend before overriding only the CLI OS guard.
 # Only bypass the OS entry guard; no service or tool calls are performed.
 sys.platform="linux"
 from pathlib import Path

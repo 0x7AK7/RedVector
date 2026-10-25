@@ -40,9 +40,9 @@ class SetupTests(unittest.TestCase):
         with patch("shutil.which",return_value=None),self.assertRaises(SystemExit):
             self.wizard(["3"],api).install_ollama()
     def test_existing_model_not_downloaded(self):
-        api=Mock();api.models.return_value=[{"name":"dolphin-llama3:8b","size":4700000000}]
+        api=Mock();api.models.return_value=[{"name":"qwen3:8b","size":5200000000}]
         result=self.wizard(["1"],api).select_model()
-        self.assertEqual(result,"dolphin-llama3:8b")
+        self.assertEqual(result,"qwen3:8b")
         api.pull.assert_not_called()
     def test_choose_installed_model(self):
         api=Mock();api.models.return_value=[{"name":"local:latest","size":1}]

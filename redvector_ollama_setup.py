@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 from urllib.parse import urlsplit
+from redvector_ollama_storage import StorageInfo, StorageError, detect_storage, filesystem_path, model_path
 
 # Keep shared exception identities when the wizard is executed as a script.
 if __name__ == "__main__":
@@ -23,7 +24,7 @@ if __name__ == "__main__":
 
 ROOT = Path(__file__).resolve().parent
 PRESETS = [
-    ("Dolphin Llama 3 8B", "dolphin-llama3:8b", 4.7, "Lightweight"),
+    ("Qwen3 8B", "qwen3:8b", 5.2, "Tool Calling"),
     ("Qwen3-Coder 30B", "qwen3-coder:30b", 19.0, "Agentic coding"),
     ("GPT-OSS 20B", "gpt-oss:20b", 14.0, "Reasoning and analysis"),
 ]
@@ -99,15 +100,17 @@ def local_lock(name):
         finally:fcntl.flock(handle,fcntl.LOCK_UN)
 
 class Ollama:
-    def __init__(self,url="http://127.0.0.1:11434"):
+    def __init__(self,url=None):
         from requests import Session
+        url=url if url is not None else os.environ.get("OLLAMA_HOST","http://127.0.0.1:11434")
+        if "://" not in url:url="http://"+url
         parsed=urlsplit(url)
         try:port=11434 if parsed.port is None else parsed.port
         except ValueError as exc:raise SetupError("Invalid local Ollama port.") from exc
         if (parsed.scheme!="http" or parsed.hostname not in {"127.0.0.1","localhost","::1"}
             or parsed.username or parsed.password or parsed.path not in ("","/")
             or parsed.query or parsed.fragment or not 1<=port<=65535):
-            raise SetupError("Ollama must use a plain local HTTP endpoint.")
+            raise SetupError("Remote or non-local Ollama endpoints are disabled. Use a plain local HTTP endpoint; remote disk space cannot be checked here.")
         self.host="::1" if parsed.hostname=="::1" else "127.0.0.1"
         self.port=port
         self.url=f"http://{'[::1]' if self.host=='::1' else self.host}:{port}"
@@ -205,7 +208,8 @@ class Ollama:
             except (ConnectionRefusedError,TimeoutError,OSError):pass
             command=shutil.which("ollama")
             if not command:raise SetupError("Ollama is not installed.")
-            self.owned_models_path=Path(os.environ.get("OLLAMA_MODELS",Path.home()/".ollama"/"models")).expanduser()
+            try:self.owned_models_path=model_path(dict(os.environ,HOME=os.environ.get("HOME") or str(Path.home())),os.getcwd())
+            except StorageError as exc:raise SetupError("Cannot determine the new service model directory: "+str(exc)) from exc
             env=dict(os.environ,OLLAMA_HOST=self.url,OLLAMA_MODELS=str(self.owned_models_path))
             log=config_path().parent/"ollama-service.log"
             with open(log,"ab") as output:
@@ -283,16 +287,16 @@ class Wizard:
         return True
 
     def storage_path(self):
-        if self.api.owned_models_path:path=Path(self.api.owned_models_path)
-        else:
-            self.term.message("warning","Existing Ollama service: its model directory cannot be assumed from this user's home or environment.")
-            value=self.ask("Enter the actual Ollama service model storage directory (blank cancels):")
-            if not value:raise SetupError("Model storage path is required before downloading.")
-            path=Path(value).expanduser()
-            if not path.is_absolute() or not path.is_dir():raise SetupError("Use an existing absolute model storage directory.")
-        while not path.exists() and path!=path.parent:path=path.parent
-        if not path.is_dir():raise SetupError("Cannot measure model storage filesystem.")
-        return path
+        info=detect_storage(self.api.host,self.api.port)
+        if info.path is None:
+            self.term.message("warning","Automatic model storage detection: "+info.reason)
+            if not info.manual_allowed:raise SetupError(info.reason)
+            raw=self.ask("Enter the actual local Ollama service model directory (blank cancels):")
+            if not raw:raise SetupError("Model storage check cancelled. No download was started.")
+            info=StorageInfo(Path(raw),"operator-specified local service directory")
+        self.term.write("Ollama model directory: "+str(info.path)+" ("+info.source+")")
+        try:return filesystem_path(info)
+        except StorageError as exc:raise SetupError(str(exc)) from exc
 
     def resource_budget(self,model,approx_gb=None):
         import psutil
@@ -308,7 +312,8 @@ class Wizard:
                 if approx_gb and size<int(approx_gb*1e9):raise SetupError("Budget is below the catalog estimate.")
             except (ValueError,OverflowError) as exc:raise SetupError("A positive storage budget is required.") from exc
         path=self.storage_path()
-        free=shutil.disk_usage(path).free
+        try:free=shutil.disk_usage(path).free
+        except OSError as exc:raise SetupError("Cannot access model filesystem free space; no download was started.") from exc
         required=int(size*1.15)+1_000_000_000
         self.term.write(f"Storage filesystem: {path}\nFree: {free/1e9:.1f} GB | Required with headroom: {required/1e9:.1f} GB")
         if free<required:raise SetupError("Insufficient storage. No download was started.")

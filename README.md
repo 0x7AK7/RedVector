@@ -1066,3 +1066,110 @@ GitHub: [0x7AK7](https://github.com/0x7AK7)
 AI-Assisted Cybersecurity Automation and Red Team Orchestration
 
 </div>
+
+
+## Automatic Ollama Integration
+
+Run in Kali Linux (Debian/Ubuntu are also supported), with Bash, Python 3.10+,
+python3-venv, curl, sufficient model storage and RAM. The installer offers to
+create the project .venv and install backend/Ollama Python dependencies when missing.
+Both requirement files and required MCP client APIs are checked before startup. The new scripts use LF line endings. When the preserved existing launcher
+contains CRLF, the new bridge runs a private temporary LF copy beside it,
+preserving its project-path behavior and leaving the original file unchanged.
+
+```bash
+bash install_redvector_ollama.sh
+```
+
+The English terminal wizard reuses the original RedVector artwork. It detects
+Ollama, offers its official Linux installer with an explicit review/confirmation
+step, and provides five model choices: Dolphin Llama 3 8B
+(`dolphin-llama3:8b`, approximately 4.7 GB), Qwen3-Coder 30B
+(`qwen3-coder:30b`, approximately 19 GB), GPT-OSS 20B (`gpt-oss:20b`,
+approximately 14 GB), a custom identifier, or an already installed model.
+Back and Exit are separate navigation choices.
+
+A model is downloaded only after selection, resource checks and confirmation.
+Existing models are reused. To explicitly update an installed model, run
+`ollama pull MODEL:TAG`, then select it again. Pull progress is Ollama's native
+output; interrupted downloads can be resumed by repeating the selection.
+If registry size metadata is unavailable, supply a conservative download budget.
+For an existing Ollama service, supply its actual model storage directory so the
+wizard checks the correct filesystem; this can differ from your user's home.
+
+Start subsequent sessions with:
+
+```bash
+bash start_redvector_ollama.sh
+```
+
+The startup menu supports model switching, system status, installed models, a
+real MCP connection test, and interactive sessions. The bridge launches the
+existing `start_redvector.sh`, preserving its backend ownership, authentication,
+health checks and stdio transport. It initializes MCP and discovers the actual
+tool count. No Claude Desktop configuration, original launcher, backend, tool
+registration or GitHub Pages file is changed.
+
+**Model capabilities differ.** Installation alone does not demonstrate tool
+calling. The agent requires Ollama's advertised `tools` capability and a valid
+harmless tool-call format probe. Dolphin models may advertise completion only;
+these cannot enable agent mode. MCP diagnostics still work independently.
+Third-party security executables such as Nmap and WHOIS must be installed
+separately; the wizard does not install them.
+
+In the interactive session:
+
+- `/status` invokes the real read-only health tool.
+- `/tools QUERY` discovers registered tools without sending all verbose schemas
+  to the model.
+- `/scope` replaces the explicitly authorized, session-local IP/CIDR/hostname
+  scope. Installation never asks for a target.
+- `/back` returns to the startup menu to change models.
+
+All 328 existing MCP handlers remain available to existing clients. This new
+agent discovers them but applies a narrow reviewed execution policy: read-only
+`server_health` and `get_cache_stats`; scoped WHOIS; scoped numeric-IPv4 Nmap TCP
+connect scans with fixed arguments; and separately approved local cache clearing.
+Every assessment and state change requires approval of its displayed arguments.
+Nmap retains the existing backend's recovery/retry behavior within the same
+target scope. Other tools, arbitrary commands, scripts, payloads and autonomous
+compound operations are discoverable but blocked in this agent until they have
+a reviewed execution policy. Active scans require numeric IPv4 scope to avoid
+hostname-resolution ambiguity; IPv6 scanning is explicitly disabled pending a
+reviewed invocation policy. Targets are never authorized by model text.
+
+New Ollama services bind to localhost. The client accepts local HTTP endpoints
+only, bypasses proxies and rejects redirects. Backend API tokens are inherited
+using the existing environment behavior and are never saved in the model
+configuration. Model selection is stored separately at
+`${XDG_CONFIG_HOME:-~/.config}/redvector-ollama/config.json`; Claude's
+configuration is never opened or overwritten. Private service/MCP logs are in
+that same directory.
+
+Troubleshooting: use **Test MCP connection** for initialization, discovery and
+actual health output; inspect the private MCP log for backend startup failures.
+An occupied foreign backend port is rejected by the existing launcher. For
+Ollama service failures, inspect `ollama-service.log` or the existing system
+service. For unsupported models, select a tool-capable model. Free disk space
+must cover the model plus headroom; RAM/VRAM needs also depend on context size.
+EOF/Ctrl-C cancels safely; inference HTTP is cancellable. Closing a session
+does not stop backend operations that have already started.
+
+Tests:
+
+```bash
+.venv/bin/python -m pip install pytest
+.venv/bin/python -m pytest -q
+REDVECTOR_RUN_SMOKE=1 .venv/bin/python -m pytest -q -s tests/test_ollama_smoke.py
+```
+
+The opt-in smoke test starts its own actual localhost backend, initializes the
+real MCP SDK/server, verifies all 328 schemas, checks API authentication and
+invokes only real health/cache diagnostics. It does not require Ollama, a model
+download, an external assessment target or third-party security executables.
+Offline model-boundary tests are explicitly labeled; they are not evidence of a
+live model's tool-calling capability.
+
+Verification results, native acceptance prerequisites and checkpoint hygiene are
+documented in [the verified integration checkpoint](docs/ollama-checkpoint.md).
+Raw local validation logs and machine-specific reports are excluded from Git.

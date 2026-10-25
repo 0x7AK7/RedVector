@@ -19,7 +19,11 @@ class LauncherTests(unittest.TestCase):
                native_tty=False, pty_mode=False):
         with tempfile.TemporaryDirectory(prefix='rv user project ', dir=ROOT) as directory:
             project = Path(directory)
-            shutil.copyfile(LAUNCHER, project / 'start_redvector.sh')
+            # This fixture represents a native Linux checkout. Windows Git's
+            # working-tree CRLF conversion is exercised separately through the
+            # new bridge adapter in test_ollama_launcher_compatibility.py.
+            (project / 'start_redvector.sh').write_bytes(
+                LAUNCHER.read_bytes().replace(b'\r\n', b'\n'))
             for name in ('redvector_banner.py', 'redvector_mcp.py'):
                 if (ROOT / name).exists():
                     shutil.copyfile(ROOT / name, project / name)

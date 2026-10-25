@@ -1,0 +1,5 @@
+# Add to the existing backend environment; do not replace requirements.txt.
+mcp>=1.12,<2
+jsonschema>=4.23,<5
+httpx>=0.27.1,<1
+packaging>=23,<27

@@ -1,0 +1,4 @@
+
+# New Bash entry points must remain executable from Linux-managed or Windows-managed checkouts.
+install_redvector_ollama.sh text eol=lf
+start_redvector_ollama.sh text eol=lf

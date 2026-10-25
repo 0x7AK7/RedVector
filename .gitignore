@@ -38,3 +38,12 @@ test_summary.txt
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local Ollama verification runtimes and private execution evidence
+.ollama-test-env/
+.ollama-linux-env/
+docs/final-validation/
+docs/kali-uat/
+docs/ollama-integration-verification.md
+docs/superpowers/plans/2026-10-25-ollama-progress.md
+/.ollama-launch-*.sh

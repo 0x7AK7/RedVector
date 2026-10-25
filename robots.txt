@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://0x7ak7.github.io/RedVector/sitemap.xml

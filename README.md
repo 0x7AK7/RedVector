@@ -1144,8 +1144,10 @@ bash start_redvector_ollama.sh
 
 The startup menu supports model switching, system status, installed models, a
 real MCP connection test, and interactive sessions. The bridge launches the
-existing `start_redvector.sh`, preserving its backend ownership, authentication,
-health checks and stdio transport. It initializes MCP and discovers the actual
+existing `start_redvector.sh` through its private transient adapter. Only that
+adapter selects the Ollama-specific compatible-backend verifier; the original
+launcher and Claude behavior stay unchanged. Authentication, health checks and
+stdio transport remain enforced. It initializes MCP and discovers the actual
 tool count. No Claude Desktop configuration, original launcher, backend, tool
 registration or GitHub Pages file is changed.
 
@@ -1187,8 +1189,17 @@ that same directory.
 
 Troubleshooting: use **Test MCP connection** for initialization, discovery and
 actual health output; inspect the private MCP log for backend startup failures.
-An occupied foreign backend port is rejected by the existing launcher. For
-Ollama service failures, inspect `ollama-service.log` or the existing system
+The Ollama bridge can reuse a backend from another checkout when kernel
+listener/process evidence, matching trusted backend/banner sources, API version
+and authentication verify it independently. Health JSON alone is insufficient.
+It requires readable process metadata, a canonical source path without symlink
+components, and the process working directory to match its script directory.
+Different source versions, unknown ownership, namespace ambiguity, public
+binding or a rejected API token produce a specific refusal; no process is
+stopped and no port is changed. Supply the existing backend's token through
+REDVECTOR_API_TOKEN; the bridge never discovers or overwrites credentials.
+See [compatible backend validation](docs/ollama-backend-reuse-validation.md) for
+trust boundaries and actual test results. For Ollama service failures, inspect `ollama-service.log` or the existing system
 service. For unsupported models, select a tool-capable model. Free disk space
 must cover the model plus headroom; RAM/VRAM needs also depend on context size.
 EOF/Ctrl-C cancels safely; inference HTTP is cancellable. Closing a session

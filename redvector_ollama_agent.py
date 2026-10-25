@@ -10,6 +10,7 @@ import re
 import tempfile
 
 from redvector_ollama_policy import Policy, PolicyError, REVIEWED, validate_arguments
+from redvector_ollama_backend import inspect_backend, BackendReuseError
 from redvector_ollama_setup import ROOT, SetupError, config_path, local_lock, plain
 
 class AgentError(SetupError):
@@ -72,13 +73,15 @@ def launcher_script():
     """Adapt checkout CRLF in a private transient copy; never rewrite the launcher."""
     original=ROOT/"start_redvector.sh"
     content=original.read_bytes()
-    if b"\r\n" not in content:
+    adapted=content.replace(b"\r\n",b"\n").replace(
+        b'"$SCRIPT_DIR/redvector_backend_check.py"',b'"$SCRIPT_DIR/redvector_ollama_backend.py"')
+    if adapted==content:
         yield original
         return
     fd,name=tempfile.mkstemp(prefix=".ollama-launch-",suffix=".sh",dir=ROOT)
     path=Path(name)
     try:
-        with os.fdopen(fd,"wb") as out:out.write(content.replace(b"\r\n",b"\n"))
+        with os.fdopen(fd,"wb") as out:out.write(adapted)
         os.chmod(path,0o600)
         yield path
     finally:
@@ -88,7 +91,7 @@ def launcher_script():
 async def bridge():
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
-    # Keep all backend ownership, health, and authentication behavior in the existing launcher.
+    # Ollama adds independently verified cross-checkout reuse; legacy launchers stay unchanged.
     if os.environ.get("REDVECTOR_HOST","127.0.0.1") not in ("127.0.0.1","localhost"):
         raise AgentError("The Ollama agent requires a localhost RedVector backend.")
     try:
@@ -96,6 +99,7 @@ async def bridge():
         if not 1<=port<=65535:raise ValueError()
     except ValueError as exc:raise AgentError("Invalid RedVector port.") from exc
     env=dict(os.environ,REDVECTOR_HOST="127.0.0.1",NO_PROXY="*",no_proxy="*")
+    env.pop("REDVECTOR_OLLAMA_BACKEND_PIN",None)
     directory=config_path().parent
     directory.mkdir(parents=True,exist_ok=True,mode=0o700)
     logpath=directory/f"mcp-{os.getpid()}.log"
@@ -105,14 +109,22 @@ async def bridge():
             params=StdioServerParameters(command="/bin/bash",args=[str(script)],cwd=str(ROOT),env=env)
             # Serialize this client's backend startups, then release after initialization.
             with local_lock("backend-start.lock"):
+                before=await asyncio.to_thread(inspect_backend,ROOT,"127.0.0.1",port)
+                if before is not None:
+                    params.env["REDVECTOR_OLLAMA_BACKEND_PIN"]=f"{before.pid}:{before.started!r}"
                 log=stack.enter_context(open(logpath,"a",encoding="utf8"))
                 os.chmod(logpath,0o600)
                 streams=await stack.enter_async_context(stdio_client(params,errlog=log))
                 session=await stack.enter_async_context(ClientSession(*streams,read_timeout_seconds=timedelta(seconds=120)))
                 await asyncio.wait_for(session.initialize(),timeout=120)
                 catalog=await discover(session)
+                after=await asyncio.to_thread(inspect_backend,ROOT,"127.0.0.1",port)
+                if after is None or (before is not None and before!=after):
+                    raise BackendReuseError("Backend disappeared or changed during MCP initialization; retry explicitly.")
             yield session,catalog
     except (KeyboardInterrupt,SystemExit,asyncio.CancelledError):raise
+    except BackendReuseError as exc:
+        raise AgentError("Backend reuse refused: "+plain(exc)) from exc
     except Exception as exc:
         raise AgentError(f"MCP session failed. Check {logpath}: {plain(exc)[:500]}") from exc
 

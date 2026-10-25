@@ -25,7 +25,7 @@ class LauncherCompatibilityTests(unittest.TestCase):
                 interpreter=bindir/"python3"
                 interpreter.write_text('''#!/bin/bash
 case "$1" in
-  */redvector_backend_check.py) exit 0 ;;
+  */redvector_ollama_backend.py) exit 0 ;;
   */redvector_mcp.py) printf '{"transport":"stdio","project":"%s"}\\n' "$PWD" ;;
   *) exit 99 ;;
 esac
@@ -41,3 +41,23 @@ esac
                     self.assertIn("Backend already running",result.stderr)
                 self.assertEqual(sha256(source.read_bytes()).hexdigest(),digest)
                 self.assertFalse(list(project.glob(".ollama-launch-*.sh")))
+
+    def test_disappeared_pinned_backend_refuses_startup_in_real_bash(self):
+        import socket
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1",0));port=probe.getsockname()[1]
+        with tempfile.TemporaryDirectory(prefix="rv pinned startup ",dir=ROOT) as d:
+            project=Path(d)
+            (project/"start_redvector.sh").write_bytes((ROOT/"start_redvector.sh").read_bytes())
+            bindir=project/".venv"/"bin";bindir.mkdir(parents=True)
+            interpreter=bindir/"python3"
+            interpreter.write_text('#!/bin/bash\nshift\nexec "'+sys.executable+'" "'+str(ROOT/"redvector_ollama_backend.py")+'" "$@"\n')
+            interpreter.chmod(0o755)
+            env=dict(os.environ,REDVECTOR_HOST="127.0.0.1",REDVECTOR_PORT=str(port),
+                     REDVECTOR_OLLAMA_BACKEND_PIN="44:1.0")
+            with patch("redvector_ollama_agent.ROOT",project),launcher_script() as script:
+                result=subprocess.run([BASH,str(script)],env=env,capture_output=True,text=True,timeout=10)
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn("disappeared",result.stderr)
+            self.assertNotIn("Server PID:",result.stderr)
+            self.assertFalse((project/"server.log").exists())

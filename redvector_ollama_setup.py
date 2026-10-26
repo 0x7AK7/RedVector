@@ -342,6 +342,10 @@ class Wizard:
                     import readline
                     invisible=True
                 except ImportError:invisible=False
+                if invisible and sys.stdin.isatty() and self.term.stream.isatty():
+                    from redvector_ollama_completion import command_completion
+                    with command_completion():
+                        return self.read(self.term.prompt(readline=True)).strip()
                 return self.read(self.term.prompt(readline=invisible)).strip()
             self.term.stream.write(self.term.prompt());self.term.stream.flush()
             return self.read().strip()

@@ -483,7 +483,8 @@ async def interactive(api,model,wizard):
         term.message("success",f"Connected: {model} -> MCP -> RedVector backend | {len(catalog)} discovered tools")
         term.box("INTERACTIVE SESSION",["/scope: display scope; /scope TARGET [TARGET...]: replace authorized targets",
             "/status: real read-only health call","/tools QUERY: discover registered tools",
-            "/back: return to startup menu and switch models","Default scope: none. Diagnostics only."])
+            "/back: return to startup menu and switch models","Default scope: none. Diagnostics only.",
+            "Type /help to view all commands"])
         policy=Policy()
         def approve(operation):
             term.message("warning","Risk: intensive discovery or an unattended-session limit was reached." if operation["tool"]=="nmap_scan" else "Risk: this operation changes backend state.")

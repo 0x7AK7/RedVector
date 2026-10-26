@@ -2,8 +2,9 @@
 import ipaddress
 import json
 import re
-from redvector_ollama_policy import PolicyError
+from redvector_ollama_policy import PolicyError, target as canonical_target
 from redvector_ollama_setup import plain
+from redvector_ollama_help import COMMANDS, render_help, unknown_message
 
 def show_scope(policy,term):
     values=policy.snapshot()
@@ -21,10 +22,14 @@ async def handle_command(text,agent,wizard):
     if not text.startswith("/"):return None
     parts=text.split(None,1);command=parts[0];argument=parts[1] if len(parts)>1 else ""
     term=wizard.term
-    if command in ("/back","/exit"):
+    if command not in COMMANDS:
+        term.message("error",unknown_message(command))
+        return "handled"
+    route=COMMANDS[command].route
+    if route=="exit":
         if not argument:return "exit"
         term.message("error","Usage: "+command)
-    elif command=="/scope":
+    elif route=="scope":
         if argument:
             values=[] if argument=="--clear" else argument.split()
             try:
@@ -37,7 +42,7 @@ async def handle_command(text,agent,wizard):
                 term.message("error","Invalid authorized target scope. "+plain(exc))
                 return "handled"
         show_scope(agent.policy,term)
-    elif command in ("/results","/raw","/export","/summary"):
+    elif route=="saved":
         from redvector_ollama_presentation import render_result
         try:
             words=argument.split()
@@ -61,7 +66,7 @@ async def handle_command(text,agent,wizard):
             else:term.message("success","Exported private evidence: "+str(agent.results.export(ident)))
         except (ValueError,OSError,KeyError,TypeError):
             term.message("error","Saved-result command failed. Use /results list, a valid result ID and positive page number. No network scan was executed.")
-    elif command=="/status":
+    elif route=="status":
         if argument:term.message("error","Usage: /status")
         else:
             result=await agent.execute("server_health",{},{ "server_health"})
@@ -69,17 +74,13 @@ async def handle_command(text,agent,wizard):
                 from redvector_ollama_views import normalize
                 render_result_local=__import__("redvector_ollama_presentation").render_result
                 render_result_local(term,{"id":"diagnostic","findings":normalize("server_health",None,{},result,0)})
-    elif command=="/tools":
+    elif route=="tools":
         if not argument:term.message("info","Usage: /tools QUERY")
         else:
             matches=agent.select(argument)
             from redvector_ollama_presentation import render_tools
             render_tools(term,matches)
-    elif command=="/help":
-        term.box("OPERATOR COMMANDS",["/scope: display current scope","/scope TARGET [TARGET...]: replace scope",
-            "/scope --clear: remove all targets","/tools QUERY: registered tools and execution policy",
-            "/status: real read-only health call","/results [ID] or /results list: saved facts","/raw [ID]: original MCP evidence; /export [ID]: private JSON copy","/summary [ID|latest] [PAGE]: retry AI analysis without tools","/back or /exit: leave the session"])
-    else:term.message("error","Unknown command. Use /help for operator commands; nothing was sent to Ollama.")
+    elif route=="help":render_help(term,argument)
     return "handled"
 
 def assessment_context(text,policy):
@@ -98,36 +99,32 @@ def assessment_context(text,policy):
     scope=policy.snapshot()
     if not scope:
         return True,None,"No authorized target is configured.\n\nUse /scope TARGET to configure an authorized target.\nNo scan was executed."
-    relative={"my","our","the","a","an","this","authorized","target","targets","host","hosts","network","subnet","for","open","tcp","ports","port","services","and","on","against","all","current"}
+    relative={"my","our","the","a","an","this","authorized","target","targets","host","hosts","network","subnet","for","open","tcp","ports","port","services","and","on","against","all","current","it","them","these","those"}
     operand_patterns=(r"(?i)\b(?:scan|nmap(?:_scan)?)(?:\s+(?:on|against))?\s+([A-Za-z0-9_.:/%\-]+)",
                       r"(?i)\b(?:on|against|at|called|named|hostname|host|target)\s+([A-Za-z0-9_.:/%\-]+)")
     for pattern in operand_patterns:
         matches=list(re.finditer(pattern,view))
-        if pattern==operand_patterns[0]:matches=matches[:1]
         for match in matches:
             operand=match.group(1)
             value=operand.rstrip(".?").lower()
             if match.group(0).lower().startswith("nmap") and value in {"exactly","once","only","then","with","using"}:continue
             if value in relative or value in scope:continue
-            try:address=ipaddress.ip_address(value)
-            except ValueError:
-                return True,None,"The requested host is not in the authorized scope. Use /scope TARGET or select an explicitly authorized host. No scan was executed."
-            if not policy.contains(str(address)):
-                return True,None,"The requested target is outside the operator-authorized scope. No scan was executed."
+            if value=="only" and re.match(r"(?i)\s+(?:the\s+)?(?:ports?|services?)\b",view[match.end():]):continue
+            try:authorized_operand(value,policy)
+            except (PolicyError,ValueError):
+                return True,None,"The requested target is outside the operator-authorized scope. Use /scope TARGET or select an explicitly authorized host. No scan was executed."
     explicit=[]
-    for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9_.:/%\-]*",text):
+    for token in re.findall(r"[A-Za-z0-9:][A-Za-z0-9_.:/%\-]*",text):
         token=token.rstrip(".")
         if token.lower() in scope:explicit.append(token.lower());continue
         if "://" in token or "%" in token:
             return True,None,"Use a plain authorized host, without URLs or zone identifiers. No scan was executed."
-        try:address=ipaddress.ip_address(token)
-        except ValueError:
-            if "." in token or "/" in token:
-                return True,None,"The requested hostname or network is not a selected authorized host. Use /scope and select one host. No scan was executed."
-            continue
-        if not policy.contains(str(address)):
-            return True,None,"The requested target is outside the operator-authorized scope. No scan was executed."
-        explicit.append(str(address))
+        try:
+            # Ordinary prose labels such as "ports:" are not IPv6 addresses.
+            if "." not in token and "/" not in token and token.count(":")<2:continue
+            explicit.append(authorized_operand(token,policy))
+        except (PolicyError,ValueError):
+            return True,None,"The requested target is outside the operator-authorized scope. Use /scope and select one authorized host. No scan was executed."
     choices=list(dict.fromkeys(explicit))
     if len(choices)>1:return True,None,"Multiple targets were requested. Select one authorized host for this operation. No scan was executed."
     if not choices:
@@ -136,6 +133,10 @@ def assessment_context(text,policy):
     chosen=choices[0]
     if "/" in chosen:
         return True,None,"Specify one authorized host inside the network scope. A network scope does not automatically launch a subnet scan. No scan was executed."
+    if requests_active_versions(text):
+        return True,chosen,("Target is authorized. Execution policy restriction: active service-version detection (-sV) "
+                            "and scripts are disabled in this MCP client. Port-name service labels do not verify versions. "
+                            "Request open TCP ports and service labels only. No scan was executed.")
     return True,chosen,None
 
 def operator_view(text):
@@ -151,3 +152,23 @@ def automatic_context(text,target):
     if not re.match(r"(?i)^(?:scan|nmap(?:_scan)?|(?:run|execute)\s+nmap(?:_scan)?|(?:identify|find|check)\b.*\b(?:ports?|services?))\b",view):return False
     return bool(re.search(r"(?i)\b(?:ports?|services?|tcp|network|nmap_scan)\b",view) or
                 re.search(r"(?<![A-Za-z0-9.:])"+re.escape(target or "")+r"(?![A-Za-z0-9.:])",view))
+
+def authorized_operand(value,policy):
+    """Use the same canonicalization/membership authority as MCP enforcement."""
+    if "/" in value:
+        network=ipaddress.ip_network(value,strict=False)
+        for entry in policy.snapshot():
+            if "/" not in entry:continue
+            allowed=ipaddress.ip_network(entry)
+            if network.version==allowed.version and network.subnet_of(allowed):return str(network)
+        raise PolicyError("Network is outside the operator-authorized scope.")
+    canonical=canonical_target(value)
+    if not policy.contains(canonical):raise PolicyError("Target is outside the operator-authorized scope.")
+    return canonical
+
+def requests_active_versions(text):
+    text=re.sub(r"(?i)\b(?:without|no)\s+(?:active\s+)?-sV\b"," ",text)
+    text=re.sub(r"(?i)\b(?:do\s+not|don't|never)\s+(?:use|run|enable)\s+(?:active\s+)?-sV\b"," ",text)
+    view=re.sub(r"(?i)\b(?:without|no)\s+(?:active\s+)?(?:service[- ]?)?versions?(?:\s+detection)?\b"," ",text)
+    view=re.sub(r"(?i)\b(?:do\s+not|don't|never)\s+(?:detect|identify|check|probe|use|run)\s+(?:active\s+)?(?:service[- ]?)?versions?(?:\s+detection)?\b"," ",view)
+    return bool(re.search(r"(?i)\bversions?\b|(?<!\S)-sV\b",view))

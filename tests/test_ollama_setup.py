@@ -10,7 +10,12 @@ from redvector_ollama_setup import Ollama, Wizard, SetupError, model_id, save_mo
 
 class SetupTests(unittest.TestCase):
     def wizard(self, answers, api=None):
-        return Wizard(api or Mock(), Terminal(io.StringIO()), iter(answers).__next__)
+        api=api or Mock()
+        api.show.return_value={"capabilities":["tools"]}
+        wizard=Wizard(api, Terminal(io.StringIO()), iter(answers).__next__)
+        # Isolate the new real MCP boundary; selection/consent has its own regressions.
+        wizard.verify_model=Mock(return_value={"status":"healthy"})
+        return wizard
     def test_invalid_model(self):
         for name in ("", "-x", "a;id", "a b", "../model", "https://evil/x", "a\n"):
             with self.subTest(name=name), self.assertRaises(SetupError): model_id(name)
@@ -71,7 +76,8 @@ class SetupTests(unittest.TestCase):
         with patch.object(wizard,"resource_budget",return_value=None):
             self.assertEqual(wizard.select_model(),"gpt-oss:20b")
         api.pull.assert_called_once_with("gpt-oss:20b")
-        api.show.assert_called_once_with("gpt-oss:20b")
+        self.assertEqual(api.show.call_args_list[-1].args,("gpt-oss:20b",))
+        wizard.verify_model.assert_called_once_with("gpt-oss:20b")
     def test_invalid_custom_model_never_downloads(self):
         api=Mock();api.models.return_value=[]
         with self.assertRaises(SetupError):self.wizard(["4","bad;id"],api).select_model()

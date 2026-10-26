@@ -9,8 +9,10 @@ from pathlib import Path
 import re
 import tempfile
 
-from redvector_ollama_policy import Policy, PolicyError, REVIEWED, validate_arguments
+from redvector_ollama_policy import Policy, PolicyError, REVIEWED, DISABLED_REASONS, validate_arguments
 from redvector_ollama_backend import inspect_backend, BackendReuseError
+from redvector_ollama_cli import handle_command, assessment_context
+from redvector_ollama_errors import record_error
 from redvector_ollama_setup import ROOT, SetupError, config_path, local_lock, plain
 
 class AgentError(SetupError):
@@ -24,9 +26,11 @@ def tool_schema(tool):
     if tool.name in ("nmap_scan","whois_lookup") and "additional_args" in properties:
         properties["additional_args"].update(enum=[""],default="")
     if tool.name=="nmap_scan" and "scan_type" in properties:
-        properties["scan_type"].update(enum=["-sT"],default="-sT")
+        properties["scan_type"].update(enum=["-sT","-6 -sT"],default="-sT")
+    if tool.name=="nmap_scan" and "use_recovery" in properties:
+        properties["use_recovery"].update(enum=[False],default=False)
     note=""
-    if tool.name=="nmap_scan":note=" Only scoped IPv4 addresses, TCP connect scan (-sT), valid ports and no extra arguments; operator approval required."
+    if tool.name=="nmap_scan":note=" Only authorized single hosts; TCP connect scans only; active version detection and scripts disabled, DNS disabled, no automatic recovery; exact operator approval required."
     elif tool.name=="whois_lookup":note=" Exact authorized target and operator approval required; no extra arguments."
     elif tool.name=="clear_cache":note=" Changes backend state; separate operator approval required."
     return {"type":"function","function":{"name":tool.name,
@@ -181,6 +185,8 @@ class Agent:
         self.api=api;self.model=model;self.session=session;self.catalog=catalog
         self.policy=policy;self.approve=approve;self.render=render
         self.history=[]
+        self.assessment_target=None
+        self.last_invocation=None
         self.selected=[name for name in ("server_health","get_cache_stats") if name in catalog]
 
     def select(self,query):
@@ -196,15 +202,17 @@ class Agent:
             return exact,len(words & name_words),len(words & description_words)
         scores={name:relevance(tool) for name,tool in self.catalog.items()}
         ranked=sorted(self.catalog.values(),key=lambda t:(
-            -int(scores[t.name][0]),-scores[t.name][1],-scores[t.name][2],t.name))
-        matches=[tool for tool in ranked if any(scores[tool.name])][:8]
+            -int(scores[t.name][0]),-scores[t.name][1],len(re.findall(r"[a-z0-9]+",t.name.lower())),-scores[t.name][2],t.name))
+        name_matches=[tool for tool in ranked if scores[tool.name][0] or scores[tool.name][1]]
+        matches=(name_matches if name_matches else [tool for tool in ranked if scores[tool.name][2]])[:8]
         self.selected=[t.name for t in matches if t.name in REVIEWED]
         return [{"name":t.name,"description":(t.description or "")[:200],
-                 "execution":"reviewed policy" if t.name in REVIEWED else "disabled: no reviewed policy"} for t in matches]
+                 "execution":"reviewed policy" if t.name in REVIEWED else "disabled: "+DISABLED_REASONS.get(t.name,"no reviewed execution policy")} for t in matches]
 
     def schemas(self):
         result=[DISCOVERY];size=len(json.dumps(DISCOVERY))
         for name in self.selected[:8]:
+            if name=="nmap_scan" and self.assessment_target is None:continue
             schema=tool_schema(self.catalog[name])
             encoded=json.dumps(schema)
             if size+len(encoded)<=16000:
@@ -212,6 +220,8 @@ class Agent:
         return result
 
     async def execute(self,name,args,exposed):
+        rpc_started=False
+        self.last_invocation=None
         try:
             if name=="discover_tools":
                 validate_arguments(DISCOVERY["function"]["parameters"],args)
@@ -219,50 +229,100 @@ class Agent:
             if name not in self.catalog or name not in exposed:raise PolicyError("Tool was not selected or registered.")
             schema=self.catalog[name].inputSchema
             validate_arguments(schema,args)
+            if name=="nmap_scan":
+                if self.assessment_target is None:
+                    raise PolicyError("No explicit assessment task is selected. Request a scan of one authorized host first.")
+                if self.policy.destination(args["target"])!=self.policy.destination(self.assessment_target):
+                    raise PolicyError("Tool target differs from the operator-selected task target. No scan was executed.")
             approved=self.policy.authorize(name,args,self.approve)
-            # Validate the normalized/pinned invocation against the actual MCP schema too.
             validate_arguments(schema,approved)
-            result=await asyncio.wait_for(self.session.call_tool(name,arguments=approved),timeout=60)
+            self.last_invocation=(name,dict(approved))
+            rpc_started=True
+            result=await asyncio.wait_for(self.session.call_tool(name,arguments=approved),timeout=90)
             return result_data(result)
-        except (PolicyError,asyncio.TimeoutError) as exc:return {"isError":True,"error":str(exc)}
-        except Exception as exc:return {"isError":True,"error":"MCP tool call failed: "+plain(exc)[:1000]}
+        except PolicyError as exc:return {"isError":True,"execution_status":"blocked","error":str(exc)}
+        except Exception as exc:
+            record_error("MCP tool call",exc)
+            return {"source":"mcp" if rpc_started else "application","isError":True,"execution_status":"unknown",
+                    "error":"MCP tool call failed or timed out. Execution may have started; inspect backend state before retrying."}
 
     async def turn(self,text):
         if not isinstance(text,str) or len(text)>8000:raise AgentError("Task text is limited to 8000 characters.")
+        text=text.strip()
+        if not text:return "Enter a task or use /help. No MCP operation was executed."
+        if text.startswith("/"):return "Use the interactive CLI for operator commands. Nothing was sent to Ollama."
+        assessment,chosen,clarification=assessment_context(text,self.policy)
+        self.assessment_target=chosen if assessment else None
+        if clarification:return clarification
+        explicit_disabled=[name for name in self.catalog if name not in REVIEWED and
+                           re.search(r"(?<![A-Za-z0-9_])"+re.escape(name)+r"(?![A-Za-z0-9_])",text)]
+        if explicit_disabled:
+            name=sorted(explicit_disabled)[0]
+            return ("Tool: "+name+"\nStatus: Registered but execution disabled\nReason: "+
+                    DISABLED_REASONS.get(name,"No reviewed execution policy")+"\nNo scan was performed.")
         self.select(text)
-        messages=[{"role":"system","content":SYSTEM}]+self.history[-12:]+[{"role":"user","content":text}]
-        executed_mcp=False
+        if assessment:
+            if "nmap_scan" not in self.catalog:
+                return "No reviewed Nmap tool is registered. No scan was performed."
+            self.selected=["nmap_scan"]
+        context={"authorized_scope":self.policy.snapshot(),"dns_pins":self.policy.dns_snapshot(),
+                 "selected_assessment_target":chosen}
+        instruction=SYSTEM+"\nTrusted application authorization state (model cannot change it): "+json.dumps(context)
+        instruction+="\nFor an authorized TCP scan use nmap_scan and its selected target. Do not enable active version detection or scripts; reported service labels are port-name mappings, not verified versions. Never repeat UI attribution labels."
+        messages=[{"role":"system","content":instruction}]+self.history[-12:]+[{"role":"user","content":text}]
+        outcomes=[]
         for _ in range(8):
             schemas=self.schemas()
             exposed={entry["function"]["name"] for entry in schemas}
-            # Snapshot history before the call; callers may retain request arguments.
-            message=await self.api.async_chat(self.model,list(messages),schemas)
+            try:message=await self.api.async_chat(self.model,list(messages),schemas)
+            except Exception as exc:
+                record_error("Ollama chat",exc)
+                raise AgentError("Ollama request failed or timed out. Check the local API and retry; review any MCP results already displayed.") from exc
+            if not isinstance(message,dict):raise AgentError("Ollama returned an invalid assistant message.")
             calls=message.get("tool_calls",[])
             if not isinstance(calls,list) or len(calls)>4:raise AgentError("Invalid or excessive tool calls.")
-            accepted={"role":"assistant","content":str(message.get("content",""))[:16000]}
-            if "thinking" in message:accepted["thinking"]=str(message["thinking"])[:8000]
+            raw=message.get("content","")
+            accepted={"role":"assistant","content":raw[:16000] if isinstance(raw,str) else ""}
+            if isinstance(message.get("thinking"),str):accepted["thinking"]=message["thinking"][:8000]
             if calls:accepted["tool_calls"]=calls
             messages.append(accepted)
             if not calls:
-                # Keep complete user/assistant exchanges; tool results are session-local.
-                answer=accepted["content"]
-                if not executed_mcp:
-                    answer="No MCP operation was executed for this task. Model response: "+answer
-                self.history.extend([{"role":"user","content":text},{"role":"assistant","content":answer}])
+                raw_answer=accepted["content"].strip()
+                answer=raw_answer
+                for _strip in range(8):
+                    cleaned=re.sub(r"^(?:No MCP operation was executed for this task\.\s*|Model response:\s*)","",answer).strip()
+                    if cleaned==answer:break
+                    answer=cleaned
+                if any(item.get("execution_status")=="unknown" for item in outcomes):
+                    answer="MCP execution status is unknown after a connection failure or timeout. Inspect backend state before retrying."
+                elif any(item.get("isError") for item in outcomes):
+                    answer="One or more requested operations failed or were blocked. Review the actual MCP results and errors above."
+                elif assessment:
+                    scans=[item for item in outcomes if item.get("tool")=="nmap_scan" and item.get("source")=="mcp" and not item.get("isError")]
+                    if scans:
+                        answer="The actual MCP nmap_scan returned a result for "+str(scans[-1].get("target",chosen))+". Review MCP RESULT for reported open ports. Service labels are port-name mappings, not verified versions."
+                    else:
+                        answer="No authorized Nmap scan was confirmed. Use /tools nmap to inspect availability or clarify the target and ports."
+                elif not answer:
+                    answer=("Review the actual MCP RESULT above; Ollama returned no final text." if any(item.get("source")=="mcp" for item in outcomes)
+                            else "Ollama returned no final response. Please clarify the task or retry; /status can check the real MCP connection.")
+                if not any(item.get("source")=="mcp" for item in outcomes):
+                    answer="No MCP operation was executed for this task.\n"+answer
+                # Retain raw model text only; UI attribution is never fed back.
+                self.history.extend([{"role":"user","content":text},{"role":"assistant","content":raw_answer if not assessment else "Assessment outcome: "+answer.split("\n")[-1]}])
                 self.history=self.history[-12:]
                 return answer
             for call in calls:
                 if not isinstance(call,dict) or not isinstance(call.get("function"),dict):
                     raise AgentError("Malformed structured tool call.")
-                function=call["function"];name=function.get("name")
-                args=function.get("arguments")
+                function=call["function"];name=function.get("name");args=function.get("arguments")
                 if not isinstance(name,str):raise AgentError("Missing structured tool name.")
                 data=await self.execute(name,args,exposed)
-                executed_mcp = executed_mcp or data.get("source")=="mcp"
+                target=self.last_invocation[1].get("target") if self.last_invocation else None
+                outcomes.append(dict(data,tool=name,target=target))
                 output=json.dumps(data,ensure_ascii=True)
                 if len(output)>16000:
-                    output=json.dumps({"isError":data.get("isError",False),"truncated":True,
-                                       "preview":output[:14000]})
+                    output=json.dumps({"isError":data.get("isError",False),"truncated":True,"preview":output[:14000]})
                 self.render(output)
                 reply={"role":"tool","tool_name":name,"content":output}
                 if call.get("id"):reply["tool_call_id"]=call["id"]
@@ -293,7 +353,7 @@ async def interactive(api,model,wizard):
     async with bridge() as (session,catalog):
         term=wizard.term
         term.message("success",f"Connected: {model} -> MCP -> RedVector backend | {len(catalog)} discovered tools")
-        term.box("INTERACTIVE SESSION",["/scope: replace authorized targets (IP, CIDR, or exact hostname)",
+        term.box("INTERACTIVE SESSION",["/scope: display scope; /scope TARGET [TARGET...]: replace authorized targets",
             "/status: real read-only health call","/tools QUERY: discover registered tools",
             "/back: return to startup menu and switch models","Default scope: none. Diagnostics only."])
         policy=Policy()
@@ -303,21 +363,9 @@ async def interactive(api,model,wizard):
             return wizard.ask("Type APPROVE to execute, or anything else to deny:")=="APPROVE"
         agent=Agent(api,model,session,catalog,policy,approve,lambda out:term.write("MCP RESULT: "+plain(out)))
         while True:
-            text=wizard.ask("redvector> ")
-            if text in ("/back","/exit"):return
-            if text=="/scope":
-                raw=wizard.ask("Enter explicitly authorized targets separated by spaces (blank clears scope):")
-                try:policy=Policy(raw.split())
-                except PolicyError as exc:
-                    term.message("error",str(exc));continue
-                agent.policy=policy
-                agent.history=[]
-                term.message("success",f"Authorized scope replaced: {plain(raw) or 'none'}")
-            elif text=="/status":
-                data=await agent.execute("server_health",{},{"server_health"})
-                term.write(plain(json.dumps(data)))
-            elif text.startswith("/tools "):
-                term.write(plain(json.dumps(agent.select(text[7:]),indent=2)))
-            elif text:
-                try:term.write("ASSISTANT: "+plain(await agent.turn(text)))
-                except SetupError as exc:term.message("error",str(exc))
+            text=wizard.command()
+            action=await handle_command(text,agent,wizard)
+            if action=="exit":return
+            if action=="handled":continue
+            try:term.write("ASSISTANT: "+plain(await agent.turn(text)))
+            except SetupError as exc:term.message("error",str(exc))

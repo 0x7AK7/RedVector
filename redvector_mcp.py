@@ -335,7 +335,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
     # ============================================================================
 
     @mcp.tool()
-    def nmap_scan(target: str, scan_type: str = "-sV", ports: str = "", additional_args: str = "") -> Dict[str, Any]:
+    def nmap_scan(target: str, scan_type: str = "-sV", ports: str = "", additional_args: str = "", use_recovery: bool = True) -> Dict[str, Any]:
         """
         Execute an enhanced Nmap scan against a target with real-time logging.
 
@@ -344,6 +344,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             scan_type: Scan type (e.g., -sV for version detection, -sC for scripts)
             ports: Comma-separated list of ports or port ranges
             additional_args: Additional Nmap arguments
+            use_recovery: Keep automatic recovery unless a confined client explicitly disables it
 
         Returns:
             Scan results with enhanced telemetry
@@ -357,7 +358,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
         logger.info(f"{RedVectorColors.FIRE_RED}🔍 Initiating Nmap scan: {target}{RedVectorColors.RESET}")
 
         # Use enhanced error handling by default
-        data["use_recovery"] = True
+        data["use_recovery"] = use_recovery
         result = redvector_client.safe_post("api/tools/nmap", data)
 
         if result.get("success"):

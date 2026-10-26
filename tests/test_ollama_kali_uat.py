@@ -109,6 +109,8 @@ class KaliAcceptance(unittest.TestCase):
             installer=start("install_redvector_ollama.sh","01-installer")
             installer.expect("Ollama detected.")
             choose_existing(installer,"qwen3:8b")
+            self.assertEqual(installer.expect("Native tool calling verified:|MODEL VERIFICATION FAILED",timeout=480).group(0),
+                             "Native tool calling verified:")
             menu(installer)
             daemon=listener(11434)
             from redvector_ollama_storage import detect_storage,filesystem_path
@@ -160,8 +162,13 @@ class KaliAcceptance(unittest.TestCase):
             from ollama_terminal_driver import plain as terminal_plain
             summary=terminal_plain(installer.raw).split("ASSISTANT:")[-1]
             self.assertIn("healthy",summary.lower());self.assertIn("8.0.0",summary)
-            installer.send("/scope");installer.expect("Enter explicitly authorized targets")
-            installer.send("bad;id");installer.expect("Invalid authorized target scope.");installer.expect("redvector> ")
+            installer.send("scan my");installer.expect("Please specify what you want to scan.");installer.expect("redvector> ")
+            installer.send("/scope 192.0.2.15 2001:db8::8");installer.expect("Authorized scope replaced by the operator.")
+            installer.expect("192.0.2.15");installer.expect("2001:db8::8");installer.expect("redvector> ")
+            installer.send("/scope");installer.expect("REDVECTOR AUTHORIZED TARGET SCOPE");installer.expect("redvector> ")
+            installer.send("/scope bad;id");installer.expect("Invalid authorized target scope.");installer.expect("redvector> ")
+            installer.send("/scope");installer.expect("192.0.2.15");installer.expect("2001:db8::8");installer.expect("redvector> ")
+            self.assertIn(b"\x1b[1;91mredvector>\x1b[0m ",installer.raw)
             installer.send("/back");menu(installer);installer.send("6");first=installer.finish()
             self.assertIn("\x1b[38;5;196m",installer.raw.decode("utf8"))
             self.assertIn("By Adam K.",first)
@@ -169,10 +176,21 @@ class KaliAcceptance(unittest.TestCase):
 
             launcher=start("start_redvector_ollama.sh","02-restart")
             menu(launcher);launcher.send("3");launcher.expect("Selected model: qwen3:8b");menu(launcher)
+            launcher.send("2");launcher.expect("Choose 1-7:");launcher.send("4")
+            launcher.expect("Ollama model identifier:")
+            launcher.send("compatibility-check-only:not-installed-"+str(int(started)))
+            launcher.expect("Tool Calling:      Unverified",timeout=60)
+            launcher.expect("DOWNLOAD UNVERIFIED",timeout=30);launcher.send("cancel")
+            launcher.expect("No download was started.");menu(launcher)
+            launcher.send("3");launcher.expect("Selected model: qwen3:8b");menu(launcher)
             launcher.send("2");choose_existing(launcher,"dolphin-llama3:8b")
-            launcher.expect("tool calling is not advertised");menu(launcher)
-            launcher.send("1");launcher.expect("does not advertise tool calling",timeout=30);menu(launcher)
-            launcher.send("2");choose_existing(launcher,"qwen3:8b");menu(launcher)
+            launcher.expect("Tool Calling:      Unsupported")
+            launcher.expect("MODEL NOT COMPATIBLE")
+            launcher.expect("Choose 1-3:");launcher.send("2");menu(launcher)
+            launcher.send("3");launcher.expect("Selected model: qwen3:8b");menu(launcher)
+            launcher.send("2");choose_existing(launcher,"qwen3:8b")
+            self.assertEqual(launcher.expect("Native tool calling verified:|MODEL VERIFICATION FAILED",timeout=480).group(0),
+                             "Native tool calling verified:");menu(launcher)
             launcher.send("1");launcher.expect("Connected: qwen3:8b",timeout=480)
             launcher.expect("redvector> ");launcher.send("/status")
             launcher.expect(r'"status".*healthy',timeout=40);launcher.expect("redvector> ")
@@ -187,6 +205,15 @@ class KaliAcceptance(unittest.TestCase):
                         self.assertEqual(len(catalog),328)
                         return await live_model_roundtrip(session,catalog,"qwen3:8b")
                 evidence=asyncio.run(actual_loop())
+                from redvector_ollama_model_check import verify_selected_model
+                from ollama_live_helpers import ObservedOllama
+                selected_api=ObservedOllama()
+                selected_evidence=asyncio.run(verify_selected_model(selected_api,"qwen3:8b"))
+                selected_evidence["exchanges"]=selected_api.exchanges
+                self.assertEqual(selected_evidence["tool_count"],328)
+                self.assertEqual(selected_evidence["tool"],"server_health")
+                self.assertEqual(selected_evidence["status"],"healthy")
+                (OUTPUT/"model-compatibility-native.json").write_text(json.dumps(selected_evidence,indent=2),encoding="utf8")
             self.assertTrue(evidence["returned_real_result_to_model"])
 
             plain_env=dict(env,NO_COLOR="1")

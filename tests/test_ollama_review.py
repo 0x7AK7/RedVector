@@ -28,11 +28,17 @@ class DependencyTests(unittest.TestCase):
                 self.assertEqual(dependency_issues([path]),[])
 
 class ScopeTests(unittest.TestCase):
-    def test_ipv6_nmap_rejected_before_operator_approval(self):
+    def test_ipv6_nmap_requires_numeric_scope_and_exact_operator_approval(self):
         approvals=[]
-        with self.assertRaisesRegex(PolicyError,"IPv6"):
-            Policy(["::1"]).authorize("nmap_scan",{"target":"::1"},lambda op:approvals.append(op) or True)
+        with self.assertRaisesRegex(PolicyError,"outside"):
+            Policy().authorize("nmap_scan",{"target":"::1"},lambda op:approvals.append(op) or True)
         self.assertEqual(approvals,[])
+        with self.assertRaisesRegex(PolicyError,"declined"):
+            Policy(["::1"]).authorize("nmap_scan",{"target":"::1"},lambda _:False)
+        result=Policy(["::1"]).authorize("nmap_scan",{"target":"::1"},lambda op:approvals.append(op) or True)
+        self.assertEqual(result["scan_type"],"-6 -sT")
+        self.assertFalse(result["use_recovery"])
+        self.assertEqual(approvals[-1]["arguments"],result)
 
 class CancellationTests(unittest.IsolatedAsyncioTestCase):
     async def test_live_http_inference_can_be_cancelled_without_worker_threads(self):

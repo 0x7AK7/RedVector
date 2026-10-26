@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 from urllib.parse import urlsplit
+from redvector_ollama_models import canonical_model, model_id_value, inspect_model, registry_metadata, api_capabilities
 from redvector_ollama_storage import StorageInfo, StorageError, detect_storage, filesystem_path, model_path
 from redvector_ollama_capacity import CapacityAssessment, current_identity, probe_storage, service_probe_command
 
@@ -38,10 +39,9 @@ class DownloadCancelled(SetupError):
     pass
 
 def model_id(value):
-    if not isinstance(value,str) or len(value)>160 or not re.fullmatch(
-        r"[A-Za-z0-9][A-Za-z0-9_-]*(?:/[A-Za-z0-9][A-Za-z0-9_.-]*)?(?::[A-Za-z0-9][A-Za-z0-9_.-]*)?",value):
-        raise SetupError("Invalid model identifier. Use name:tag or namespace/name:tag.")
-    return value
+    try:return model_id_value(value)
+    except ValueError as exc:raise SetupError(str(exc)) from exc
+
 
 def config_path():
     configured=os.environ.get("XDG_CONFIG_HOME")
@@ -79,6 +79,11 @@ class Terminal:
         self.stream=stream or sys.stdout
         self.color=bool(self.stream.isatty() and os.environ.get("TERM","") not in ("","dumb") and "NO_COLOR" not in os.environ)
     def write(self,value=""):print(value,file=self.stream,flush=True)
+    def prompt(self,readline=False):
+        if not self.color or not sys.stdin.isatty():return "redvector> "
+        start="\033[1;91m";reset="\033[0m"
+        if readline:start="\001"+start+"\002";reset="\001"+reset+"\002"
+        return start+"redvector>"+reset+" "
     def message(self,kind,text):
         colors={"success":"92","warning":"33","error":"91","info":"38;5;196"}
         value=plain(text)
@@ -129,6 +134,7 @@ class Ollama:
         self.session=Session();self.session.trust_env=False
         self.owned_models_path=None
         self.model_metadata={}
+        self.registry_metadata={}
     def request(self,path,payload=None,timeout=15):
         from requests import RequestException
         try:
@@ -243,25 +249,13 @@ class Ollama:
                     try:child.wait(timeout=5)
                     except subprocess.TimeoutExpired:child.kill();child.wait()
                 raise
+    def registry_info(self,model,refresh=False):
+        name=canonical_model(model)
+        if refresh or name not in self.registry_metadata:
+            self.registry_metadata[name]=registry_metadata(name)
+        return self.registry_metadata[name]
     def manifest_size(self,model):
-        import requests
-        name=model_id(model)
-        repository,_,tag=name.partition(":")
-        if "/" not in repository:repository="library/"+repository
-        try:
-            with requests.get("https://registry.ollama.ai/v2/"+repository+"/manifests/"+(tag or "latest"),
-                headers={"Accept":"application/vnd.docker.distribution.manifest.v2+json"},
-                timeout=10,allow_redirects=False,stream=True) as response:
-                if response.status_code!=200:return None
-                body=bytearray()
-                for chunk in response.iter_content(8192):
-                    body.extend(chunk)
-                    if len(body)>2_000_000:return None
-                data=json.loads(body)
-                sizes=[item["size"] for item in data.get("layers",[])]
-                if not sizes or not all(isinstance(n,int) and not isinstance(n,bool) and n>0 for n in sizes):return None
-                return sum(sizes)
-        except (requests.RequestException,ValueError,KeyError,TypeError):return None
+        return self.registry_info(model).estimated_bytes
 
 class Wizard:
     def __init__(self,api=None,terminal=None,read=None):
@@ -273,6 +267,19 @@ class Wizard:
         try:return self.read().strip()
         except (EOFError,KeyboardInterrupt,StopIteration):
             self.term.message("warning","Cancelled safely. Partial Ollama downloads can be resumed.")
+            raise SystemExit(0)
+    def command(self):
+        try:
+            if self.read is input:
+                try:
+                    import readline
+                    invisible=True
+                except ImportError:invisible=False
+                return self.read(self.term.prompt(readline=invisible)).strip()
+            self.term.stream.write(self.term.prompt());self.term.stream.flush()
+            return self.read().strip()
+        except (EOFError,KeyboardInterrupt,StopIteration):
+            self.term.message("warning","Session cancelled safely.")
             raise SystemExit(0)
     def confirm(self,label):return self.ask(label+" [y/N]").lower()=="y"
     def install_ollama(self):
@@ -331,7 +338,7 @@ class Wizard:
         required="None (already installed)" if installed else f"Approx. {size/1e9:.2f} GB"
         tools="To be verified after download"
         if installed:
-            tools=("Advertised; agent verifies native tool calls" if isinstance(metadata,dict) and "tools" in metadata.get("capabilities",[])
+            tools=("Advertised; agent verifies native tool calls" if api_capabilities(model,metadata).state=="SUPPORTED"
                    else "Not advertised; agent mode disabled")
         local=self.api.host in ("127.0.0.1","localhost","::1")
         engine=("Local process detected" if local and capacity.instance_verified else
@@ -452,36 +459,85 @@ class Wizard:
         self.term.message("warning","Measured free space is an estimate, not a guarantee. Model memory and quota limits are independent.")
         if not self.confirm("Proceed with download?"):raise DownloadCancelled("Download cancelled before it started.")
 
+    def verify_model(self,model):
+        from redvector_ollama_model_check import verify_selected_model
+        self.model_evidence=asyncio.run(verify_selected_model(self.api,model,self.term))
+        return self.model_evidence
+
+    def model_recovery(self,title,reason):
+        self.term.box(title,[reason,
+            "MCP agent mode cannot use this selection. Previous selection remains unchanged.",
+            "No models were deleted or selected automatically.",
+            "1. Choose another model","2. Back","3. Exit"])
+        while True:
+            choice=self.ask("Choose 1-3:")
+            if choice=="1":return True
+            if choice=="2":return False
+            if choice=="3":raise SystemExit(0)
+            self.term.message("warning","Choose 1, 2 or 3.")
+
     def select_model(self):
-        self.term.box("REDVECTOR AI / OLLAMA MODEL SELECTION",
-            [f"{i}. {label:<17} | Approx. {size:g} GB | {purpose}" for i,(label,_,size,purpose) in enumerate(PRESETS,1)]
-            +["4. Choose your own model","5. Use an already installed model","6. Back","7. Exit"])
-        choice=self.ask("Choose 1-7:")
-        if choice=="6":return None
-        if choice=="7":raise SystemExit(0)
-        models=self.api.models()
-        approx=None
-        if choice in ("1","2","3"):_,model,approx,_=PRESETS[int(choice)-1]
-        elif choice=="4":model=model_id(self.ask("Ollama model identifier:"))
-        elif choice=="5":
-            if not models:raise SetupError("No local models are installed.")
-            for i,item in enumerate(models,1):self.term.write(f"{i}. {plain(item.get('name','unknown'))}")
-            index=self.ask("Choose an installed model number:")
-            if not index.isdecimal() or not 1<=int(index)<=len(models):raise SetupError("Invalid model selection.")
-            model=model_id(models[int(index)-1]["name"])
-        else:raise SetupError("Choose a numbered model option.")
-        normalized=model if ":" in model else model+":latest"
-        if not any(item.get("name")==normalized for item in models):
-            self.resource_budget(model,approx)
-            self.api.pull(model)
-        else:self.term.message("success",f"Reusing installed model: {model}")
-        metadata=self.api.show(model)
-        if any(item.get("name")==normalized for item in models) and self.api.healthy():
-            info=detect_storage(self.api.host,self.api.port)
-            self.preflight(model,0,info,probe_storage(info),installed=True,metadata=metadata)
-        if isinstance(metadata,dict) and "tools" not in metadata.get("capabilities",[]):
-            self.term.message("warning","Model verified locally, but tool calling is not advertised. Agent mode will remain disabled for this model.")
-        return model
+        while True:
+            self.term.box("REDVECTOR AI / OLLAMA MODEL SELECTION",
+                [f"{i}. {label:<17} | Approx. {size:g} GB | {purpose}" for i,(label,_,size,purpose) in enumerate(PRESETS,1)]
+                +["4. Choose your own model","5. Use an already installed model","6. Back","7. Exit"])
+            choice=self.ask("Choose 1-7:")
+            if choice=="6":return None
+            if choice=="7":raise SystemExit(0)
+            models=self.api.models()
+            approx=None
+            if choice in ("1","2","3"):_,model,approx,_=PRESETS[int(choice)-1]
+            elif choice=="4":model=model_id(self.ask("Ollama model identifier:"))
+            elif choice=="5":
+                if not models:raise SetupError("No local models are installed.")
+                for i,item in enumerate(models,1):self.term.write(f"{i}. {plain(item.get('name','unknown'))}")
+                index=self.ask("Choose an installed model number:")
+                if not index.isdecimal() or not 1<=int(index)<=len(models):raise SetupError("Invalid model selection.")
+                model=model_id(models[int(index)-1]["name"])
+            else:raise SetupError("Choose a numbered model option.")
+            normalized=canonical_model(model)
+            matches=[]
+            for item in models:
+                try:
+                    if canonical_model(item.get("name"))==normalized:matches.append(item)
+                except (ValueError,AttributeError):continue
+            installed=bool(matches)
+            if installed:self.term.message("success",f"Reusing installed model: {model}")
+            info=inspect_model(self.api,model,installed)
+            size=info.estimated_bytes
+            if installed:
+                local_size=matches[0].get("size")
+                size=local_size if isinstance(local_size,int) and not isinstance(local_size,bool) and local_size>0 else None
+            self.term.box("REDVECTOR AI / MODEL COMPATIBILITY",[
+                "Selected model:    "+model,
+                "Tool Calling:      "+info.state.title(),
+                "Download Required: "+("No" if installed else "Yes"),
+                "Estimated Size:    "+(f"{size/1e9:.2f} GB (installed size)" if installed and size else
+                                         f"{size/1e9:.2f} GB (official manifest)" if size else "Unknown"),
+                "Compatibility:     "+info.reason,
+                "Evidence source:   "+info.source])
+            if info.state=="UNSUPPORTED":
+                if self.model_recovery("MODEL NOT COMPATIBLE",
+                    "This model does not support native tool calling required by the RedVector MCP agent. No download was started."):
+                    continue
+                return None
+            if not installed:
+                if info.state=="UNVERIFIED":
+                    self.term.message("warning","Compatibility cannot be guaranteed until the exact model is installed and tested. No model weights were downloaded for this check.")
+                    if self.ask("Type DOWNLOAD UNVERIFIED to consent to downloading an unverified model, or anything else to cancel:")!="DOWNLOAD UNVERIFIED":
+                        raise DownloadCancelled("Compatibility consent declined. No download was started.")
+                self.resource_budget(model,approx)
+                self.api.pull(model)
+            try:
+                metadata=self.api.show(model)
+                if installed and self.api.healthy():
+                    storage=detect_storage(self.api.host,self.api.port)
+                    self.preflight(model,0,storage,probe_storage(storage),installed=True,metadata=metadata)
+                self.verify_model(model)
+            except SetupError as exc:
+                if self.model_recovery("MODEL VERIFICATION FAILED",plain(exc)):continue
+                return None
+            return model
 
     def status(self,model):
         self.term.box("SYSTEM STATUS",[f"Ollama endpoint: {self.api.url}",

@@ -61,7 +61,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         session=Mock()
         @asynccontextmanager
         async def connection():yield session,{}
-        answers=iter(["/scope","bad;id","/back"])
+        answers=iter(["/scope bad;id","/back"])
         wizard=Wizard(api,Terminal(io.StringIO()),answers.__next__)
         with patch("redvector_ollama_agent.verify_tools",new=AsyncMock()),patch("redvector_ollama_agent.bridge",connection):
             await interactive(api,"local",wizard)

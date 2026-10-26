@@ -264,7 +264,9 @@ class StorageFilesystem(unittest.TestCase):
     def test_qwen_preset_uses_existing_model_and_exact_english_label(self):
         api=Mock();api.models.return_value=[{"name":"qwen3:8b"}]
         term=Terminal(io.StringIO())
-        result=Wizard(api,term,lambda:"1").select_model()
+        api.show.return_value={"capabilities":["tools"]}
+        with patch.object(Wizard,"verify_model",return_value={"status":"healthy"}):
+            result=Wizard(api,term,lambda:"1").select_model()
         self.assertEqual(result,"qwen3:8b")
         self.assertRegex(term.stream.getvalue(),r"1\. Qwen3 8B\s+\| Approx\. 5.2 GB \| Tool Calling")
         api.pull.assert_not_called()

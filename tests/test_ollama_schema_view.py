@@ -14,7 +14,7 @@ class SchemaViewTests(unittest.TestCase):
         schema={"type":"object","properties":{"target":{"type":"string"},"scan_type":{"type":"string","default":"-sV"},"ports":{"type":"string"},"additional_args":{"type":"string"}},"required":["target"]}
         tool=SimpleNamespace(name="nmap_scan",description="Nmap",inputSchema=schema)
         view=tool_schema(tool)["function"]["parameters"]
-        self.assertEqual(view["properties"]["scan_type"]["enum"],["-sT"])
+        self.assertEqual(view["properties"]["scan_type"]["enum"],["-sT","-6 -sT"])
         self.assertEqual(view["properties"]["scan_type"]["default"],"-sT")
         self.assertEqual(view["properties"]["additional_args"]["enum"],[""])
         self.assertFalse(view["additionalProperties"])

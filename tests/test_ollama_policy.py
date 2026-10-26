@@ -12,12 +12,12 @@ class PolicyTests(unittest.TestCase):
     def test_scope_required_and_exact(self):
         for target in ("example.org", "127.0.0.2", "example.com.evil", "https://example.com"):
             with self.subTest(target=target), self.assertRaises(PolicyError):
-                Policy(["example.com"]).authorize("nmap_scan", {"target":target}, lambda _:True)
+                Policy(["example.com"],resolver=lambda _:["192.0.2.10"]).authorize("nmap_scan", {"target":target}, lambda _:True)
         with self.assertRaises(PolicyError):
             Policy().authorize("nmap_scan", {"target":"127.0.0.1"}, lambda _:True)
     def test_safe_scan_is_scoped_approved_and_fixed(self):
         args=Policy(["127.0.0.0/30"]).authorize("nmap_scan", {"target":"127.0.0.1","ports":"80,443"}, lambda _:True)
-        self.assertEqual(args, {"target":"127.0.0.1","ports":"80,443","scan_type":"-sT","additional_args":""})
+        self.assertEqual(args, {"target":"127.0.0.1","ports":"80,443","scan_type":"-sT","additional_args":"-n -Pn --unprivileged --max-retries 1 --host-timeout 60s","use_recovery":False})
     def test_injection_and_bypass_rejected(self):
         for args in ({"target":"127.0.0.1;id"}, {"target":"127.0.0.1","additional_args":"-oN /tmp/x"},
                      {"target":"127.0.0.1","scan_type":"-sC"}, {"target":"127.0.0.1","ports":"0"},

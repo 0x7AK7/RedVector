@@ -12,6 +12,7 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
+from redvector_ollama_backend import _source_start_limit
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -24,7 +25,8 @@ def capture_started_backends(directory,root,port,started):
         for value in re.findall(r"\[RedVector\] Server PID: ([0-9]+)",log.read_text(errors="replace")):
             try:
                 process=psutil.Process(int(value));args=process.cmdline();created=process.create_time()
-                if (created>=started-1 and str(root/"redvector_server.py") in args
+                wall_started=_source_start_limit(process.pid,created) if sys.platform.startswith("linux") else created
+                if (wall_started>=started-1 and str(root/"redvector_server.py") in args
                     and "--port" in args and args[args.index("--port")+1]==str(port)):
                     found[process.pid]=created
             except (psutil.NoSuchProcess,psutil.AccessDenied,ValueError):pass

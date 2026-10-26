@@ -69,7 +69,10 @@ class InstallerEdges(unittest.TestCase):
         self.assertIsNone(self.wizard(["6"],api).select_model())
     def test_failed_model_verification_does_not_return_selected_model(self):
         api=model_api();api.models.return_value=[{"name":"local:latest"}];api.show.side_effect=SetupError("missing")
-        with self.assertRaises(SetupError):self.wizard(["5","1"],api).select_model()
+        wizard=self.wizard(["5","1","2"],api)
+        self.assertIsNone(wizard.select_model())
+        self.assertIn("MODEL VERIFICATION FAILED",wizard.term.stream.getvalue())
+        api.pull.assert_not_called()
     def test_failed_configuration_write_preserves_old_model(self):
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/"config.json";save_model("old:latest",path)
@@ -124,4 +127,4 @@ class AgentEdges(unittest.IsolatedAsyncioTestCase):
     async def test_model_only_claim_is_labeled_as_unexecuted(self):
         api=model_api();api.chat.return_value={"role":"assistant","content":"Scan succeeded."}
         agent=Agent(api,"local",Mock(),{},Policy(),lambda _:False,lambda _:None)
-        self.assertIn("No MCP operation was executed",await agent.turn("Scan something"))
+        self.assertIn("No MCP operation was executed",await agent.turn("Explain TCP scanning"))

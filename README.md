@@ -1163,21 +1163,43 @@ In the interactive session:
 - `/status` invokes the real read-only health tool.
 - `/tools QUERY` discovers registered tools without sending all verbose schemas
   to the model.
-- `/scope` replaces the explicitly authorized, session-local IP/CIDR/hostname
-  scope. Installation never asks for a target.
+- `/scope` displays the actual authorized, session-local scope.
+- `/scope TARGET [TARGET...]` atomically replaces it with explicit IPv4, IPv6,
+  CIDR or exact hostname entries; `/scope --clear` returns to diagnostics only.
+  Invalid entries leave the previous scope unchanged. Installation never asks
+  for a target. CIDR normalization and hostname destination pins are displayed.
+- `/help` lists operator commands. Unknown slash commands never reach Ollama.
 - `/back` returns to the startup menu to change models.
 
 All 328 existing MCP handlers remain available to existing clients. This new
 agent discovers them but applies a narrow reviewed execution policy: read-only
-`server_health` and `get_cache_stats`; scoped WHOIS; scoped numeric-IPv4 Nmap TCP
-connect scans with fixed arguments; and separately approved local cache clearing.
-Every assessment and state change requires approval of its displayed arguments.
-Nmap retains the existing backend's recovery/retry behavior within the same
-target scope. Other tools, arbitrary commands, scripts, payloads and autonomous
-compound operations are discoverable but blocked in this agent until they have
-a reviewed execution policy. Active scans require numeric IPv4 scope to avoid
-hostname-resolution ambiguity; IPv6 scanning is explicitly disabled pending a
-reviewed invocation policy. Targets are never authorized by model text.
+`server_health` and `get_cache_stats`; scoped single-host IPv4/IPv6 Nmap TCP
+connect scans; and separately approved local cache clearing. Every assessment
+and state change requires approval of the exact displayed arguments. Nmap uses
+fixed DNS-disabled, unprivileged options and explicitly disables backend recovery.
+No script, proxy, hostname re-resolution or free-form argument can be added.
+
+Exact operator-authorized hostnames pin their initial resolved destinations;
+DNS changes before/after approval fail until the operator replaces scope.
+DNS lookup waits are bounded to five seconds with at most four outstanding
+workers. The backend receives a numeric address, preventing later DNS rebinding.
+A network entry authorizes member hosts; it does not automatically launch a
+subnet scan. Missing, incomplete or ambiguous scan requests ask for clarification.
+The selected task destination is enforced independently of model output.
+
+WHOIS remains registered but disabled in this agent because registry/referral
+destinations cannot be confined. Active version detection is also disabled:
+Nmap -sV can automatically run version-category scripts. Service labels from
+TCP scans are port-name mappings, not verified product versions. Other tools,
+arbitrary commands, scripts, payloads and autonomous compound operations remain
+discoverable but blocked without a reviewed policy. Targets are never authorized
+by model text. Assessment completion text comes from actual MCP outcomes, not
+unverified model success claims.
+
+The prompt text `redvector>` alone is bright red on compatible interactive
+terminals, resetting before input; NO_COLOR and non-interactive use remain plain.
+See [CLI, scope and agent validation](docs/ollama-cli-scope-validation.md) for
+the exact changed files, real acceptance results and security boundaries.
 
 New Ollama services bind to localhost. The client accepts local HTTP endpoints
 only, bypasses proxies and rejects redirects. Backend API tokens are inherited

@@ -83,6 +83,15 @@ class RealLinuxBridgeTests(unittest.TestCase):
                     self.assertEqual(http.get(url,headers={"Authorization":"Bearer "+env["REDVECTOR_API_TOKEN"]},timeout=3).status_code,200)
                     print("REAL LINUX BRIDGE PASS: launcher startup, verified ownership, 328 MCP tools, actual health, same backend reused, authentication enforced.")
             finally:
+                # Preserve redacted test-owned startup diagnostics before TemporaryDirectory
+                # cleanup, so an initialization refusal is not reduced to Connection closed.
+                if os.environ.get("REDVECTOR_TEST_DIAGNOSTICS")=="1":
+                    destination=ROOT/"docs"/"kali-uat"
+                    destination.mkdir(parents=True,exist_ok=True)
+                    for log in (directory/"config"/"redvector-ollama").glob("mcp-*.log"):
+                        text=log.read_text(errors="replace").replace(env["REDVECTOR_API_TOKEN"],"[redacted-test-token]")
+                        output=destination/("scan-workflow-bridge-"+str(time.time_ns())+".log")
+                        output.write_text(text,encoding="utf8");output.chmod(0o600)
                 # Stop only the newly-created, identity-checked listener on this test's free port.
                 owned.update(capture_started_backends(directory,ROOT,port,started))
                 for pid,created in owned.items():

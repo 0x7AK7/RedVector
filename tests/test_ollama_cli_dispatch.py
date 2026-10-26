@@ -45,7 +45,9 @@ class CLICommands(unittest.IsolatedAsyncioTestCase):
 
     async def test_status_executes_real_session_interface_without_model(self):
         await self.dispatch("/status")
-        self.assertIn('"source": "mcp"',self.term.stream.getvalue())
+        self.assertIn("VERIFIED TOOL RESULTS",self.term.stream.getvalue())
+        self.assertRegex(self.term.stream.getvalue(),r"Source\s+mcp")
+        self.assertNotIn("structuredContent",self.term.stream.getvalue())
 
 class PromptTests(unittest.TestCase):
     def terminal(self,tty=True):

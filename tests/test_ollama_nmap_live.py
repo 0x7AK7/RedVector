@@ -43,8 +43,9 @@ class NativeNmap(unittest.TestCase):
                                 api=Mock();exchanges=[];outputs=[];approvals=[]
                                 async def chat(model,messages,schemas):
                                     exchanges.append(messages)
-                                    if any(message["role"]=="tool" for message in messages):
-                                        return {"role":"assistant","content":"Scan complete."}
+                                    if not schemas:
+                                        facts=json.loads(messages[-1]["content"])
+                                        return {"role":"assistant","content":json.dumps({"status":facts["status"],"open_ports":facts["open_ports"]})}
                                     return {"role":"assistant","content":"","tool_calls":[{"function":{"name":"nmap_scan",
                                         "arguments":{"target":host,"ports":str(scan_port)}}}]}
                                 api.async_chat=AsyncMock(side_effect=chat)
@@ -52,7 +53,7 @@ class NativeNmap(unittest.TestCase):
                                     lambda operation:approvals.append(operation) or True,outputs.append)
                                 answer=await agent.turn("Scan "+host+" for open TCP port "+str(scan_port))
                                 self.assertIn("actual MCP",answer)
-                                self.assertEqual(len(approvals),1)
+                                self.assertEqual(len(approvals),0)
                                 actual=[json.loads(value) for value in outputs if json.loads(value).get("source")=="mcp"]
                                 self.assertEqual(len(actual),1)
                                 payload=json.loads(actual[0]["content"][0]["text"])
@@ -60,11 +61,19 @@ class NativeNmap(unittest.TestCase):
                                 self.assertIn(str(scan_port)+"/tcp",payload["stdout"])
                                 self.assertIn("open",payload["stdout"])
                                 self.assertFalse(payload.get("recovery_info",{}).get("recovery_applied",False))
-                                self.assertFalse(approvals[0]["arguments"]["use_recovery"])
-                                replies=[json.loads(message["content"]) for message in exchanges[-1]
-                                         if message["role"]=="tool" and message.get("tool_name")=="nmap_scan"]
-                                self.assertEqual(json.loads(replies[-1]["content"][0]["text"])["stdout"],payload["stdout"])
-                                print("REAL SCOPED NMAP PASS: explicit loopback scope, exact approval, native Nmap, real MCP/backend output, open owned TCP port, recovery disabled; 328 tools.")
+                                self.assertFalse(agent.last_invocation[1]["use_recovery"])
+                                self.assertIn("--max-rate 50",agent.last_invocation[1]["additional_args"])
+                                compact=json.loads(exchanges[-1][-1]["content"])
+                                self.assertIn(str(scan_port)+"/tcp",compact["open_ports"])
+                                self.assertNotIn("stdout",compact)
+                                self.assertEqual(agent.results.load()["mcp"],actual[0])
+                                from redvector_ollama_setup import OllamaTimeout
+                                api.async_chat.side_effect=OllamaTimeout("Injected summary timeout")
+                                failed=await agent.summarize_saved()
+                                self.assertIn("COMPLETED SUCCESSFULLY",failed)
+                                self.assertIn("timeout",failed)
+                                self.assertEqual(len(actual),1)
+                                print("REAL SCOPED NMAP PASS: explicit loopback scope, bounded automatic policy, native Nmap, real MCP/backend output, open owned TCP port, recovery disabled; 328 tools.")
                         asyncio.run(run())
                 finally:
                     owned.update(capture_started_backends(directory,ROOT,backend_port,started))

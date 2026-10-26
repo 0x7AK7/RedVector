@@ -31,11 +31,11 @@ class ScopeTests(unittest.TestCase):
     def test_ipv6_nmap_requires_numeric_scope_and_exact_operator_approval(self):
         approvals=[]
         with self.assertRaisesRegex(PolicyError,"outside"):
-            Policy().authorize("nmap_scan",{"target":"::1"},lambda op:approvals.append(op) or True)
+            Policy(auto_discovery=False).authorize("nmap_scan",{"target":"::1"},lambda op:approvals.append(op) or True)
         self.assertEqual(approvals,[])
         with self.assertRaisesRegex(PolicyError,"declined"):
-            Policy(["::1"]).authorize("nmap_scan",{"target":"::1"},lambda _:False)
-        result=Policy(["::1"]).authorize("nmap_scan",{"target":"::1"},lambda op:approvals.append(op) or True)
+            Policy(["::1"], auto_discovery=False).authorize("nmap_scan",{"target":"::1"},lambda _:False)
+        result=Policy(["::1"], auto_discovery=False).authorize("nmap_scan",{"target":"::1"},lambda op:approvals.append(op) or True)
         self.assertEqual(result["scan_type"],"-6 -sT")
         self.assertFalse(result["use_recovery"])
         self.assertEqual(approvals[-1]["arguments"],result)

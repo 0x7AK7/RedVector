@@ -8,10 +8,15 @@ import os
 from pathlib import Path
 import re
 import tempfile
+import time
+from contextlib import suppress
+from redvector_ollama_results import ResultsStore
+from redvector_ollama_presentation import render_scan,render_result,operation_message,approval_panel,Panel
+from redvector_ollama_analysis import summarize
 
 from redvector_ollama_policy import Policy, PolicyError, REVIEWED, DISABLED_REASONS, validate_arguments
 from redvector_ollama_backend import inspect_backend, BackendReuseError
-from redvector_ollama_cli import handle_command, assessment_context
+from redvector_ollama_cli import handle_command, assessment_context, saved_analysis_request, automatic_context
 from redvector_ollama_errors import record_error
 from redvector_ollama_setup import ROOT, SetupError, config_path, local_lock, plain
 
@@ -30,7 +35,7 @@ def tool_schema(tool):
     if tool.name=="nmap_scan" and "use_recovery" in properties:
         properties["use_recovery"].update(enum=[False],default=False)
     note=""
-    if tool.name=="nmap_scan":note=" Only authorized single hosts; TCP connect scans only; active version detection and scripts disabled, DNS disabled, no automatic recovery; exact operator approval required."
+    if tool.name=="nmap_scan":note=" Only authorized single hosts; TCP connect scans only; active version detection and scripts disabled, DNS disabled, no automatic recovery; reviewed bounded discovery may run automatically; intensive scans require exact approval."
     elif tool.name=="whois_lookup":note=" Exact authorized target and operator approval required; no extra arguments."
     elif tool.name=="clear_cache":note=" Changes backend state; separate operator approval required."
     return {"type":"function","function":{"name":tool.name,
@@ -181,10 +186,12 @@ def result_data(result):
     return data
 
 class Agent:
-    def __init__(self,api,model,session,catalog,policy,approve,render):
+    def __init__(self,api,model,session,catalog,policy,approve,render,results=None,terminal=None):
         self.api=api;self.model=model;self.session=session;self.catalog=catalog
         self.policy=policy;self.approve=approve;self.render=render
         self.history=[]
+        self.results=results or ResultsStore();self.terminal=terminal
+        self.last_result_id=None;self._scan_busy=False;self._unknown_until=0;self.automatic_task=False
         self.assessment_target=None
         self.last_invocation=None
         self.selected=[name for name in ("server_health","get_cache_stats") if name in catalog]
@@ -219,9 +226,71 @@ class Agent:
                 result.append(schema);size+=len(encoded)
         return result
 
+    async def _progress(self,started,target):
+        while True:
+            await asyncio.sleep(15)
+            if self.terminal:operation_message(self.terminal,[f"ACTIVE OPERATION | {target} | nmap_scan | Running | Elapsed {time.monotonic()-started:.0f}s"])
+
+    def _authorization_context(self,name):
+        approval=("Not required: read-only diagnostic" if name in ("server_health","get_cache_stats")
+                  else "Reviewed bounded discovery" if self.policy.last_automatic else "Approved exact operation")
+        return {"scope":list(self.policy.snapshot()),"dns_pins":self.policy.dns_snapshot(),
+                "scope_revision":self.policy.revision,"approval":approval}
+
+    def _save_scan(self,data,wire,started):
+        record=self.results.save("nmap_scan",self.last_invocation[1]["target"],self.last_invocation[1],
+                                 data,wire,time.monotonic()-started,authorization=self._authorization_context("nmap_scan"))
+        self.last_result_id=record["id"]
+        if self.terminal:
+            try:render_result(self.terminal,record)
+            except Exception as exc:
+                record_error("Scan presentation",exc)
+                self.terminal.message("error","Scan evidence preserved; formatted display failed. Use /raw or /export.")
+            if not record["persisted"]:self.terminal.message("error",record["storage_warning"])
+        else:self.render(json.dumps(data,ensure_ascii=True))
+        return record
+
+    def _save_operation(self,name,data,wire,started):
+        args=self.last_invocation[1] if self.last_invocation else {}
+        record=self.results.save(name,args.get("target"),args,data,wire,time.monotonic()-started,authorization=self._authorization_context(name))
+        self.last_result_id=record["id"]
+        if self.terminal:
+            try:render_result(self.terminal,record)
+            except Exception as exc:
+                record_error("Tool presentation",exc)
+                self.terminal.message("error","Evidence preserved; display failed. Use /raw or /export.")
+            if not record["persisted"]:self.terminal.message("error",record["storage_warning"])
+        return record
+
+    async def summarize_saved(self,ident=None,page=1):
+        record=self.results.load(ident)
+        status=record["findings"]["status"]
+        generic=record["findings"].get("kind")=="generic"
+        if status not in ("COMPLETED","PARTIAL"):
+            return f"SCAN STATUS: {status}. Evidence preserved. AI summary not requested because execution is not confirmed successful. Inspect /results or /raw; no scan was repeated."
+        if self.terminal:self.terminal.message("info","Results preserved. Generating optional AI analysis; Ctrl-C cancels analysis only.")
+        analysis=await summarize(self.api,self.model,record,page)
+        record["analysis"]=analysis
+        self.results.cache[record["id"]]=record
+        try:
+            if record["persisted"]:self.results._write(self.results.directory/(record["id"]+".json"),record)
+        except (OSError,ValueError):
+            record["persisted"]=False
+            if self.terminal:self.terminal.message("error","Analysis update could not be saved; original scan evidence remains available.")
+        title=("OPERATION "+status if generic else "SCAN COMPLETED SUCCESSFULLY" if status=="COMPLETED" else "SCAN PARTIAL RESULTS")
+        if generic:
+            detail=analysis.get("text","AI Analysis: "+("Cancelled" if analysis["state"]=="cancelled" else "Unavailable")+" ("+analysis.get("reason","unknown")+").")
+            return title+"\nVerified tool results are preserved.\nAI SECURITY ANALYSIS\n"+detail+f"\nEvidence ID: {record['id']}. /summary {record['id']} {page} retries analysis only; no tool is executed."
+        if analysis["state"]=="verified":
+            return title+"\nThe actual MCP scan finished and results were preserved.\n"+analysis["text"]+f"\nEvidence ID: {record['id']}. Use /results for all findings."
+        return (title+"\nThe actual MCP scan finished and results were preserved.\nAI summary: "+
+                ("Cancelled" if analysis["state"]=="cancelled" else "Unavailable")+" ("+analysis["reason"]+
+                f").\nUse /summary {record['id']} {page} to retry saved-result analysis. No additional network scan will be executed.")
+
     async def execute(self,name,args,exposed):
-        rpc_started=False
+        rpc_started=False;started=time.monotonic();progress=None;scan=name=="nmap_scan";claimed=False
         self.last_invocation=None
+        self.last_result_id=None
         try:
             if name=="discover_tools":
                 validate_arguments(DISCOVERY["function"]["parameters"],args)
@@ -229,30 +298,80 @@ class Agent:
             if name not in self.catalog or name not in exposed:raise PolicyError("Tool was not selected or registered.")
             schema=self.catalog[name].inputSchema
             validate_arguments(schema,args)
-            if name=="nmap_scan":
-                if self.assessment_target is None:
-                    raise PolicyError("No explicit assessment task is selected. Request a scan of one authorized host first.")
+            if scan:
+                if self._scan_busy:raise PolicyError("A scan is already running in this session.")
+                if time.monotonic()<self._unknown_until:raise PolicyError("Previous backend execution is unknown. Inspect backend state before another scan.")
+                if self.assessment_target is None:raise PolicyError("No explicit assessment task is selected. Request a scan of one authorized host first.")
                 if self.policy.destination(args["target"])!=self.policy.destination(self.assessment_target):
                     raise PolicyError("Tool target differs from the operator-selected task target. No scan was executed.")
-            approved=self.policy.authorize(name,args,self.approve)
+                self._scan_busy=True;claimed=True
+            approved=self.policy.authorize(name,args,self.approve,allow_automatic=(not scan or self.automatic_task))
             validate_arguments(schema,approved)
             self.last_invocation=(name,dict(approved))
+            if scan:
+                self.results.ensure()
+                if self.terminal:operation_message(self.terminal,["REDVECTOR AI / SCAN STARTED",
+                    "Target: "+approved["target"],"Tool: nmap_scan",
+                    "Mode: "+("Authorized discovery" if self.policy.last_automatic else "Explicitly approved discovery"),"Status: Running"])
+                progress=asyncio.create_task(self._progress(started,approved["target"]))
+            if not scan:
+                self.results.ensure()
+                if self.terminal:operation_message(self.terminal,["REDVECTOR AI / TOOL EXECUTION","Tool: "+name,"Status: Running"])
             rpc_started=True
             result=await asyncio.wait_for(self.session.call_tool(name,arguments=approved),timeout=90)
-            return result_data(result)
-        except PolicyError as exc:return {"isError":True,"execution_status":"blocked","error":str(exc)}
+            data=result_data(result)
+            if scan:
+                dump=getattr(result,"model_dump",None)
+                wire=dump(mode="json",by_alias=True) if callable(dump) else None
+                if not isinstance(wire,dict):
+                    wire={"isError":bool(result.isError),"content":data["content"],"structuredContent":data.get("structuredContent")}
+                self._save_scan(data,wire,started)
+            else:
+                dump=getattr(result,"model_dump",None)
+                wire=dump(mode="json",by_alias=True) if callable(dump) else copy.deepcopy(data)
+                self._save_operation(name,data,wire,started)
+            return data
+        except PolicyError as exc:
+            if self.terminal:Panel(self.terminal).section("TOOL EXECUTION / BLOCKED",[str(exc)],"error")
+            return {"isError":True,"execution_status":"blocked","error":str(exc)}
+        except asyncio.CancelledError:
+            if scan and rpc_started:
+                self._unknown_until=time.monotonic()+90
+                self._save_scan({"source":"mcp","isError":True,"execution_status":"unknown",
+                    "error":"Waiting cancelled; backend execution may still be running."},None,started)
+            elif rpc_started:
+                self._save_operation(name,{"source":"mcp","isError":True,"execution_status":"unknown",
+                    "error":"Waiting cancelled; backend execution may still be running."},None,started)
+            raise
         except Exception as exc:
             record_error("MCP tool call",exc)
-            return {"source":"mcp" if rpc_started else "application","isError":True,"execution_status":"unknown",
-                    "error":"MCP tool call failed or timed out. Execution may have started; inspect backend state before retrying."}
+            data={"source":"mcp" if rpc_started else "application","isError":True,
+                  "execution_status":"unknown" if rpc_started else "blocked",
+                  "error":("MCP tool call failed or timed out. Execution may have started; inspect backend state before retrying."
+                           if rpc_started else "Execution preflight failed. No scan was started; check private result storage and tool configuration.")}
+            if scan and rpc_started:
+                self._unknown_until=time.monotonic()+90
+                self._save_scan(data,None,started)
+            elif rpc_started:self._save_operation(name,data,None,started)
+            elif self.terminal:Panel(self.terminal).section("TOOL EXECUTION / BLOCKED",[data["error"]],"error")
+            return data
+        finally:
+            if progress:
+                progress.cancel()
+                with suppress(asyncio.CancelledError):await progress
+            if claimed:self._scan_busy=False
 
     async def turn(self,text):
         if not isinstance(text,str) or len(text)>8000:raise AgentError("Task text is limited to 8000 characters.")
         text=text.strip()
         if not text:return "Enter a task or use /help. No MCP operation was executed."
         if text.startswith("/"):return "Use the interactive CLI for operator commands. Nothing was sent to Ollama."
+        if saved_analysis_request(text):
+            try:return await self.summarize_saved()
+            except (ValueError,OSError):return "No saved scan is available. Use /results list or /summary RESULT_ID. No network scan was executed."
         assessment,chosen,clarification=assessment_context(text,self.policy)
         self.assessment_target=chosen if assessment else None
+        self.automatic_task=assessment and bool(chosen) and automatic_context(text,chosen)
         if clarification:return clarification
         explicit_disabled=[name for name in self.catalog if name not in REVIEWED and
                            re.search(r"(?<![A-Za-z0-9_])"+re.escape(name)+r"(?![A-Za-z0-9_])",text)]
@@ -318,12 +437,20 @@ class Agent:
                 function=call["function"];name=function.get("name");args=function.get("arguments")
                 if not isinstance(name,str):raise AgentError("Missing structured tool name.")
                 data=await self.execute(name,args,exposed)
+                if self.last_result_id and (name=="nmap_scan" or self.terminal):
+                    return await self.summarize_saved(self.last_result_id)
                 target=self.last_invocation[1].get("target") if self.last_invocation else None
                 outcomes.append(dict(data,tool=name,target=target))
                 output=json.dumps(data,ensure_ascii=True)
+                if not self.terminal:self.render(output)
+                if self.terminal and name=="discover_tools":
+                    from redvector_ollama_presentation import render_tools
+                    render_tools(self.terminal,data.get("tools",[]))
+                if self.last_result_id:
+                    from redvector_ollama_views import evidence_page
+                    output=json.dumps(evidence_page(self.results.load()["findings"]),ensure_ascii=True)
                 if len(output)>16000:
                     output=json.dumps({"isError":data.get("isError",False),"truncated":True,"preview":output[:14000]})
-                self.render(output)
                 reply={"role":"tool","tool_name":name,"content":output}
                 if call.get("id"):reply["tool_call_id"]=call["id"]
                 messages.append(reply)
@@ -337,7 +464,8 @@ async def connection_test(term):
         if len(catalog)!=328:term.message("warning","Discovery count differs from the expected 328; inspect this installation.")
         if "server_health" not in catalog:raise AgentError("The read-only server_health tool was not discovered.")
         data=result_data(await asyncio.wait_for(session.call_tool("server_health",arguments={}),timeout=30))
-        term.write(plain(json.dumps(data,ensure_ascii=True)))
+        from redvector_ollama_views import normalize
+        render_result(term,{"id":"diagnostic (not archived)","findings":normalize("server_health",None,{},data,0)})
         healthy=False
         for block in data["content"]:
             try:
@@ -358,10 +486,10 @@ async def interactive(api,model,wizard):
             "/back: return to startup menu and switch models","Default scope: none. Diagnostics only."])
         policy=Policy()
         def approve(operation):
-            term.message("warning","Operator approval required for this exact operation:")
-            term.write(plain(json.dumps(operation,ensure_ascii=True)))
+            term.message("warning","Risk: intensive discovery or an unattended-session limit was reached." if operation["tool"]=="nmap_scan" else "Risk: this operation changes backend state.")
+            approval_panel(term,operation)
             return wizard.ask("Type APPROVE to execute, or anything else to deny:")=="APPROVE"
-        agent=Agent(api,model,session,catalog,policy,approve,lambda out:term.write("MCP RESULT: "+plain(out)))
+        agent=Agent(api,model,session,catalog,policy,approve,lambda out:term.write("MCP RESULT: "+plain(out)),terminal=term)
         while True:
             text=wizard.command()
             action=await handle_command(text,agent,wizard)

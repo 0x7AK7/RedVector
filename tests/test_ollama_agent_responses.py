@@ -1,5 +1,6 @@
 """Model-boundary doubles; actual network scans belong to native loopback acceptance."""
 import io
+import json
 import os
 import tempfile
 from types import SimpleNamespace
@@ -62,9 +63,10 @@ class Responses(unittest.IsolatedAsyncioTestCase):
     async def test_authorized_nmap_is_exposed_and_actual_result_returns_to_model(self):
         agent,outputs=self.agent(["192.0.2.4"])
         def chat(model,messages,schemas):
-            if any(message["role"]=="tool" for message in messages):
-                self.assertIn("Controlled fixture output",str(messages))
-                return {"role":"assistant","content":""}
+            if not schemas:
+                facts=json.loads(messages[-1]["content"])
+                self.assertNotIn("Controlled fixture output",str(messages))
+                return {"role":"assistant","content":json.dumps({"status":facts["status"],"open_ports":facts["open_ports"]})}
             self.assertIn("192.0.2.4",str(messages))
             self.assertIn("nmap_scan",str(schemas))
             return {"role":"assistant","content":"","tool_calls":[{"function":{"name":"nmap_scan","arguments":{"target":"192.0.2.4","ports":"54321"}}}]}

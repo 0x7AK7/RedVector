@@ -7,7 +7,7 @@ FIXED = "-n -Pn --unprivileged --max-retries 1 --host-timeout 60s"
 class ExtendedScopeTests(unittest.TestCase):
     def test_scope_is_atomic_canonical_and_immutable(self):
         source = ["10.2.3.9/24", "2001:db8::1", "LAB.example"]
-        policy = Policy(source, resolver=lambda _: ["10.2.3.8"])
+        policy = Policy(source, resolver=lambda _: ["10.2.3.8"], auto_discovery=False)
         source.append("8.8.8.8")
         self.assertEqual(policy.snapshot(), ("10.2.3.0/24", "2001:db8::1", "lab.example"))
         self.assertIsInstance(policy.scope, tuple)
@@ -27,7 +27,7 @@ class ExtendedScopeTests(unittest.TestCase):
         self.assertEqual(policy.snapshot(), ())
 
     def test_network_membership_fixed_options_and_ipv6(self):
-        policy = Policy(["10.0.0.0/8", "2001:db8::/32", "8.8.8.8"])
+        policy = Policy(["10.0.0.0/8", "2001:db8::/32", "8.8.8.8"], auto_discovery=False)
         for address, scan in [("10.2.3.4","-sT"), ("8.8.8.8","-sT"),
                               ("2001:db8::9","-sT")]:
             with self.subTest(address=address):
@@ -42,26 +42,26 @@ class ExtendedScopeTests(unittest.TestCase):
 
     def test_dns_is_explicit_pinned_and_all_answers_rechecked(self):
         answers = ["10.0.0.8", "2001:db8::8"]
-        policy = Policy(["lab.example"], resolver=lambda _: answers[:])
+        policy = Policy(["lab.example"], resolver=lambda _: answers[:], auto_discovery=False)
         result = policy.authorize("nmap_scan", {"target":"LAB.example"}, lambda _: True)
         self.assertEqual(result["target"], "10.0.0.8")
         self.assertEqual(policy.dns_snapshot(), {"lab.example":("10.0.0.8", "2001:db8::8")})
         answers.append("8.8.8.8")
         with self.assertRaises(PolicyError):
             policy.authorize("nmap_scan", {"target":"lab.example"}, lambda _: True)
-        policy = Policy(["10.0.0.0/8"], resolver=lambda _: ["10.0.0.8"])
+        policy = Policy(["10.0.0.0/8"], resolver=lambda _: ["10.0.0.8"], auto_discovery=False)
         with self.assertRaises(PolicyError):
             policy.authorize("nmap_scan", {"target":"unapproved.example"}, lambda _: True)
 
     def test_dns_and_scope_changes_during_approval_block_execution(self):
         answers = ["10.0.0.8"]
-        policy = Policy(["lab.example"], resolver=lambda _: answers[:])
+        policy = Policy(["lab.example"], resolver=lambda _: answers[:], auto_discovery=False)
         def change_dns(_):
             answers[:] = ["10.0.0.9"]
             return True
         with self.assertRaises(PolicyError):
             policy.authorize("nmap_scan", {"target":"lab.example"}, change_dns)
-        policy = Policy(["10.0.0.8"])
+        policy = Policy(["10.0.0.8"], auto_discovery=False)
         def change_scope(_):
             policy.replace_scope(["10.0.0.8"])
             return True
@@ -69,7 +69,7 @@ class ExtendedScopeTests(unittest.TestCase):
             policy.authorize("nmap_scan", {"target":"10.0.0.8"}, change_scope)
 
     def test_approval_cannot_mutate_execution_or_reuse_prior_approval(self):
-        policy = Policy(["10.0.0.8"])
+        policy = Policy(["10.0.0.8"], auto_discovery=False)
         def mutate(call):
             call["arguments"]["target"] = "8.8.8.8"
             return True
@@ -78,7 +78,7 @@ class ExtendedScopeTests(unittest.TestCase):
             policy.authorize("nmap_scan", {"target":"10.0.0.8"}, lambda _: False)
 
     def test_no_secondary_destination_options_shell_or_recovery(self):
-        policy = Policy(["10.0.0.8"])
+        policy = Policy(["10.0.0.8"], auto_discovery=False)
         bad = [{"target":x} for x in ["10.0.0.8;id","10.0.0.8 8.8.8.8","https://10.0.0.8","-iL","10.0.0.*"]]
         bad += [{"target":"10.0.0.8", field:value} for field,value in [
             ("additional_args","--script safe"),("additional_args","-D 8.8.8.8"),("additional_args","-oN out"),
@@ -92,21 +92,21 @@ class ExtendedScopeTests(unittest.TestCase):
     def test_nonunicast_and_malformed_scope_refused(self):
         for value in ["::","ff02::1","0.0.0.0","224.0.0.1","255.255.255.255","fe80::1%eth0","*.example","https://example.com","127.1","0x7f000001"]:
             with self.subTest(value=value), self.assertRaises(PolicyError):
-                Policy([value], resolver=lambda _: ["10.0.0.8"])
+                Policy([value], resolver=lambda _: ["10.0.0.8"], auto_discovery=False)
         for answers in ([], ["224.0.0.1"], ["10.0.0.8","::"]):
             with self.subTest(answers=answers), self.assertRaises(PolicyError):
-                Policy(["lab.example"], resolver=lambda _: answers)
+                Policy(["lab.example"], resolver=lambda _: answers, auto_discovery=False)
 
     def test_whois_disabled_and_diagnostics_preserved(self):
         with self.assertRaisesRegex(PolicyError, "(?i)(referral|registr)"):
-            Policy(["10.0.0.8"]).authorize("whois_lookup", {"target":"10.0.0.8"}, lambda _: True)
-        self.assertEqual(Policy().authorize("server_health", {}, lambda _: False), {})
+            Policy(["10.0.0.8"], auto_discovery=False).authorize("whois_lookup", {"target":"10.0.0.8"}, lambda _: True)
+        self.assertEqual(Policy(auto_discovery=False).authorize("server_health", {}, lambda _: False), {})
         with self.assertRaises(PolicyError):
-            Policy().authorize("clear_cache", {}, lambda _: False)
+            Policy(auto_discovery=False).authorize("clear_cache", {}, lambda _: False)
 
     def test_numeric_destination_from_hostname_pin_checks_current_dns(self):
         answers = ["10.0.0.8"]
-        policy = Policy(["lab.example"], resolver=lambda _: answers[:])
+        policy = Policy(["lab.example"], resolver=lambda _: answers[:], auto_discovery=False)
         def change_dns(_):
             answers[:] = ["10.0.0.9"]
             return True
@@ -118,7 +118,7 @@ class ExtendedScopeTests(unittest.TestCase):
             if name == "broken.example":
                 raise OSError("lookup failed")
             return ["10.0.0.8"]
-        policy = Policy(["lab.example"], resolver=resolve)
+        policy = Policy(["lab.example"], resolver=resolve, auto_discovery=False)
         previous = policy.snapshot(), policy.dns_snapshot(), policy.revision
         with self.assertRaises(PolicyError):
             policy.replace_scope(["8.8.8.8", "broken.example"])
@@ -136,7 +136,7 @@ class ExtendedScopeTests(unittest.TestCase):
             release.wait(0.5)
             finished.set()
             return [(2, 1, 6, "", ("10.0.0.9", 0))]
-        policy = Policy(["10.0.0.8"])
+        policy = Policy(["10.0.0.8"], auto_discovery=False)
         previous = policy.snapshot(), policy.dns_snapshot(), policy.revision
         with patch("redvector_ollama_policy.DNS_LOOKUP_TIMEOUT", 0.02, create=True), patch("redvector_ollama_policy.socket.getaddrinfo", lookup):
             started = time.monotonic()
@@ -166,7 +166,7 @@ class ExtendedScopeTests(unittest.TestCase):
             try:
                 for _ in range(2):
                     with self.assertRaises(PolicyError):
-                        Policy(["late.example"])
+                        Policy(["late.example"], auto_discovery=False)
                 self.assertEqual(len(worker_threads), 1)
                 self.assertTrue(worker_threads[0].daemon)
             finally:
@@ -174,7 +174,7 @@ class ExtendedScopeTests(unittest.TestCase):
                 self.assertTrue(finished.wait(1))
                 worker_threads[0].join(1)
                 self.assertFalse(worker_threads[0].is_alive())
-            restored = Policy(["ready.example"])
+            restored = Policy(["ready.example"], auto_discovery=False)
             self.assertEqual(restored.dns_snapshot(), {"ready.example":("10.0.0.9",)})
 
     def test_default_dns_errors_do_not_expose_resolver_exception_secrets(self):
@@ -182,7 +182,7 @@ class ExtendedScopeTests(unittest.TestCase):
         from unittest.mock import patch
         with patch("redvector_ollama_policy.socket.getaddrinfo", side_effect=OSError("secret-resolver-token")):
             try:
-                Policy(["broken.example"])
+                Policy(["broken.example"], auto_discovery=False)
             except PolicyError as error:
                 self.assertNotIn("secret-resolver-token", "".join(traceback.format_exception(error)))
             else:

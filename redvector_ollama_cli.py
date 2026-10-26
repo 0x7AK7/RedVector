@@ -37,18 +37,48 @@ async def handle_command(text,agent,wizard):
                 term.message("error","Invalid authorized target scope. "+plain(exc))
                 return "handled"
         show_scope(agent.policy,term)
+    elif command in ("/results","/raw","/export","/summary"):
+        from redvector_ollama_presentation import render_result
+        try:
+            words=argument.split()
+            if command=="/results" and words==["list"]:
+                ids=agent.results.ids()
+                term.write("\n".join(ids) if ids else "No saved tool results.")
+                return "handled"
+            if len(words)>(2 if command=="/summary" else 1):raise ValueError("Invalid command arguments.")
+            ident=words[0] if words and words[0]!="latest" else None
+            if command=="/summary":
+                page=int(words[1]) if len(words)==2 and words[1].isdecimal() else 1 if len(words)<2 else 0
+                if page<1:raise ValueError("Invalid page.")
+                # This calls evidence-only inference, never Agent.turn or execute.
+                term.message("info",await agent.summarize_saved(ident,page))
+            elif command=="/results":
+                record=agent.results.load(ident);render_result(term,record)
+                if not record.get("persisted"):term.message("warning","Evidence currently available in-session only.")
+            elif command=="/raw":
+                record=agent.results.load(ident)
+                term.write(plain(json.dumps(record["wire"],ensure_ascii=True)))
+            else:term.message("success","Exported private evidence: "+str(agent.results.export(ident)))
+        except (ValueError,OSError,KeyError,TypeError):
+            term.message("error","Saved-result command failed. Use /results list, a valid result ID and positive page number. No network scan was executed.")
     elif command=="/status":
         if argument:term.message("error","Usage: /status")
-        else:term.write(plain(json.dumps(await agent.execute("server_health",{},{ "server_health"}))))
+        else:
+            result=await agent.execute("server_health",{},{ "server_health"})
+            if not getattr(agent,"terminal",None):
+                from redvector_ollama_views import normalize
+                render_result_local=__import__("redvector_ollama_presentation").render_result
+                render_result_local(term,{"id":"diagnostic","findings":normalize("server_health",None,{},result,0)})
     elif command=="/tools":
         if not argument:term.message("info","Usage: /tools QUERY")
         else:
             matches=agent.select(argument)
-            term.write(plain(json.dumps(matches,indent=2)) if matches else "No registered tools match this query.")
+            from redvector_ollama_presentation import render_tools
+            render_tools(term,matches)
     elif command=="/help":
         term.box("OPERATOR COMMANDS",["/scope: display current scope","/scope TARGET [TARGET...]: replace scope",
             "/scope --clear: remove all targets","/tools QUERY: registered tools and execution policy",
-            "/status: real read-only health call","/back or /exit: leave the session"])
+            "/status: real read-only health call","/results [ID] or /results list: saved facts","/raw [ID]: original MCP evidence; /export [ID]: private JSON copy","/summary [ID|latest] [PAGE]: retry AI analysis without tools","/back or /exit: leave the session"])
     else:term.message("error","Unknown command. Use /help for operator commands; nothing was sent to Ollama.")
     return "handled"
 
@@ -107,3 +137,17 @@ def assessment_context(text,policy):
     if "/" in chosen:
         return True,None,"Specify one authorized host inside the network scope. A network scope does not automatically launch a subnet scan. No scan was executed."
     return True,chosen,None
+
+def operator_view(text):
+    return re.sub(r"(?i)^(?:(?:please|can you|could you|would you|will you|help me(?: to)?|i want you to|i would like you to)\s+)+","",text.strip())
+
+def saved_analysis_request(text):
+    view=operator_view(text)
+    return bool(re.match(r"(?i)^(?:summari[sz]e|(?:analy[sz]e|explain|review)\s+(?:my\s+|the\s+)?(?:saved|last|previous)|retry\s+(?:the\s+)?summary)\b",view))
+
+def automatic_context(text,target):
+    view=operator_view(text)
+    if re.search(r"(?i)\b(?:not|never|don't|without|logs?|files?|code|memory)\b",view):return False
+    if not re.match(r"(?i)^(?:scan|nmap(?:_scan)?|(?:run|execute)\s+nmap(?:_scan)?|(?:identify|find|check)\b.*\b(?:ports?|services?))\b",view):return False
+    return bool(re.search(r"(?i)\b(?:ports?|services?|tcp|network|nmap_scan)\b",view) or
+                re.search(r"(?<![A-Za-z0-9.:])"+re.escape(target or "")+r"(?![A-Za-z0-9.:])",view))

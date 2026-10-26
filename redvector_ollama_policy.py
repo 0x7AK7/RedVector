@@ -5,6 +5,7 @@ import re
 import socket
 import queue
 import threading
+import time
 
 class PolicyError(ValueError):
     pass
@@ -13,6 +14,7 @@ DIAGNOSTICS = frozenset({"server_health", "get_cache_stats"})
 REVIEWED = DIAGNOSTICS | {"nmap_scan", "clear_cache"}
 DISABLED_REASONS = {"whois_lookup": "WHOIS registry and referral destinations cannot be confined by the existing backend."}
 FIXED_NMAP_ARGS = "-n -Pn --unprivileged --max-retries 1 --host-timeout 60s"
+AUTO_NMAP_ARGS = FIXED_NMAP_ARGS + " --max-rate 50 --scan-delay 20ms --max-parallelism 8"
 
 def validate_arguments(schema, arguments):
     from jsonschema import Draft202012Validator, exceptions
@@ -106,7 +108,10 @@ def _system_resolver(name):
 
 
 class Policy:
-    def __init__(self, scope=(), resolver=None):
+    def __init__(self, scope=(), resolver=None, auto_discovery=True, clock=None):
+        self.auto_discovery=auto_discovery is True
+        self.clock=clock or time.monotonic
+        self.auto_count=0;self.last_auto=float("-inf");self.last_automatic=False
         self._resolver = resolver if resolver is not None else _system_resolver
         self._state = ((), {}, 0)
         self.replace_scope(scope)
@@ -242,15 +247,31 @@ class Policy:
         return {"target":value, "additional_args":FIXED_NMAP_ARGS, "scan_type":("-6 " if version == 6 else "") + scan,
                 "ports":ports, "use_recovery":False}
 
-    def authorize(self, name, args, approve):
+    def authorize(self, name, args, approve, allow_automatic=True):
         revision = self.revision
         original = copy.deepcopy(args)
         result = self._prepare(name, original)
+        self.last_automatic=False
         if name not in DIAGNOSTICS:
-            if not approve({"tool":name, "arguments":copy.deepcopy(result)}):
-                raise PolicyError("Operator declined this operation.")
+            count=1000
+            if name=="nmap_scan" and result["ports"]:
+                ports=set()
+                for group in result["ports"].split(","):
+                    bounds=[int(n) for n in group.split("-")]
+                    ports.update(range(bounds[0],bounds[-1]+1))
+                count=len(ports)
+            automatic=(allow_automatic is True and name=="nmap_scan" and self.auto_discovery and count<=1000
+                       and self.auto_count<5 and self.clock()-self.last_auto>=30)
+            if not automatic:
+                reason=("Intensive or unattended-limit scan; explicit approval required."
+                        if name=="nmap_scan" else "State-changing operation; explicit approval required.")
+                if not approve({"tool":name,"arguments":copy.deepcopy(result)}):
+                    raise PolicyError("Operator declined this operation.")
             if self.revision != revision:
                 raise PolicyError("Authorized scope changed during approval; request a new operation.")
             if self._prepare(name, original) != result or self.revision != revision:
                 raise PolicyError("Assessment destinations changed during approval.")
+            if automatic:
+                result["additional_args"]=AUTO_NMAP_ARGS
+                self.auto_count+=1;self.last_auto=self.clock();self.last_automatic=True
         return result

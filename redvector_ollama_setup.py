@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 from urllib.parse import urlsplit
+from redvector_ollama_results import ResultsStore
 from redvector_ollama_models import canonical_model, model_id_value, inspect_model, registry_metadata, api_capabilities
 from redvector_ollama_storage import StorageInfo, StorageError, detect_storage, filesystem_path, model_path
 from redvector_ollama_capacity import CapacityAssessment, current_identity, probe_storage, service_probe_command
@@ -34,6 +35,47 @@ INSTALL_URL = "https://ollama.com/install.sh"
 
 class SetupError(RuntimeError):
     pass
+
+class OllamaFailure(SetupError):
+    category="model-error"
+
+class OllamaTimeout(OllamaFailure):
+    category="timeout"
+
+class OllamaContextError(OllamaFailure):
+    category="context-overflow"
+
+class OllamaHTTPError(OllamaFailure):
+    category="http-error"
+
+class OllamaConnectionError(OllamaFailure):
+    category="connection-error"
+
+class OllamaProtocolError(OllamaFailure):
+    category="invalid-response"
+
+def inference_setting(name,default,low,high):
+    raw=os.environ.get(name,str(default))
+    if not raw.isdecimal() or not low<=int(raw)<=high:
+        raise SetupError(f"{name} must be an integer between {low} and {high}.")
+    return int(raw)
+
+def ollama_response(path,status,body):
+    try:data=json.loads(body)
+    except (ValueError,UnicodeError) as exc:
+        if status!=200:
+            error=OllamaHTTPError(f"Ollama {path}: HTTP {status}.");error.http_status=status
+            raise error from exc
+        raise OllamaProtocolError("Ollama returned invalid JSON.") from exc
+    error=data.get("error") if isinstance(data,dict) else None
+    if isinstance(error,str) and re.search(r"(?i)context.*(?:exceed|length|window|limit|full)|(?:exceed|too long).*context",error):
+        raise OllamaContextError("Ollama rejected the request because its context window was exceeded.")
+    if status!=200:
+        error=OllamaHTTPError(f"Ollama {path}: HTTP {status}.");error.http_status=status
+        raise error
+    if error:raise OllamaFailure("Ollama returned a model error; inspect private diagnostics.")
+    if not isinstance(data,dict):raise OllamaProtocolError("Ollama returned an invalid response object.")
+    return data
 
 class DownloadCancelled(SetupError):
     pass
@@ -89,11 +131,8 @@ class Terminal:
         value=plain(text)
         self.write(("\033["+colors.get(kind,"0")+"m"+value+"\033[0m") if self.color else value)
     def box(self,title,lines):
-        self.message("info","+"+"-"*70+"+")
-        self.message("info","| "+title)
-        self.message("info","+"+"-"*70+"+")
-        for line in lines:self.write("  "+plain(line))
-        self.message("info","+"+"-"*70+"+")
+        from redvector_ollama_panels import Panel
+        Panel(self).section(title,lines)
     def banner(self):
         from redvector_banner import render_banner
         artwork=render_banner()
@@ -140,15 +179,13 @@ class Ollama:
         try:
             with self.session.request("POST" if payload is not None else "GET",self.url+path,
                     json=payload,timeout=(3,timeout),allow_redirects=False,stream=True) as response:
-                if response.status_code!=200:raise SetupError(f"Ollama {path}: HTTP {response.status_code}.")
                 body=bytearray()
                 for chunk in response.iter_content(8192):
                     body.extend(chunk)
                     if len(body)>2_000_000:raise SetupError("Ollama response exceeded the safety limit.")
-                data=json.loads(body)
-                if not isinstance(data,dict) or data.get("error"):raise SetupError("Ollama returned an invalid response or error.")
-                return data
-        except (RequestException,ValueError) as exc:raise SetupError(f"Ollama {path} is unavailable or returned invalid JSON.") from exc
+                return ollama_response(path,response.status_code,body)
+        except __import__("requests").Timeout as exc:raise OllamaTimeout("Ollama response deadline exceeded.") from exc
+        except RequestException as exc:raise OllamaConnectionError("Ollama connection failed.") from exc
     def healthy(self):
         try:return isinstance(self.request("/api/version").get("version"),str)
         except SetupError:return False
@@ -161,17 +198,22 @@ class Ollama:
         data=self.request("/api/show",{"model":model})
         self.model_metadata[model]=data
         return data
+    def chat_timeout(self):
+        return inference_setting("REDVECTOR_OLLAMA_TIMEOUT",600,1,3600)
+    def context_limit(self):
+        return inference_setting("REDVECTOR_OLLAMA_CONTEXT",4096,1024,32768)
     def chat_payload(self,model,messages,tools):
         model=model_id(model)
         payload={"model":model,"messages":messages,"tools":tools,"stream":False,
-                 "options":{"temperature":0,"num_predict":2048}}
+                 "options":{"temperature":0,"num_ctx":self.context_limit(),
+                            "num_predict":inference_setting("REDVECTOR_OLLAMA_PREDICT",512,64,min(2048,self.context_limit()//2))}}
         thinking=self.model_metadata.get(model,{}).get("thinking",{})
         values=thinking.get("values",[]) if isinstance(thinking,dict) else []
         if any(value is False for value in values):
             payload["think"]=False
         return payload
     def chat(self,model,messages,tools):
-        data=self.request("/api/chat",self.chat_payload(model,messages,tools),timeout=300)
+        data=self.request("/api/chat",self.chat_payload(model,messages,tools),timeout=self.chat_timeout())
         message=data.get("message")
         if not isinstance(message,dict) or message.get("role")!="assistant":raise SetupError("Ollama returned an invalid assistant message.")
         return message
@@ -182,30 +224,55 @@ class Ollama:
                                          timeout=httpx.Timeout(timeout,connect=3)) as client:
                 async with client.stream("POST" if payload is not None else "GET",
                                          self.url+path,json=payload) as response:
-                    if response.status_code!=200:
-                        raise SetupError(f"Ollama {path}: HTTP {response.status_code}.")
                     body=bytearray()
                     async for chunk in response.aiter_bytes():
                         body.extend(chunk)
                         if len(body)>2_000_000:raise SetupError("Ollama response exceeded the safety limit.")
-                    data=json.loads(body)
-                    if not isinstance(data,dict) or data.get("error"):
-                        raise SetupError("Ollama returned an invalid response or error.")
-                    return data
+                    return ollama_response(path,response.status_code,body)
         try:return await asyncio.wait_for(fetch(),timeout=timeout)
-        except (httpx.HTTPError,ValueError,asyncio.TimeoutError) as exc:
-            raise SetupError(f"Ollama {path} is unavailable, timed out or returned invalid JSON.") from exc
+        except (httpx.TimeoutException,asyncio.TimeoutError) as exc:
+            error=OllamaTimeout("Ollama response deadline exceeded.")
+            error.timeout_stage=("connect" if isinstance(exc,httpx.ConnectTimeout) else
+                                 "read" if isinstance(exc,httpx.ReadTimeout) else
+                                 "write" if isinstance(exc,httpx.WriteTimeout) else
+                                 "pool" if isinstance(exc,httpx.PoolTimeout) else "total-deadline")
+            raise error from exc
+        except httpx.HTTPError as exc:
+            raise OllamaConnectionError("Ollama connection failed.") from exc
     async def async_show(self,model):
         model=model_id(model)
         data=await self.async_request("/api/show",{"model":model})
         self.model_metadata[model]=data
         return data
-    async def async_chat(self,model,messages,tools):
-        data=await self.async_request("/api/chat",self.chat_payload(model,messages,tools),timeout=300)
-        message=data.get("message")
-        if not isinstance(message,dict) or message.get("role")!="assistant":
-            raise SetupError("Ollama returned an invalid assistant message.")
-        return message
+    async def async_chat(self,model,messages,tools,response_schema=None):
+        started=time.monotonic()
+        payload=self.chat_payload(model,messages,tools)
+        if response_schema is not None:
+            if tools or not isinstance(response_schema,dict) or len(json.dumps(response_schema))>16000:
+                raise SetupError("Saved-analysis schema requires a bounded object and no tools.")
+            payload["format"]=response_schema
+        metrics={"prompt_bytes":len(json.dumps(messages,ensure_ascii=True).encode()),
+                 "context_limit":payload["options"]["num_ctx"],"response_limit":payload["options"]["num_predict"],
+                 "timeout_seconds":self.chat_timeout()}
+        try:
+            data=await self.async_request("/api/chat",payload,timeout=metrics["timeout_seconds"])
+            message=data.get("message")
+            if not isinstance(message,dict) or message.get("role")!="assistant":
+                raise OllamaProtocolError("Ollama returned an invalid assistant message.")
+            for key in ("prompt_eval_count","eval_count","total_duration","load_duration","eval_duration"):
+                if type(data.get(key)) is int:metrics[key]=data[key]
+            self.last_chat_metrics=dict(metrics,elapsed_seconds=round(time.monotonic()-started,3))
+            if data.get("done_reason")=="length":
+                error=OllamaFailure("Ollama exhausted the configured response-token limit.")
+                error.category="response-limit"
+                raise error
+            return message
+        except Exception as exc:
+            from redvector_ollama_errors import record_error
+            metrics["elapsed_seconds"]=round(time.monotonic()-started,3)
+            for key,value in metrics.items():setattr(exc,key,value)
+            record_error("Ollama inference",exc)
+            raise
     def pull(self,model):
         command=shutil.which("ollama")
         if not command:raise SetupError("The Ollama CLI is required for native download progress.")
@@ -592,12 +659,43 @@ class Wizard:
             except (SetupError,ValueError,OSError) as exc:self.term.message("error",str(exc))
             except KeyboardInterrupt:self.term.message("warning","Session cancelled. Returning to startup menu.")
 
+def saved_result_mode(args):
+    from redvector_ollama_presentation import render_result
+    from redvector_ollama_analysis import summarize
+    term=Terminal()
+    try:
+        store=ResultsStore()
+        mode=next(name for name in ("results","raw","export","summary") if getattr(args,name,None) is not None)
+        ident=getattr(args,mode)
+        if ident=="latest":ident=None
+        record=store.load(ident)
+        if mode=="results":render_result(term,record)
+        elif mode=="raw":term.write(plain(json.dumps(record["wire"],ensure_ascii=True)))
+        elif mode=="export":term.message("success","Exported private evidence: "+str(store.export(record["id"])))
+        else:
+            model=load_model()
+            if not model:raise SetupError("Choose a model first. Saved results remain available without it.")
+            api=Ollama();api.show(model)
+            result=asyncio.run(summarize(api,model,record,args.page))
+            term.message("info",result.get("text","AI summary unavailable: "+result.get("reason","unknown"))+" No network scan was executed.")
+            if result["state"]!="verified":return 1
+        return 0
+    except (SetupError,ValueError,OSError,KeyError,StopIteration):
+        term.message("error","Saved-result request could not be completed. Check result ID, private storage and local model availability. No network scan was executed.")
+        return 1
+
 def main():
     parser=argparse.ArgumentParser(description="Automatic local RedVector Ollama integration")
     parser.add_argument("--install",action="store_true")
+    saved=parser.add_mutually_exclusive_group()
+    for name in ("results","raw","export","summary"):
+        saved.add_argument("--"+name,nargs="?",const="latest")
+    parser.add_argument("--page",type=int,default=1)
     args=parser.parse_args()
     if not sys.platform.startswith("linux"):
         print("Run this installer inside Kali, Debian or Ubuntu Linux.",file=sys.stderr);return 1
+    if any(getattr(args,name) is not None for name in ("results","raw","export","summary")):
+        return saved_result_mode(args)
     try:Wizard().run(install=args.install);return 0
     except (KeyboardInterrupt,EOFError):
         print("\nCancelled safely. Existing configurations are unchanged.");return 0

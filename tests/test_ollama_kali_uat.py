@@ -157,7 +157,7 @@ class KaliAcceptance(unittest.TestCase):
             backend=listener(port)
             installer.send("1");installer.expect("Loading and verifying qwen3:8b");installer.expect("Connected: qwen3:8b",timeout=480)
             installer.expect("redvector> ");installer.send("Call server_health once and summarize the actual status and exact version in one short sentence.")
-            installer.expect("MCP RESULT:",timeout=480);installer.expect("ASSISTANT:",timeout=480)
+            installer.expect("VERIFIED TOOL RESULTS",timeout=480);installer.expect("ASSISTANT:",timeout=480)
             installer.expect("redvector> ",timeout=480)
             from ollama_terminal_driver import plain as terminal_plain
             summary=terminal_plain(installer.raw).split("ASSISTANT:")[-1]
@@ -193,7 +193,7 @@ class KaliAcceptance(unittest.TestCase):
                              "Native tool calling verified:");menu(launcher)
             launcher.send("1");launcher.expect("Connected: qwen3:8b",timeout=480)
             launcher.expect("redvector> ");launcher.send("/status")
-            launcher.expect(r'"status".*healthy',timeout=40);launcher.expect("redvector> ")
+            launcher.expect(r"result.status\s+healthy",timeout=40);launcher.expect("redvector> ")
             launcher.send("/back");menu(launcher);launcher.send("6");launcher.finish()
             self.assertEqual(listener(port),backend);self.assertEqual(listener(11434),daemon)
 
@@ -214,6 +214,44 @@ class KaliAcceptance(unittest.TestCase):
                 self.assertEqual(selected_evidence["tool"],"server_health")
                 self.assertEqual(selected_evidence["status"],"healthy")
                 (OUTPUT/"model-compatibility-native.json").write_text(json.dumps(selected_evidence,indent=2),encoding="utf8")
+                # Actual bounded discovery against only a listener owned by this test.
+                from redvector_ollama_agent import Agent
+                from redvector_ollama_policy import Policy
+                from redvector_ollama_setup import Terminal,OllamaTimeout
+                from unittest.mock import patch as mock_patch,AsyncMock
+                import io
+                with socket.socket() as listener_socket:
+                    listener_socket.bind(("127.0.0.1",0));listener_socket.listen()
+                    scan_host,scan_port=listener_socket.getsockname()
+                    async def actual_scan():
+                        async with bridge() as (session,catalog):
+                            calls=[]
+                            class ObservedSession:
+                                async def call_tool(self,name,arguments):
+                                    calls.append((name,arguments))
+                                    return await session.call_tool(name,arguments=arguments)
+                            terminal=Terminal(io.StringIO())
+                            api=ObservedOllama();await api.async_show("qwen3:8b")
+                            agent=Agent(api,"qwen3:8b",ObservedSession(),catalog,Policy([scan_host]),
+                                lambda operation:False,lambda value:None,terminal=terminal)
+                            answer=await agent.turn("Scan "+scan_host+" for open TCP port "+str(scan_port)+". Call nmap_scan exactly once.")
+                            record=agent.results.load()
+                            self.assertEqual(len(calls),1)
+                            self.assertEqual(record["findings"]["status"],"COMPLETED")
+                            self.assertIn(scan_port,[row["port"] for row in record["findings"]["ports"] if row["state"]=="open"])
+                            self.assertIn("AI verified",answer)
+                            self.assertIn(str(scan_port)+"/tcp",terminal.stream.getvalue())
+                            with mock_patch.object(api,"async_chat",AsyncMock(side_effect=OllamaTimeout("Injected summary timeout"))):
+                                unavailable=await agent.summarize_saved()
+                            self.assertIn("COMPLETED SUCCESSFULLY",unavailable)
+                            self.assertIn("timeout",unavailable)
+                            self.assertEqual(len(calls),1,"Summary retry must never repeat a network action")
+                            (OUTPUT/"scan-workflow-native.json").write_text(json.dumps({
+                                "record":agent.results.load(),"terminal":terminal.stream.getvalue(),"answer":answer,
+                                "timeout_answer":unavailable,"actual_mcp_calls":calls,"exchanges":api.exchanges,"inference_metrics":getattr(api,"last_chat_metrics",{})},indent=2),encoding="utf8")
+                            print("REAL AUTOMATIC SCAN PASS: owned loopback; bounded profile; real model/MCP/Nmap; exact formatted findings; private evidence; injected summary timeout; one network action.")
+                    asyncio.run(actual_scan())
+
             self.assertTrue(evidence["returned_real_result_to_model"])
 
             plain_env=dict(env,NO_COLOR="1")

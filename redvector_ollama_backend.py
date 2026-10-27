@@ -12,6 +12,11 @@ import time
 import psutil
 from redvector_ollama_capacity import trusted_executable
 
+# Explicit previously reviewed 8.0.0 source; all process/auth checks still apply.
+LEGACY_BACKEND_SHA256="8a685aa6501ac9ce8e33dce8d5e5e0a2a3b5e6b2bf2da1d9967e23f439edd28f"
+
+PRIOR_PROFILE_BACKEND_SHA256="f176861cc801491743f65decd43a1e0152a04ada9e576fafa761598bba490f0c"
+
 class BackendReuseError(RuntimeError):
     pass
 
@@ -99,7 +104,10 @@ def _process_proof(project,pid):
     if script.name!="redvector_server.py":
         raise BackendReuseError("Listener script is not redvector_server.py.")
     for name in ("redvector_server.py","redvector_banner.py"):
-        if _source(_script_path(script.parent/name,source_limit),source_limit)!=_source(Path(project)/name):
+        actual=_source(_script_path(script.parent/name,source_limit),source_limit)
+        expected=_source(Path(project)/name)
+        legacy=name=="redvector_server.py" and actual.hex() in {LEGACY_BACKEND_SHA256,PRIOR_PROFILE_BACKEND_SHA256}
+        if actual!=expected and not legacy:
             raise BackendReuseError("Backend source differs from this trusted version ("+name+"); compatibility is unverified.")
     # Verify the process itself owns the endpoint, not only a global PID hint.
     connections=process.net_connections(kind="tcp")

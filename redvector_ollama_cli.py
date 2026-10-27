@@ -3,7 +3,7 @@ import ipaddress
 import json
 import re
 from redvector_ollama_policy import PolicyError, target as canonical_target
-from redvector_ollama_setup import plain
+from redvector_ollama_setup import plain,SetupError
 from redvector_ollama_help import COMMANDS, render_help, unknown_message
 
 def show_scope(policy,term):
@@ -29,6 +29,18 @@ async def handle_command(text,agent,wizard):
     if route=="exit":
         if not argument:return "exit"
         term.message("error","Usage: "+command)
+    elif route=="artifact":
+        try:
+            if argument=="--clear":await agent.clear_artifact();term.message("success","Artifact selection cleared.")
+            elif argument:
+                path=argument
+                if len(path)>1 and path[0]==path[-1] and path[0] in ("'",'"'):path=path[1:-1]
+                selected=await agent.select_artifact(path)
+                term.message("success","Read-only artifact snapshot selected by the operator.")
+            value=getattr(agent,"artifact",None)
+            term.box("AUTHORIZED ARTIFACT SNAPSHOT",["Status: "+("Active" if value else "Inactive")]+
+                (["File: "+plain(value["name"]),"Bytes: "+str(value["size"]),"SHA256: "+value["sha256"],"Only this immutable snapshot is authorized; select again after local edits."] if value else ["Use /artifact PATH to select a regular file."]))
+        except (OSError,ValueError,SetupError) as exc:term.message("error","Artifact selection failed. "+plain(exc))
     elif route=="scope":
         if argument:
             values=[] if argument=="--clear" else argument.split()
@@ -77,13 +89,14 @@ async def handle_command(text,agent,wizard):
     elif route=="tools":
         if not argument:term.message("info","Usage: /tools QUERY")
         else:
+            if hasattr(agent,"refresh_profiles"):await agent.refresh_profiles()
             matches=agent.select(argument)
             from redvector_ollama_presentation import render_tools
             render_tools(term,matches)
     elif route=="help":render_help(term,argument)
     return "handled"
 
-def assessment_context(text,policy):
+def assessment_context(text,policy,allow_versions=False):
     """Return (is_assessment, chosen_target, clarification), without model calls."""
     text=text.strip()
     view=re.sub(r"(?i)^(?:(?:please|can you|could you|would you|will you|help me(?: to)?|i want you to|i would like you to)\s+)+","",text)
@@ -133,7 +146,7 @@ def assessment_context(text,policy):
     chosen=choices[0]
     if "/" in chosen:
         return True,None,"Specify one authorized host inside the network scope. A network scope does not automatically launch a subnet scan. No scan was executed."
-    if requests_active_versions(text):
+    if requests_active_versions(text) and not allow_versions:
         return True,chosen,("Target is authorized. Execution policy restriction: active service-version detection (-sV) "
                             "and scripts are disabled in this MCP client. Port-name service labels do not verify versions. "
                             "Request open TCP ports and service labels only. No scan was executed.")

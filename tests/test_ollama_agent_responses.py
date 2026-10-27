@@ -81,9 +81,11 @@ class Responses(unittest.IsolatedAsyncioTestCase):
     async def test_disabled_tool_is_explained_without_model_or_fallback(self):
         agent,_=self.agent(["192.0.2.4"])
         agent.api.async_chat.side_effect=AssertionError("Disabled tool must not be offered to model")
-        answer=await agent.turn("Run nmap_advanced_scan on my target")
-        self.assertIn("Registered but execution disabled",answer)
-        self.assertIn("No scan",answer)
+        answer=await agent.turn("Run cctv_scan on my target")
+        self.assertIn("Missing client integration: cctv_scan",answer)
+        self.assertIn("real authorized workflow test",answer)
+        self.assertIn("No operation was performed",answer)
+        agent.session.call_tool.assert_not_called()
 
     async def test_model_output_is_stored_without_application_labels(self):
         agent,_=self.agent();agent.api.async_chat.return_value={"role":"assistant","content":"Hello"}

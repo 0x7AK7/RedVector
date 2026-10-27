@@ -21,7 +21,7 @@ def render_scan(term,value,ident,width=None):
                 else:term.write(wrapped)
     border="+"+"-"*(width-2)+"+"
     line(border);line("REDVECTOR AI / NETWORK SCAN RESULTS");line(border)
-    line("Target: "+str(value["target"]));line("Tool: nmap_scan")
+    line("Target: "+str(value["target"]));line("Tool: "+str(value.get("tool","nmap_scan")))
     line("Scan type: "+str(value.get("scan_type","Not supplied")))
     line("Host status: "+value.get("host_status","Not verified"))
     line("Protocols: "+(", ".join(sorted({r["protocol"].upper() for r in value["ports"]})) or "Not reported"))
@@ -99,14 +99,12 @@ def render_tools(term,matches,width=None):
     panel=Panel(term,width);panel.section("REGISTERED MCP TOOLS / EXECUTION ELIGIBILITY")
     for item in matches:
         panel.fields([("Tool",item["name"]),("Workflow",category(item["name"])),
-                      ("Execution",item["execution"]),("Description",item.get("description",""))])
-        if item["execution"].startswith("disabled"):panel.line("Status: Blocked by client policy","warning")
+                      ("Status",item.get("status",item["execution"])),("Details",item.get("detail","")),("Description",item.get("description",""))])
     if not matches:panel.line("No registered tools match this query.","warning")
-    panel.line("Registration and presentation support do not authorize execution.","warning")
 
 def approval_panel(term,operation):
-    panel=Panel(term);panel.section("OPERATOR APPROVAL / PENDING APPROVAL",kind="warning")
+    panel=Panel(term);panel.section("ADDITIONAL OPERATOR APPROVAL REQUIRED",kind="warning")
     panel.fields([("Tool",operation.get("tool","Unknown"))])
     from redvector_ollama_views import flatten
     panel.fields(flatten(operation,"operation"))
-    panel.line("Selection is not authorization. Only APPROVE permits this exact operation.","warning")
+    panel.line("Enter APPROVE to authorize this exact operation. Enter DENY to cancel.","warning")

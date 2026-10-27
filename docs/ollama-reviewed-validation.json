@@ -1,0 +1,345 @@
+{
+  "source_sha256": {
+    "redvector_mcp.py": "8dd16d95d51131ea06243b0666b5ea13b242e0df6686e3bcea4875ee339884e0",
+    "redvector_server.py": "f636fb0a0ea812814bffe057f3982349d66dfed49bdc05d2e8e9f979fcd62b2d",
+    "redvector_reviewed_profiles.py": "9bf6f6ecf8533394aee13dde1a5d0028cdd6773d30650f16a1a9410d0f9fe910",
+    "redvector_ollama_agent.py": "4d7451844eed9e18cccdadc9adff018703e573ad252cb42b587838cc9004c0ec",
+    "redvector_ollama_policy.py": "fc4966f61ccc1193b80d0bbbeaf78459bc6db6ddd998845d1f1f9a4bf5f81363",
+    "redvector_ollama_backend.py": "ed5d25d2983966479287b9710257a738d265ae01376d82375e58ebcdefe7ba1f",
+    "redvector_ollama_profiles.py": "bc98d317b54ff99e4a6436b1dfc14a55c529f5d4e0475f77ae724336fb0cbb04",
+    "redvector_ollama_reporting.py": "23db3fcf60242f67eb874306809a8e3a72a2e57a752b7450367533c426b27182",
+    "redvector_ollama_availability.py": "44cd382bab15440e3db6f1a32e59c1dc5c2b11ced1e88c0e767195b20bae4e30",
+    "redvector_ollama_cli.py": "eecd1e483da272e8202bd014a1ecc4f65a844e2abc282ff3ebbfc185d03cbebb",
+    "redvector_ollama_presentation.py": "7485f815f41f011c22b1242cd7b5485d51841bbd56439aa0fa62eab5f2235ba2",
+    "redvector_reviewed_assessment.py": "357e5faf95e38b74e611924612403879baab064f7e4cbb20c3e75c42fbf4296a",
+    "redvector_ollama_results.py": "33791a82fbad6b851c045a7a3f689f8c60e5c7e6de668af55f71427242e8e626",
+    "tools/install_reviewed_nuclei.py": "65611381bf627ed4f1fe33d85385505525a852689dec1b52ef12ec66f13df57b",
+    "redvector_reviewed_artifacts.py": "51511c8a93deec97b62a2874f42ee69c0302b4f80f3d8f0834b3a8e24869ccfb",
+    "redvector_reviewed_runtime.py": "d65c753e007567ffe74a65931def4a0200f2279df0db81dcda394ebcc37541cc",
+    "redvector_reviewed_advisories.py": "451982ff4eb677a99c52c720edbbfdc47eabf9c8a4f209d61c810809622c17bf",
+    "redvector_ollama_artifacts.py": "522f8c56dd823c606a8172209852797d34b9284f5cf11816e68f604e2cbad7fe"
+  },
+  "tool_tests": {
+    "server_health": {
+      "status": "Passed real native MCP/backend execution (constrained workflow)",
+      "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; final native changed-path run: 42 passed, 0 failed, 0 skipped. All13 named MCP tools executed through real backend paths. This regression uses a model boundary double; separate installed-model acceptance is reported independently."
+    },
+    "get_cache_stats": {
+      "status": "Passed real native MCP/backend execution (constrained workflow)",
+      "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; final native changed-path run: 42 passed, 0 failed, 0 skipped. All13 named MCP tools executed through real backend paths. This regression uses a model boundary double; separate installed-model acceptance is reported independently."
+    },
+    "get_telemetry": {
+      "status": "Passed real native MCP/backend execution (constrained workflow)",
+      "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; final native changed-path run: 42 passed, 0 failed, 0 skipped. All13 named MCP tools executed through real backend paths. This regression uses a model boundary double; separate installed-model acceptance is reported independently."
+    },
+    "error_handling_statistics": {
+      "status": "Passed real native MCP/backend execution (constrained workflow)",
+      "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; final native changed-path run: 42 passed, 0 failed, 0 skipped. All13 named MCP tools executed through real backend paths. This regression uses a model boundary double; separate installed-model acceptance is reported independently."
+    },
+    "clear_cache": {
+      "status": "Passed real native MCP/backend execution (constrained workflow)",
+      "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; final native changed-path run: 42 passed, 0 failed, 0 skipped. All13 named MCP tools executed through real backend paths. This regression uses a model boundary double; separate installed-model acceptance is reported independently."
+    },
+    "nmap_scan": {
+      "status": "Passed real native MCP/backend execution (constrained workflow)",
+      "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; final native changed-path run: 42 passed, 0 failed, 0 skipped. All13 named MCP tools executed through real backend paths. This regression uses a model boundary double; separate installed-model acceptance is reported independently."
+    },
+    "create_scan_summary": {
+      "status": "Passed real native MCP/backend execution (constrained workflow)",
+      "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; final native changed-path run: 42 passed, 0 failed, 0 skipped. All13 named MCP tools executed through real backend paths. This regression uses a model boundary double; separate installed-model acceptance is reported independently."
+    },
+    "create_vulnerability_report": {
+      "status": "Passed real native MCP/backend execution (constrained workflow)",
+      "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; final native changed-path run: 42 passed, 0 failed, 0 skipped. All13 named MCP tools executed through real backend paths. This regression uses a model boundary double; separate installed-model acceptance is reported independently."
+    },
+    "format_tool_output_visual": {
+      "status": "Passed real native MCP/backend execution (constrained workflow)",
+      "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; final native changed-path run: 42 passed, 0 failed, 0 skipped. All13 named MCP tools executed through real backend paths. This regression uses a model boundary double; separate installed-model acceptance is reported independently."
+    },
+    "nmap_advanced_scan": {
+      "status": "Passed real native MCP/backend execution (constrained workflow)",
+      "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; final native changed-path run: 42 passed, 0 failed, 0 skipped. All13 named MCP tools executed through real backend paths. This regression uses a model boundary double; separate installed-model acceptance is reported independently."
+    },
+    "http_framework_test": {
+      "status": "Passed real native MCP/backend execution (constrained workflow)",
+      "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; final native changed-path run: 42 passed, 0 failed, 0 skipped. All13 named MCP tools executed through real backend paths. This regression uses a model boundary double; separate installed-model acceptance is reported independently."
+    },
+    "http_repeater": {
+      "status": "Passed real native MCP/backend execution (constrained workflow)",
+      "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; final native changed-path run: 42 passed, 0 failed, 0 skipped. All13 named MCP tools executed through real backend paths. This regression uses a model boundary double; separate installed-model acceptance is reported independently."
+    },
+    "nuclei_scan": {
+      "status": "Passed real native MCP/backend execution (constrained workflow)",
+      "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; final native changed-path run: 42 passed, 0 failed, 0 skipped. All13 named MCP tools executed through real backend paths. This regression uses a model boundary double; separate installed-model acceptance is reported independently."
+    },
+    "strings_extract": {
+      "status": "Passed real native MCP/backend execution (operator-selected artifact profile)",
+      "evidence": "tests/test_ollama_artifact_live.py::test_real_selected_artifact_mcp_workflows and tests/test_reviewed_artifact_sandbox_live.py (3 sandbox tests). Real MCP bridge (328 catalog); operator /artifact SHA256 snapshot; native GNU strings / Python bounded-hex executed in a minimal read-only Bubblewrap filesystem and isolated network namespace. Asserted: owned marker/ELF magic/NX=Enabled/RELRO=Full, bytes==snapshot SHA, original file unchanged, cleared selection refused, read-only input and excessive-output-is-failure. Adapter real-execution run (REDVECTOR_RUN_SMOKE=1, REDVECTOR_RUN_PUBLIC_ADVISORY=1): 13 passed, 0 failed, 0 skipped in 205.73s. Native core regression: 527 passed, 0 failed, 6 skipped. Windows regression: 492 passed, 0 failed, 43 skipped."
+    },
+    "xxd_hexdump": {
+      "status": "Passed real native MCP/backend execution (operator-selected artifact profile)",
+      "evidence": "tests/test_ollama_artifact_live.py::test_real_selected_artifact_mcp_workflows and tests/test_reviewed_artifact_sandbox_live.py (3 sandbox tests). Real MCP bridge (328 catalog); operator /artifact SHA256 snapshot; native Python bounded-hex / Python bounded-hex executed in a minimal read-only Bubblewrap filesystem and isolated network namespace. Asserted: owned marker/ELF magic/NX=Enabled/RELRO=Full, bytes==snapshot SHA, original file unchanged, cleared selection refused, read-only input and excessive-output-is-failure. Adapter real-execution run (REDVECTOR_RUN_SMOKE=1, REDVECTOR_RUN_PUBLIC_ADVISORY=1): 13 passed, 0 failed, 0 skipped in 205.73s. Native core regression: 527 passed, 0 failed, 6 skipped. Windows regression: 492 passed, 0 failed, 43 skipped."
+    },
+    "objdump_analyze": {
+      "status": "Passed real native MCP/backend execution (operator-selected artifact profile)",
+      "evidence": "tests/test_ollama_artifact_live.py::test_real_selected_artifact_mcp_workflows and tests/test_reviewed_artifact_sandbox_live.py (3 sandbox tests). Real MCP bridge (328 catalog); operator /artifact SHA256 snapshot; native GNU objdump / Python bounded-hex executed in a minimal read-only Bubblewrap filesystem and isolated network namespace. Asserted: owned marker/ELF magic/NX=Enabled/RELRO=Full, bytes==snapshot SHA, original file unchanged, cleared selection refused, read-only input and excessive-output-is-failure. Adapter real-execution run (REDVECTOR_RUN_SMOKE=1, REDVECTOR_RUN_PUBLIC_ADVISORY=1): 13 passed, 0 failed, 0 skipped in 205.73s. Native core regression: 527 passed, 0 failed, 6 skipped. Windows regression: 492 passed, 0 failed, 43 skipped."
+    },
+    "checksec_analyze": {
+      "status": "Passed real native MCP/backend execution (operator-selected artifact profile)",
+      "evidence": "tests/test_ollama_artifact_live.py::test_real_selected_artifact_mcp_workflows and tests/test_reviewed_artifact_sandbox_live.py (3 sandbox tests). Real MCP bridge (328 catalog); operator /artifact SHA256 snapshot; native GNU readelf / Python bounded-hex executed in a minimal read-only Bubblewrap filesystem and isolated network namespace. Asserted: owned marker/ELF magic/NX=Enabled/RELRO=Full, bytes==snapshot SHA, original file unchanged, cleared selection refused, read-only input and excessive-output-is-failure. Adapter real-execution run (REDVECTOR_RUN_SMOKE=1, REDVECTOR_RUN_PUBLIC_ADVISORY=1): 13 passed, 0 failed, 0 skipped in 205.73s. Native core regression: 527 passed, 0 failed, 6 skipped. Windows regression: 492 passed, 0 failed, 43 skipped."
+    },
+    "list_active_processes": {
+      "status": "Passed real native MCP/backend execution (sanitized read-only runtime profile)",
+      "evidence": "tests/test_ollama_runtime_live.py::test_real_managed_job_runtime_mcp. Real backend ProcessManager + MCP bridge (328 catalog); an owned FIFO reader registered via /api/command was discovered by list_active_processes and queried through get_process_dashboard/get_live_dashboard/display_system_metrics (actual psutil metrics; command arguments and output excluded) and get_process_status (matched pid; unknown PID 2147483647 refused). No job mutation enabled. Adapter real-execution run (REDVECTOR_RUN_SMOKE=1, REDVECTOR_RUN_PUBLIC_ADVISORY=1): 13 passed, 0 failed, 0 skipped in 205.73s. Native core regression: 527 passed, 0 failed, 6 skipped. Windows regression: 492 passed, 0 failed, 43 skipped."
+    },
+    "get_process_dashboard": {
+      "status": "Passed real native MCP/backend execution (sanitized read-only runtime profile)",
+      "evidence": "tests/test_ollama_runtime_live.py::test_real_managed_job_runtime_mcp. Real backend ProcessManager + MCP bridge (328 catalog); an owned FIFO reader registered via /api/command was discovered by list_active_processes and queried through get_process_dashboard/get_live_dashboard/display_system_metrics (actual psutil metrics; command arguments and output excluded) and get_process_status (matched pid; unknown PID 2147483647 refused). No job mutation enabled. Adapter real-execution run (REDVECTOR_RUN_SMOKE=1, REDVECTOR_RUN_PUBLIC_ADVISORY=1): 13 passed, 0 failed, 0 skipped in 205.73s. Native core regression: 527 passed, 0 failed, 6 skipped. Windows regression: 492 passed, 0 failed, 43 skipped."
+    },
+    "get_live_dashboard": {
+      "status": "Passed real native MCP/backend execution (sanitized read-only runtime profile)",
+      "evidence": "tests/test_ollama_runtime_live.py::test_real_managed_job_runtime_mcp. Real backend ProcessManager + MCP bridge (328 catalog); an owned FIFO reader registered via /api/command was discovered by list_active_processes and queried through get_process_dashboard/get_live_dashboard/display_system_metrics (actual psutil metrics; command arguments and output excluded) and get_process_status (matched pid; unknown PID 2147483647 refused). No job mutation enabled. Adapter real-execution run (REDVECTOR_RUN_SMOKE=1, REDVECTOR_RUN_PUBLIC_ADVISORY=1): 13 passed, 0 failed, 0 skipped in 205.73s. Native core regression: 527 passed, 0 failed, 6 skipped. Windows regression: 492 passed, 0 failed, 43 skipped."
+    },
+    "get_process_status": {
+      "status": "Passed real native MCP/backend execution (sanitized read-only runtime profile)",
+      "evidence": "tests/test_ollama_runtime_live.py::test_real_managed_job_runtime_mcp. Real backend ProcessManager + MCP bridge (328 catalog); an owned FIFO reader registered via /api/command was discovered by list_active_processes and queried through get_process_dashboard/get_live_dashboard/display_system_metrics (actual psutil metrics; command arguments and output excluded) and get_process_status (matched pid; unknown PID 2147483647 refused). No job mutation enabled. Adapter real-execution run (REDVECTOR_RUN_SMOKE=1, REDVECTOR_RUN_PUBLIC_ADVISORY=1): 13 passed, 0 failed, 0 skipped in 205.73s. Native core regression: 527 passed, 0 failed, 6 skipped. Windows regression: 492 passed, 0 failed, 43 skipped."
+    },
+    "display_system_metrics": {
+      "status": "Passed real native MCP/backend execution (sanitized read-only runtime profile)",
+      "evidence": "tests/test_ollama_runtime_live.py::test_real_managed_job_runtime_mcp. Real backend ProcessManager + MCP bridge (328 catalog); an owned FIFO reader registered via /api/command was discovered by list_active_processes and queried through get_process_dashboard/get_live_dashboard/display_system_metrics (actual psutil metrics; command arguments and output excluded) and get_process_status (matched pid; unknown PID 2147483647 refused). No job mutation enabled. Adapter real-execution run (REDVECTOR_RUN_SMOKE=1, REDVECTOR_RUN_PUBLIC_ADVISORY=1): 13 passed, 0 failed, 0 skipped in 205.73s. Native core regression: 527 passed, 0 failed, 6 skipped. Windows regression: 492 passed, 0 failed, 43 skipped."
+    },
+    "monitor_cve_feeds": {
+      "status": "Passed real native MCP/backend execution (fixed NVD advisory provider)",
+      "evidence": "tests/test_ollama_advisory_live.py::test_real_public_advisory_mcp with REDVECTOR_RUN_PUBLIC_ADVISORY=1. Real NVD CVE API 2.0 retrieval through the named MCP tool; asserted provider==NVD, 64-char provider_payload_sha256, integer provider_total_results, sampled_records<=100; keyword/severity filters local, no target or credential data transmitted. Adapter real-execution run (REDVECTOR_RUN_SMOKE=1, REDVECTOR_RUN_PUBLIC_ADVISORY=1): 13 passed, 0 failed, 0 skipped in 205.73s. Native core regression: 527 passed, 0 failed, 6 skipped. Windows regression: 492 passed, 0 failed, 43 skipped."
+    },
+    "httpx_probe": {
+      "status": "Passed real native MCP/backend execution (confined passive HTTP-response assessment)",
+      "evidence": "Real MCP bridge (328 catalog) -> backend /api/tools route interception -> reviewed passive root-response collector, against one owned loopback web service. The reserved marker rides in the existing additional_args field; no MCP signature changed. Asserted actual observed evidence (status/title/server/X-Powered-By, WAF header signatures, missing security headers and cookie flags, passive response signatures) and one confined GET per call. This is confined passive assessment, NOT full native HTTP prober execution; no external httpx binary is run. Full-bridge MCP live test tests/test_ollama_http_assessment_live.py::test_real_http_assessment_mcp_workflows plus 9 unit tests tests/test_reviewed_http_assessment.py. Windows regression: 501 passed, 0 failed, 44 skipped. Native Kali core regression: 537 passed, 0 failed, 6 skipped."
+    },
+    "nikto_scan": {
+      "status": "Passed real native MCP/backend execution (confined passive HTTP-response assessment)",
+      "evidence": "Real MCP bridge (328 catalog) -> backend /api/tools route interception -> reviewed passive root-response collector, against one owned loopback web service. The reserved marker rides in the existing additional_args field; no MCP signature changed. Asserted actual observed evidence (status/title/server/X-Powered-By, WAF header signatures, missing security headers and cookie flags, passive response signatures) and one confined GET per call. This is confined passive assessment, NOT full native web server misconfiguration scanner execution; no external nikto binary is run. Full-bridge MCP live test tests/test_ollama_http_assessment_live.py::test_real_http_assessment_mcp_workflows plus 9 unit tests tests/test_reviewed_http_assessment.py. Windows regression: 501 passed, 0 failed, 44 skipped. Native Kali core regression: 537 passed, 0 failed, 6 skipped."
+    },
+    "wafw00f_scan": {
+      "status": "Passed real native MCP/backend execution (confined passive HTTP-response assessment)",
+      "evidence": "Real MCP bridge (328 catalog) -> backend /api/tools route interception -> reviewed passive root-response collector, against one owned loopback web service. The reserved marker rides in the existing additional_args field; no MCP signature changed. Asserted actual observed evidence (status/title/server/X-Powered-By, WAF header signatures, missing security headers and cookie flags, passive response signatures) and one confined GET per call. This is confined passive assessment, NOT full native WAF fingerprinter execution; no external wafw00f binary is run. Full-bridge MCP live test tests/test_ollama_http_assessment_live.py::test_real_http_assessment_mcp_workflows plus 9 unit tests tests/test_reviewed_http_assessment.py. Windows regression: 501 passed, 0 failed, 44 skipped. Native Kali core regression: 537 passed, 0 failed, 6 skipped."
+    },
+    "jaeles_vulnerability_scan": {
+      "status": "Passed real native MCP/backend execution (confined passive HTTP-response assessment)",
+      "evidence": "Real MCP bridge (328 catalog) -> backend /api/tools route interception -> reviewed passive root-response collector, against one owned loopback web service. The reserved marker rides in the existing additional_args field; no MCP signature changed. Asserted actual observed evidence (status/title/server/X-Powered-By, WAF header signatures, missing security headers and cookie flags, passive response signatures) and one confined GET per call. This is confined passive assessment, NOT full native signature vulnerability scanner execution; no external jaeles binary is run. Full-bridge MCP live test tests/test_ollama_http_assessment_live.py::test_real_http_assessment_mcp_workflows plus 9 unit tests tests/test_reviewed_http_assessment.py. Windows regression: 501 passed, 0 failed, 44 skipped. Native Kali core regression: 537 passed, 0 failed, 6 skipped."
+    },
+    "masscan_high_speed": {
+      "status": "Passed real native MCP/backend execution (reviewed bounded TCP connect engine; not native Masscan)",
+      "evidence": "Real MCP bridge (328 catalog) -> backend /api/tools route interception -> RedVector reviewed bounded TCP connect engine, against an owned loopback listener and a closed loopback port. SCAN_PROFILE reached Ready through genuine backend capability attestation (server_health -> attest() against the running backend source), NOT injected test state. Asserted real open/closed classification, requested_tool, engine=redvector-reviewed-tcp-connect and scanner.mode stating native masscan/rustscan are not executed. Bounds enforced: 1..128 explicit ports, <=64 concurrent connections, 1s per-connect timeout, 20s overall deadline, scope-pinned numeric target. Neither Masscan is installed on this host; no external scanner binary is run. Full-bridge MCP live test tests/test_ollama_tcp_scan_live.py::test_real_tcp_discovery_mcp_workflows plus 6 unit tests tests/test_reviewed_tcp_scan.py. Windows regression: 507 passed, 0 failed, 45 skipped. Native Kali core regression: 544 passed, 0 failed, 6 skipped."
+    },
+    "rustscan_fast_scan": {
+      "status": "Passed real native MCP/backend execution (reviewed bounded TCP connect engine; not native RustScan)",
+      "evidence": "Real MCP bridge (328 catalog) -> backend /api/tools route interception -> RedVector reviewed bounded TCP connect engine, against an owned loopback listener and a closed loopback port. SCAN_PROFILE reached Ready through genuine backend capability attestation (server_health -> attest() against the running backend source), NOT injected test state. Asserted real open/closed classification, requested_tool, engine=redvector-reviewed-tcp-connect and scanner.mode stating native masscan/rustscan are not executed. Bounds enforced: 1..128 explicit ports, <=64 concurrent connections, 1s per-connect timeout, 20s overall deadline, scope-pinned numeric target. Neither RustScan is installed on this host; no external scanner binary is run. Full-bridge MCP live test tests/test_ollama_tcp_scan_live.py::test_real_tcp_discovery_mcp_workflows plus 6 unit tests tests/test_reviewed_tcp_scan.py. Windows regression: 507 passed, 0 failed, 45 skipped. Native Kali core regression: 544 passed, 0 failed, 6 skipped."
+    }
+  },
+  "test_runs": {
+    "windows_full": {
+      "passed": 466,
+      "failed": 0,
+      "skipped": 35,
+      "subtests_passed": 129
+    },
+    "native_full_before_review_corrections": {
+      "passed": 486,
+      "failed": 0,
+      "skipped": 4,
+      "subtests_passed": 136
+    },
+    "native_post_review": {
+      "passed": 42,
+      "failed": 0,
+      "skipped": 0
+    },
+    "windows_final_client_presentation": {
+      "passed": 47,
+      "failed": 0,
+      "skipped": 0
+    },
+    "native_final_client_presentation": {
+      "passed": 47,
+      "failed": 0,
+      "skipped": 0
+    },
+    "windows_final_capability_errors": {
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0
+    },
+    "native_final_capability_errors": {
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0
+    },
+    "final_real_model": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "model": "qwen3:8b",
+      "seconds": 201.58,
+      "test": "tests/test_ollama_assessment_model_live.py::test_real_model_selects_and_interprets_assessment"
+    },
+    "windows_full_v8": {
+      "passed": 492,
+      "failed": 0,
+      "skipped": 43,
+      "subtests_passed": 129,
+      "command": ".ollama-test-env/Scripts/python.exe -m pytest -q -rs"
+    },
+    "native_core_v8": {
+      "passed": 527,
+      "failed": 0,
+      "skipped": 6,
+      "subtests_passed": 136,
+      "seconds": 433.15,
+      "command": "REDVECTOR_RUN_SMOKE=1 .ollama-linux-env/bin/python3.13 -m pytest -q -rs --ignore=tests/test_ollama_kali_uat.py --ignore=tests/test_ollama_unified_live.py",
+      "note": "Excludes the heavy legacy Kali UAT and unified real-model terminal UAT; 6 skips are opt-in public-advisory, opt-in installed-model, two native PTY help, Windows DACL semantics and shared-model live."
+    },
+    "adapter_real_execution_v8": {
+      "passed": 13,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 205.73,
+      "note": "artifact (1 MCP + 3 sandbox), runtime (1 MCP), nuclei/ports/profiles/banner live, advisory against the real NVD endpoint."
+    },
+    "windows_full_v8_http": {
+      "passed": 501,
+      "failed": 0,
+      "skipped": 44,
+      "subtests_passed": 129,
+      "command": ".ollama-test-env/Scripts/python.exe -m pytest -q -rs"
+    },
+    "native_core_v8_http": {
+      "passed": 537,
+      "failed": 0,
+      "skipped": 6,
+      "subtests_passed": 136,
+      "seconds": 465.43,
+      "command": "REDVECTOR_RUN_SMOKE=1 .ollama-linux-env/bin/python3.13 -m pytest -q -rs --ignore=tests/test_ollama_kali_uat.py --ignore=tests/test_ollama_unified_live.py"
+    },
+    "http_assessment_real_execution_v8": {
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "note": "1 full-bridge MCP live test (all four tools against an owned loopback service) + 9 unit tests (analyzers, marker gating, policy pinning)."
+    },
+    "windows_full_v8_scan": {
+      "passed": 507,
+      "failed": 0,
+      "skipped": 45,
+      "subtests_passed": 129,
+      "command": ".ollama-test-env/Scripts/python.exe -m pytest -q -rs"
+    },
+    "native_core_v8_scan": {
+      "passed": 544,
+      "failed": 0,
+      "skipped": 6,
+      "subtests_passed": 136,
+      "seconds": 528.12,
+      "command": "REDVECTOR_RUN_SMOKE=1 .ollama-linux-env/bin/python3.13 -m pytest -q -rs --ignore=tests/test_ollama_kali_uat.py --ignore=tests/test_ollama_unified_live.py"
+    },
+    "tcp_scan_real_execution_v8": {
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "note": "1 full-bridge MCP live test (both tools vs owned loopback open/closed) + 6 unit tests (real connect classification, marker gating, policy bounds, capability gating)."
+    }
+  },
+  "limits": [
+    "29 independently verified constrained tool workflows (prior 27 + bounded TCP discovery x2); full functional coverage of 328 tools remains incomplete.",
+    "Bounded TCP discovery (masscan_high_speed/rustscan_fast_scan) uses RedVector's own bounded Python TCP connect() engine, NOT native Masscan or RustScan (neither is installed and no external scanner binary is executed). Limits: 1..128 explicit ports, <=64 concurrent connections, 1s per-connect timeout, 20s deadline, scope-pinned numeric target; no raw sockets, UDP, OS detection, banners or high-speed/internet-scale rates.",
+    "Confined HTTP assessment (httpx_probe/nikto_scan/wafw00f_scan/jaeles_vulnerability_scan) performs ONE pinned, TLS-verified, no-redirect root GET and reports only observed response evidence; not full native httpx/Nikto/Wafw00f/Jaeles and runs no external scanner binary.",
+    "Nuclei covers two passive root-response header checks; no arbitrary CVE/active templates.",
+    "Nmap active service profile covers SSH/HTTP/FTP/SMTP/POP3/IMAP/MySQL greeting evidence, up to 128 explicit ports; NSE/UDP/OS detection and stealth timing remain outside it.",
+    "Artifact profile: operator-selected regular files only (1 byte..4 MiB), bounded output/time; strings/objdump/readelf facts and Python hex only.",
+    "Runtime profile is read-only; pause/resume/terminate_process and delete_file keep working legacy Flask routes but are intentionally NOT enabled through the reviewed adapters and remain high-impact restricted.",
+    "Advisory profile samples anonymous NVD publications (1..168h, <=100 records); not global threat trends, exploitability or target applicability.",
+    "Real-model Ollama acceptance was not rerun this pass; no operator model was configured in this environment (test_ollama_assessment_model_live skipped). The final_real_model record predates the current source re-freeze.",
+    "All assessment/scan traffic was to test-owned loopback listeners except the advisory test, which read the official public NVD endpoint. Existing backends were not stopped/reconfigured."
+  ],
+  "previous_checkpoint": {
+    "source_sha256": {
+      "redvector_mcp.py": "a1dbddca19e216f4f5393d5c774784aadea9494795be4e9f95d3c85508377bd1",
+      "redvector_server.py": "ff942ab735abf0f7f933f30eaa30e1b36a7f461f308936d04d03d922abf44d86",
+      "redvector_reviewed_profiles.py": "2941e58d569fcff25528709cb698d64bb6fca827a7fb42b9163d1bca88faeed1",
+      "redvector_ollama_agent.py": "874874c87c1a2c437081d14302e2c4a21ef0ce785b425e1d03213227cd5353c0",
+      "redvector_ollama_policy.py": "72439eeb7a1f01f4ca861de9fc01a43685e116e2da57efdd32949bae2473009d",
+      "redvector_ollama_backend.py": "2ae69835a588b32c6c392f0ca3c3ecf2e4113b8bfe34f5907ebe5d4f05efaf2c",
+      "redvector_ollama_profiles.py": "0cf54edabf8c39f1f5b1cc4e03ad8b393c3abfd400fcee118873efc332dc5e25",
+      "redvector_ollama_reporting.py": "23db3fcf60242f67eb874306809a8e3a72a2e57a752b7450367533c426b27182",
+      "redvector_ollama_availability.py": "c355dce7633c468fdc2868998c65176e166829df3b61f6dfb062b59ffec45a86",
+      "redvector_ollama_cli.py": "0c4cdcff78349df23cd4a80815d2c8e4c1f7ed147b97290ed7c7d6bf04307ddb",
+      "redvector_ollama_presentation.py": "86ad8be1650374f7ea326d7c420f8eb4479c949c7bc0e53dadf7ccce0d1c69c8"
+    },
+    "tool_tests": {
+      "server_health": {
+        "status": "Passed real native MCP/backend execution (constrained workflow)",
+        "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; native final targeted run: 13 passed, 0 failed, 0 skipped. Model boundary is a test double; actual MCP, HTTP backend and scanner are real."
+      },
+      "get_cache_stats": {
+        "status": "Passed real native MCP/backend execution (constrained workflow)",
+        "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; native final targeted run: 13 passed, 0 failed, 0 skipped. Model boundary is a test double; actual MCP, HTTP backend and scanner are real."
+      },
+      "get_telemetry": {
+        "status": "Passed real native MCP/backend execution (constrained workflow)",
+        "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; native final targeted run: 13 passed, 0 failed, 0 skipped. Model boundary is a test double; actual MCP, HTTP backend and scanner are real."
+      },
+      "error_handling_statistics": {
+        "status": "Passed real native MCP/backend execution (constrained workflow)",
+        "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; native final targeted run: 13 passed, 0 failed, 0 skipped. Model boundary is a test double; actual MCP, HTTP backend and scanner are real."
+      },
+      "clear_cache": {
+        "status": "Passed real native MCP/backend execution (constrained workflow)",
+        "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; native final targeted run: 13 passed, 0 failed, 0 skipped. Model boundary is a test double; actual MCP, HTTP backend and scanner are real."
+      },
+      "nmap_scan": {
+        "status": "Passed real native MCP/backend execution (constrained workflow)",
+        "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; native final targeted run: 13 passed, 0 failed, 0 skipped. Model boundary is a test double; actual MCP, HTTP backend and scanner are real."
+      },
+      "create_scan_summary": {
+        "status": "Passed real native MCP/backend execution (constrained workflow)",
+        "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; native final targeted run: 13 passed, 0 failed, 0 skipped. Model boundary is a test double; actual MCP, HTTP backend and scanner are real."
+      },
+      "create_vulnerability_report": {
+        "status": "Passed real native MCP/backend execution (constrained workflow)",
+        "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; native final targeted run: 13 passed, 0 failed, 0 skipped. Model boundary is a test double; actual MCP, HTTP backend and scanner are real."
+      },
+      "format_tool_output_visual": {
+        "status": "Passed real native MCP/backend execution (constrained workflow)",
+        "evidence": "tests/test_ollama_nmap_live.py::NativeNmap::test_authorized_request_runs_real_nmap_only_against_owned_listener; native final targeted run: 13 passed, 0 failed, 0 skipped. Model boundary is a test double; actual MCP, HTTP backend and scanner are real."
+      }
+    },
+    "limits": [
+      "No real-model Ollama inference was rerun in this pass.",
+      "Full 328-tool execution coverage remains incomplete.",
+      "Service-version profile recognizes HTTP/SSH only, at most 32 explicit TCP ports.",
+      "All scanner connections were to test-owned loopback listeners. Existing backends were not stopped or reconfigured."
+    ]
+  },
+  "confirmed_corrections": [
+    "Nuclei preserves original authorized Host/TLS authority while connecting only to numeric pins.",
+    "Explicit no-version advanced Nmap requests are refused, not upgraded to active probing.",
+    "Advanced scan start/progress/result attribution uses actual tool name.",
+    "Chunked response body decoding cannot cause false-clean passive header assessment; canonical header-only input and actual header/result parity are enforced.",
+    "A source change during inference invalidates backend profile attestation; HTTP/Nuclei capabilities retain the exact refusal cause.",
+    "capabilities() in redvector_reviewed_artifacts.py isolated a per-tool runtime ProfileError (e.g. non-administrator-owned parser runtime) to that one capability instead of aborting the whole listing; the untrusted-parser isolation RED test is now GREEN.",
+    "Four confined HTTP assessment tools (httpx_probe, nikto_scan, wafw00f_scan, jaeles_vulnerability_scan) were wired through the existing reviewed root-response collector with a reserved additional_args marker (fail-closed on legacy backends); MCP signatures are unchanged and the reviewed allowlist guard test still enforces exact membership.",
+    "Profile attestation allowlist did not register redvector-tcp-connect-v1, so SCAN_PROFILE was dropped by attest() and never became Ready; added it to the assessment-module attestation set (same source-integrity gate), and the full-bridge TCP discovery MCP test now passes."
+  ],
+  "real_model_verification": {
+    "source": "actual installed Ollama model",
+    "tool": "nuclei_scan",
+    "assertions": [
+      "Structured native tool selection",
+      "Actual MCP/backend/Nuclei execution",
+      "Two exact source finding IDs returned",
+      "Informational severity and exploitability-not-assessed copied correctly",
+      "All328 tools discovered",
+      "Existing model manifests unchanged; no model download"
+    ]
+  }
+}

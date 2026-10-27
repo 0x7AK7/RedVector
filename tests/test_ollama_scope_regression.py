@@ -87,15 +87,18 @@ async def _session(tmp_path):
         denied=await agent.turn("Scan 192.0.2.99 for ports")
         assert "scope" in denied.lower()
         restricted=await agent.turn(REPORTED)
-        assert "execution policy" in restricted.lower()
+        assert "service-version execution unavailable" in restricted.lower()
+        assert "scope" not in restricted.lower()
         await handle_command("/help scope",agent,wizard)
         answer=await agent.turn("Scan "+LAB+" for open TCP ports and identify services running on them.")
         assert "COMPLETED" in answer
         assert agent.policy is trusted and policy.snapshot()==(LAB,)
         ticks[0]+=31
-    assert session.call_tool.await_count==2
+    scans=[call for call in session.call_tool.call_args_list if call.args[0]=="nmap_scan"]
+    health=[call for call in session.call_tool.call_args_list if call.args[0]=="server_health"]
+    assert len(scans)==2 and len(health)==2
     assert policy.auto_count==2
-    assert all(call.kwargs["arguments"]["target"]==LAB for call in session.call_tool.call_args_list)
+    assert all(call.kwargs["arguments"]["target"]==LAB for call in scans)
 
 @pytest.mark.parametrize("suffix",[
     "for open TCP ports: 22, 80 and 443",

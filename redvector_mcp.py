@@ -447,7 +447,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
         logger.info(f"{RedVectorColors.BLOOD_RED}🔬 Starting Nuclei vulnerability scan: {target}{RedVectorColors.RESET}")
 
         # Use enhanced error handling by default
-        data["use_recovery"] = True
+        data["use_recovery"] = template != "--redvector-profile=http-headers-v1"
         result = redvector_client.safe_post("api/tools/nuclei", data)
 
         if result.get("success"):
@@ -3720,6 +3720,14 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             logger.info(f"✅ Server is healthy - {result.get('total_tools_available', 0)} tools available")
         else:
             logger.warning(f"⚠️  Server health check returned: {result.get('status', 'unknown')}")
+        if os.environ.get("REDVECTOR_OLLAMA_SESSION")=="1" and result.get("status")=="healthy":
+            metadata=redvector_client.safe_get("api/ollama/profiles")
+            if isinstance(metadata,dict) and isinstance(metadata.get("profiles"),dict):
+                result["reviewed_capabilities"]=metadata
+            else:
+                details=redvector_client.safe_get("health/details")
+                result["reviewed_capabilities"]={"profiles":{},"tools_status":details.get("tools_status",{}) if isinstance(details,dict) else {},
+                                                "detail":"Backend has no verified reviewed-profile endpoint; legacy discovery remains available."}
         return result
 
     @mcp.tool()
@@ -3778,6 +3786,9 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
         Returns:
             List of active processes with their status and progress
         """
+        if os.environ.get("REDVECTOR_OLLAMA_SESSION")=="1":
+            return redvector_client.safe_get("api/ollama/runtime")
+
         logger.info("📊 Listing active processes")
         result = redvector_client.safe_get("api/processes/list")
         if result.get("success"):
@@ -3797,6 +3808,9 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
         Returns:
             Process status information including progress and runtime
         """
+        if os.environ.get("REDVECTOR_OLLAMA_SESSION")=="1":
+            return redvector_client.safe_get(f"api/ollama/runtime?pid={pid}")
+
         logger.info(f"🔍 Checking status of process {pid}")
         result = redvector_client.safe_get(f"api/processes/status/{pid}")
         if result.get("success"):
@@ -3870,6 +3884,9 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
         Returns:
             Real-time dashboard with progress bars, system metrics, and process status
         """
+        if os.environ.get("REDVECTOR_OLLAMA_SESSION")=="1":
+            return redvector_client.safe_get("api/ollama/runtime")
+
         logger.info("📊 Getting process dashboard")
         result = redvector_client.safe_get("api/processes/dashboard")
         if result.get("success", True) and "total_processes" in result:
@@ -3945,6 +3962,9 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
         Example:
             monitor_cve_feeds(48, "CRITICAL", "remote code execution")
         """
+        if os.environ.get("REDVECTOR_OLLAMA_SESSION")=="1":
+            return redvector_client.safe_post("api/ollama/advisories",{"hours":hours,"severity_filter":severity_filter,"keywords":keywords,"dashboard":False})
+
         data = {
             "hours": hours,
             "severity_filter": severity_filter,
@@ -4175,6 +4195,9 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
         Example:
             vulnerability_intelligence_dashboard()
         """
+        if os.environ.get("REDVECTOR_OLLAMA_SESSION")=="1":
+            return redvector_client.safe_post("api/ollama/advisories",{"hours":24,"severity_filter":"CRITICAL","keywords":"","dashboard":True})
+
         logger.info("📊 Generating vulnerability intelligence dashboard")
 
         # Get latest critical CVEs
@@ -4348,6 +4371,9 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
         Returns:
             Live dashboard with visual process monitoring and system metrics
         """
+        if os.environ.get("REDVECTOR_OLLAMA_SESSION")=="1":
+            return redvector_client.safe_get("api/ollama/runtime")
+
         logger.info("📊 Fetching live process dashboard")
         result = redvector_client.safe_get("api/processes/dashboard")
         if result.get("success", True):
@@ -4466,6 +4492,16 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             "findings": findings
         }
 
+        if os.environ.get("REDVECTOR_OLLAMA_SESSION")=="1":
+            try:
+                source=json.loads(findings)
+                actual=source["source_findings"]
+                if not isinstance(actual,list) or len(actual)!=vulnerabilities_found or any(not isinstance(item,dict) for item in actual):
+                    raise ValueError("Invalid source findings")
+                summary_data["vulnerabilities"]=actual
+                summary_data["findings"]=source.get("limitations","Source evidence only")
+            except (ValueError,TypeError,KeyError):
+                return {"success":False,"error":"Opt-in summary requires structured source evidence."}
         result = redvector_client.safe_post("api/visual/summary-report", summary_data)
         if result.get("success"):
             logger.info("✅ Scan summary created successfully")
@@ -4482,6 +4518,9 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
         Returns:
             System metrics with beautiful visual presentation
         """
+        if os.environ.get("REDVECTOR_OLLAMA_SESSION")=="1":
+            return redvector_client.safe_get("api/ollama/runtime")
+
         logger.info("📈 Fetching system metrics")
 
         # Get telemetry data

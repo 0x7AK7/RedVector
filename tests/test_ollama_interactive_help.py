@@ -7,7 +7,7 @@ from redvector_ollama_cli import handle_command
 from redvector_ollama_setup import Terminal,Wizard
 from redvector_ollama_policy import Policy
 
-IMPLEMENTED={"/scope","/status","/tools","/results","/summary","/raw","/export","/back","/exit","/help"}
+IMPLEMENTED={"/artifact","/scope","/status","/tools","/results","/summary","/raw","/export","/back","/exit","/help"}
 
 def interface():
     term=Terminal(io.StringIO())
@@ -69,7 +69,7 @@ def test_help_wraps_and_honors_no_color(monkeypatch):
 def test_dispatcher_recognizes_every_registry_command_without_inventing_commands():
     term,agent,wizard=interface()
     for command in IMPLEMENTED:
-        argument={"scope":"","help":"","back":"","exit":"","status":"invalid","tools":"",
+        argument={"artifact":"","scope":"","help":"","back":"","exit":"","status":"invalid","tools":"",
                   "results":"too many words","summary":"id invalid","raw":"too many","export":"too many"}[command[1:]]
         value=asyncio.run(handle_command(command+(" "+argument if argument else ""),agent,wizard))
         assert value==("exit" if command in ("/back","/exit") else "handled")
@@ -90,3 +90,18 @@ async def _startup():
         await interactive(Mock(),"unit-fixture",wizard)
     assert "Type /help to view all commands" in term.stream.getvalue()
     assert "REDVECTOR OPERATOR HELP" in term.stream.getvalue()
+
+def test_artifact_command_selects_only_operator_path_without_model_dispatch():
+    term,agent,wizard=interface()
+    selected={"name":"owned artifact.bin","size":10,"sha256":"a"*64}
+    async def choose(path):
+        agent.artifact=selected
+        return selected
+    async def clear():agent.artifact=None
+    agent.select_artifact=AsyncMock(side_effect=choose);agent.clear_artifact=AsyncMock(side_effect=clear)
+    asyncio.run(handle_command('/artifact "owned artifact.bin"',agent,wizard))
+    agent.select_artifact.assert_awaited_once_with("owned artifact.bin")
+    assert "AUTHORIZED ARTIFACT SNAPSHOT" in term.stream.getvalue()
+    asyncio.run(handle_command("/artifact --clear",agent,wizard))
+    assert agent.artifact is None
+    agent.turn.assert_not_called();agent.execute.assert_not_called()

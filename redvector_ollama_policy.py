@@ -10,8 +10,18 @@ import time
 class PolicyError(ValueError):
     pass
 
-DIAGNOSTICS = frozenset({"server_health", "get_cache_stats"})
-REVIEWED = DIAGNOSTICS | {"nmap_scan", "clear_cache"}
+from redvector_ollama_reporting import OFFLINE_TOOLS
+
+DIAGNOSTICS = frozenset({"server_health", "get_cache_stats","get_telemetry","error_handling_statistics"})
+from redvector_reviewed_artifacts import TOOLS as ARTIFACT_TOOLS
+from redvector_reviewed_runtime import TOOLS as RUNTIME_TOOLS
+from redvector_reviewed_advisories import TOOLS as ADVISORY_TOOLS
+
+HTTP_READ_TOOLS=frozenset({"http_framework_test","http_repeater","nuclei_scan"})
+HTTP_ASSESS_TOOLS=frozenset({"httpx_probe","nikto_scan","wafw00f_scan","jaeles_vulnerability_scan"})
+TCP_SCAN_TOOLS=frozenset({"masscan_high_speed","rustscan_fast_scan"})
+NMAP_TOOLS=frozenset({"nmap_scan","nmap_advanced_scan"})
+REVIEWED = DIAGNOSTICS | OFFLINE_TOOLS | HTTP_READ_TOOLS | HTTP_ASSESS_TOOLS | TCP_SCAN_TOOLS | ARTIFACT_TOOLS | RUNTIME_TOOLS | ADVISORY_TOOLS | NMAP_TOOLS | {"clear_cache"}
 DISABLED_REASONS = {"whois_lookup": "WHOIS registry and referral destinations cannot be confined by the existing backend."}
 FIXED_NMAP_ARGS = "-n -Pn --unprivileged --max-retries 1 --host-timeout 60s"
 AUTO_NMAP_ARGS = FIXED_NMAP_ARGS + " --max-rate 50 --scan-delay 20ms --max-parallelism 8"
@@ -112,6 +122,7 @@ class Policy:
         self.auto_discovery=auto_discovery is True
         self.clock=clock or time.monotonic
         self.auto_count=0;self.last_auto=float("-inf");self.last_automatic=False
+        self.profile_status={};self.version_intensity=1;self.report_provider=None;self.artifact_provider=None;self.observed_processes={}
         self._resolver = resolver if resolver is not None else _system_resolver
         self._state = ((), {}, 0)
         self.replace_scope(scope)
@@ -216,10 +227,130 @@ class Policy:
             raise PolicyError(DISABLED_REASONS.get(name, "Tool is discoverable but has no reviewed execution policy."))
         if not isinstance(args, dict):
             raise PolicyError("Arguments must be an object.")
+        if name in ADVISORY_TOOLS:
+            from redvector_reviewed_advisories import validate
+            capability=self.profile_status.get("nvd-advisory-v1",{})
+            if capability.get("state")!="Ready":raise PolicyError("Advisory profile unavailable. "+str(capability.get("detail","Updated verified backend required.")))
+            if name=="vulnerability_intelligence_dashboard":
+                if args:raise PolicyError("Advisory dashboard accepts no arguments.")
+                return {}
+            try:validate(args)
+            except ValueError as exc:raise PolicyError(str(exc)) from exc
+            return dict(args)
+        if name in RUNTIME_TOOLS:
+            capability=self.profile_status.get("runtime-read-v1",{})
+            if capability.get("state")!="Ready":raise PolicyError("Runtime profile unavailable. "+str(capability.get("detail","Updated verified backend required.")))
+            if name=="get_process_status":
+                if set(args)!={"pid"} or type(args.get("pid")) is not int or args["pid"] not in self.observed_processes:
+                    raise PolicyError("Rediscover managed backend jobs with list_active_processes before requesting that PID.")
+                return dict(args)
+            if args:raise PolicyError("This runtime diagnostic accepts no arguments.")
+            return {}
         if name in DIAGNOSTICS or name == "clear_cache":
             if args:
                 raise PolicyError("This tool accepts no arguments.")
             return {}
+        if name in OFFLINE_TOOLS:
+            if self.report_provider is None:raise PolicyError("Saved evidence provider is required for offline reporting.")
+            marker={"create_vulnerability_report":"vulnerabilities","create_scan_summary":"target","format_tool_output_visual":"output"}[name]
+            if args.get(marker)!="saved":raise PolicyError("Offline reports must use the saved-evidence marker, never model-invented findings.")
+            try:payload=self.report_provider(name)
+            except (OSError,ValueError,KeyError,TypeError) as exc:raise PolicyError("Saved evidence is unavailable or exceeds the formatter limit; use /results or /export.") from exc
+            if set(args)-set(payload):raise PolicyError("Unexpected offline-report arguments.")
+            for key,value in args.items():
+                if key==marker or value=="saved":continue
+                if value not in ("", "comprehensive") and value!=payload.get(key):
+                    raise PolicyError("Report arguments differ from saved source evidence.")
+            return payload
+        if name in ARTIFACT_TOOLS:
+            from redvector_reviewed_artifacts import options
+            marker="binary" if name in ("objdump_analyze","checksec_analyze") else "file_path"
+            if args.get(marker)!="selected" or self.artifact_provider is None:raise PolicyError("Select an artifact with /artifact PATH; model-selected paths are refused.")
+            selected=self.artifact_provider()
+            if not selected or selected.get("source")!="operator-snapshot":raise PolicyError("No operator-selected artifact snapshot is available.")
+            capability=self.profile_status.get("artifact-read-v1:"+name,{})
+            if capability.get("state")!="Ready":raise PolicyError("Artifact profile unavailable. "+str(capability.get("detail","Refresh verified backend capabilities.")))
+            allowed={marker}|({"min_len","additional_args"} if name=="strings_extract" else {"offset","length","additional_args"} if name=="xxd_hexdump" else {"disassemble","additional_args"} if name=="objdump_analyze" else set())
+            if set(args)-allowed:raise PolicyError("Unexpected artifact arguments.")
+            try:options(name,args)
+            except ValueError as exc:raise PolicyError(str(exc)) from exc
+            prepared=dict(args,**{marker:selected["token"]})
+            if name=="objdump_analyze":prepared.setdefault("disassemble",False)
+            return prepared
+        if name in HTTP_READ_TOOLS:
+            from urllib.parse import urlsplit,urlunsplit
+            from redvector_reviewed_assessment import HTTP_PROFILE,NUCLEI_PROFILE
+            supplied=args.get("request_spec") if name=="http_repeater" else args
+            if not isinstance(supplied,dict):raise PolicyError("HTTP request must be an object.")
+            url=supplied.get("target") if name=="nuclei_scan" else supplied.get("url")
+            if not isinstance(url,str):raise PolicyError("One explicit authorized root URL is required.")
+            u=urlsplit(url)
+            try:port=u.port
+            except ValueError:raise PolicyError("Invalid URL port.") from None
+            if u.scheme not in ("http","https") or u.username or u.password or u.query or u.fragment or u.path not in ("","/"):
+                raise PolicyError("Reviewed HTTP assessment permits one root HTTP(S) URL, without credentials, queries or fragments.")
+            destination=self._destination(u.hostname or "")
+            ip=ipaddress.ip_address(destination)
+            authority=("["+destination+"]" if ip.version==6 else destination)+((":"+str(port)) if port else "")
+            pinned=urlunsplit((u.scheme,authority,"/","",""))
+            required=NUCLEI_PROFILE if name=="nuclei_scan" else HTTP_PROFILE
+            capability=self.profile_status.get(required,{})
+            if capability.get("state")!="Ready":raise PolicyError("Reviewed assessment unavailable. "+str(capability.get("detail","Refresh backend capabilities with /tools.")))
+            if name=="nuclei_scan":
+                if set(supplied)-{"target","severity","tags","template","additional_args"} or any(supplied.get(k,"") for k in ("severity","tags","additional_args")) or supplied.get("template","") not in ("",NUCLEI_PROFILE):
+                    raise PolicyError("Only the fixed root-response Nuclei profile is currently reviewed.")
+                return {"target":pinned,"severity":"","tags":"","template":NUCLEI_PROFILE,"additional_args":"--redvector-authority="+u.netloc}
+            if set(supplied)-{"url","method","data","headers","cookies","action"} or supplied.get("data") not in (None,{}) or supplied.get("cookies") not in (None,{}) or supplied.get("headers") not in (None,{}):
+                raise PolicyError("Reviewed HTTP reads do not accept bodies, cookies or custom headers.")
+            if supplied.get("method","GET") not in ("GET","HEAD") or supplied.get("action","request") not in ("request",HTTP_PROFILE):
+                raise PolicyError("Only the reviewed GET/HEAD root response is supported.")
+            payload={"url":pinned,"method":supplied.get("method","GET"),"headers":{"Host":u.netloc},"data":None,"cookies":None,"action":HTTP_PROFILE}
+            return {"request_spec":payload} if name=="http_repeater" else payload
+        if name in HTTP_ASSESS_TOOLS:
+            from urllib.parse import urlsplit,urlunsplit
+            from redvector_reviewed_assessment import HTTP_PROFILE,HTTP_ASSESS_MARKER
+            key="url" if name=="jaeles_vulnerability_scan" else "target"
+            url=args.get(key)
+            if not isinstance(url,str):raise PolicyError("One explicit authorized root URL is required.")
+            u=urlsplit(url)
+            try:port=u.port
+            except ValueError:raise PolicyError("Invalid URL port.") from None
+            if u.scheme not in ("http","https") or u.username or u.password or u.query or u.fragment or u.path not in ("","/"):
+                raise PolicyError("Reviewed HTTP assessment permits one root HTTP(S) URL, without credentials, queries or fragments.")
+            if args.get("additional_args",""):raise PolicyError("Reviewed HTTP assessment uses a fixed passive profile; no extra arguments.")
+            capability=self.profile_status.get(HTTP_PROFILE,{})
+            if capability.get("state")!="Ready":raise PolicyError("Reviewed assessment unavailable. "+str(capability.get("detail","Refresh backend capabilities with /tools.")))
+            destination=self._destination(u.hostname or "")
+            ip=ipaddress.ip_address(destination)
+            authority=("["+destination+"]" if ip.version==6 else destination)+((":"+str(port)) if port else "")
+            pinned=urlunsplit((u.scheme,authority,"/","",""))
+            return {key:pinned,"additional_args":HTTP_ASSESS_MARKER}
+        if name in TCP_SCAN_TOOLS:
+            from redvector_reviewed_assessment import SCAN_PROFILE,SCAN_MARKER
+            if "target" not in args:raise PolicyError("One explicit authorized target is required.")
+            value=self._destination(args["target"])
+            if args.get("additional_args",""):raise PolicyError("Reviewed bounded TCP discovery uses a fixed profile; no extra arguments.")
+            capability=self.profile_status.get(SCAN_PROFILE,{})
+            if capability.get("state")!="Ready":raise PolicyError("Reviewed bounded TCP discovery unavailable. "+str(capability.get("detail","Refresh backend capabilities with /tools.")))
+            ports=args.get("ports","")
+            if not isinstance(ports,str) or len(ports)>2048:raise PolicyError("Invalid port selection.")
+            if not ports or ports.strip() in ("1-65535","0-65535","-"):
+                raise PolicyError("Reviewed bounded TCP discovery requires 1..128 explicit ports; unbounded full-range or high-speed scanning is disabled.")
+            seen=set()
+            for group in ports.split(","):
+                if not re.fullmatch(r"[0-9]{1,5}(?:-[0-9]{1,5})?",group):raise PolicyError("Ports must be numbers or ascending ranges.")
+                numbers=[int(number) for number in group.split("-")]
+                if not all(1<=number<=65535 for number in numbers) or numbers[0]>numbers[-1]:raise PolicyError("Ports must be within 1..65535 and ascending.")
+                seen.update(range(numbers[0],numbers[-1]+1))
+            if len(seen)>128:raise PolicyError("Reviewed bounded TCP discovery permits at most 128 ports per call.")
+            return {"target":value,"ports":ports,"additional_args":SCAN_MARKER}
+        if name=="nmap_advanced_scan":
+            if args.get("version_detection") is False:raise PolicyError("Explicit no-version request cannot use the active service-version profile.")
+            if set(args)-{"target","ports","scan_type","timing","nse_scripts","os_detection","version_detection","aggressive","stealth","additional_args"} or any(args.get(k,False) for k in ("os_detection","aggressive","stealth")) or args.get("nse_scripts","") or args.get("additional_args","") or args.get("scan_type","-sT") not in ("-sT","-sV","-sT -sV"):
+                raise PolicyError("Advanced scanner currently supports only the reviewed TCP service profile.")
+            narrowed=self._prepare("nmap_scan",{"target":args.get("target"),"ports":args.get("ports",""),"scan_type":"-sT -sV"})
+            return {"target":narrowed["target"],"ports":narrowed["ports"],"scan_type":narrowed["scan_type"],
+                    "timing":"T2","nse_scripts":"","os_detection":False,"version_detection":True,"aggressive":False,"stealth":False,"additional_args":narrowed["additional_args"]}
         allowed = {"target", "ports", "scan_type", "additional_args", "use_recovery"}
         if set(args) - allowed or "target" not in args:
             raise PolicyError("Unexpected or missing assessment arguments.")
@@ -232,10 +363,17 @@ class Policy:
         version = ipaddress.ip_address(value).version
         if version == 6 and isinstance(scan, str) and scan.startswith("-6 "):
             scan = scan[3:]
-        if scan != "-sT":
-            raise PolicyError("Only reviewed TCP connect scans are enabled; active version detection and scripts are disabled.")
+        version_profile=scan in ("-sV","-sT -sV")
+        if scan!="-sT" and not version_profile:
+            raise PolicyError("Restricted Nmap operation: only reviewed TCP discovery/service profiles are supported; OS, UDP and arbitrary NSE remain restricted.")
+        if version_profile:
+            capability=self.profile_status.get("service-version-v1",{})
+            if capability.get("state")!="Ready":
+                raise PolicyError("Reviewed service-version profile unavailable. "+str(capability.get("detail","Updated verified backend and native runtime required.")))
+            if type(self.version_intensity) is not int or not 0<=self.version_intensity<=2:
+                raise PolicyError("Reviewed version intensity must be 0, 1 or 2.")
         ports = args.get("ports", "")
-        if not isinstance(ports, str) or len(ports) > 128:
+        if not isinstance(ports, str) or len(ports) > 2048:
             raise PolicyError("Invalid port selection.")
         if ports:
             for group in ports.split(","):
@@ -244,6 +382,12 @@ class Policy:
                 numbers = [int(number) for number in group.split("-")]
                 if not all(1 <= number <= 65535 for number in numbers) or numbers[0] > numbers[-1]:
                     raise PolicyError("Ports must be within 1..65535 and ascending.")
+        if version_profile:
+            count=len({port for group in ports.split(",") if group for port in range(int(group.split("-")[0]),int(group.split("-")[-1])+1)})
+            if not ports or count>128:raise PolicyError("Reviewed service-version profile requires 1..128 explicit TCP ports; discover ports first.")
+            from redvector_reviewed_profiles import NMAP_PROFILE
+            return {"target":value,"additional_args":"--version-intensity "+str(self.version_intensity),
+                    "scan_type":NMAP_PROFILE,"ports":ports,"use_recovery":False}
         return {"target":value, "additional_args":FIXED_NMAP_ARGS, "scan_type":("-6 " if version == 6 else "") + scan,
                 "ports":ports, "use_recovery":False}
 
@@ -252,20 +396,33 @@ class Policy:
         original = copy.deepcopy(args)
         result = self._prepare(name, original)
         self.last_automatic=False
-        if name not in DIAGNOSTICS:
+        if name in ADVISORY_TOOLS:
+            if not approve({"tool":name,"arguments":copy.deepcopy(result),"provider":"NVD","query":({"hours":24,"severity_filter":"CRITICAL","keywords":""} if name=="vulnerability_intelligence_dashboard" else {"hours":result.get("hours",24),"severity_filter":result.get("severity_filter","HIGH,CRITICAL"),"keywords":result.get("keywords","")}),"reason":"Explicit public-provider query approval required. Anonymous NVD publication window only; keywords are filtered locally. Data does not establish target applicability."}):
+                raise PolicyError("Operator declined the public advisory query.")
+            if self.revision!=revision or self._prepare(name,original)!=result:
+                raise PolicyError("Authorization state changed during advisory approval.")
+        if name not in DIAGNOSTICS | OFFLINE_TOOLS | HTTP_READ_TOOLS | ARTIFACT_TOOLS | RUNTIME_TOOLS | ADVISORY_TOOLS:
             count=1000
-            if name=="nmap_scan" and result["ports"]:
+            if name in NMAP_TOOLS and result["ports"]:
                 ports=set()
                 for group in result["ports"].split(","):
                     bounds=[int(n) for n in group.split("-")]
                     ports.update(range(bounds[0],bounds[-1]+1))
                 count=len(ports)
-            automatic=(allow_automatic is True and name=="nmap_scan" and self.auto_discovery and count<=1000
+            version_profile=name in NMAP_TOOLS and result.get("scan_type","").startswith("--redvector-profile=")
+            automatic=(allow_automatic is True and name=="nmap_scan" and not version_profile and self.auto_discovery and count<=1000
                        and self.auto_count<5 and self.clock()-self.last_auto>=30)
             if not automatic:
-                reason=("Intensive or unattended-limit scan; explicit approval required."
-                        if name=="nmap_scan" else "State-changing operation; explicit approval required.")
-                if not approve({"tool":name,"arguments":copy.deepcopy(result)}):
+                reasons=[]
+                if name not in NMAP_TOOLS:reasons.append("State-changing operation requires explicit approval")
+                else:
+                    if version_profile:reasons.append("Reviewed active service probes require exact operator approval")
+                    if count>1000:reasons.append("Port count exceeds the unattended 1,000-port bound")
+                    if not allow_automatic:reasons.append("No explicit low-impact discovery instruction selected")
+                    if not self.auto_discovery:reasons.append("Unattended discovery is disabled")
+                    if self.auto_count>=5:reasons.append("Unattended discovery session limit reached")
+                    if self.clock()-self.last_auto<30:reasons.append("Unattended discovery cooldown has not elapsed")
+                if not approve({"tool":name, "arguments":copy.deepcopy(result),"reason":"; ".join(reasons)}):
                     raise PolicyError("Operator declined this operation.")
             if self.revision != revision:
                 raise PolicyError("Authorized scope changed during approval; request a new operation.")

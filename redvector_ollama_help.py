@@ -14,6 +14,11 @@ class Command:
     restrictions:str
 
 COMMANDS={
+ "/artifact":Command("artifact","Evidence and analysis","/artifact [PATH | --clear]",
+    "Select a read-only regular-file snapshot for compatible offline artifact tools.",
+    "PATH: one regular file up to 4 MiB, quoted or unquoted; no symlinks/junctions. Omitted displays selection; --clear clears it.",
+    ("/artifact PATH","/artifact","/artifact --clear"),
+    "Only operator input selects files. Bytes are copied privately and hashed; selected code is never executed. Select again to analyze later file changes."),
  "/scope":Command("scope","Targets and authorization","/scope [TARGET ... | --clear]",
     "Display or atomically replace the operator-authorized session scope.",
     "TARGET: IPv4, IPv6, CIDR or exact hostname. No arguments displays scope; --clear removes all targets.",
@@ -61,7 +66,7 @@ COMMANDS={
 
 SAFETY=("Authorize targets with /scope before assessment. Public and private targets use the same checks.",
         "Reviewed single-host TCP discovery covers up to 1,000 ports with fixed rate/session limits. Larger scans require exact approval.",
-        "High-impact/unreviewed tools remain blocked. Operator approval does not enable disabled active version detection (-sV) or scripts.",
+        "High-impact/unreviewed tools require separate reviewed paths. Active service-version profiles require exact approval; arbitrary scripts remain unavailable.",
         "Use /tools QUERY to inspect tool availability; port-name labels do not verify versions.",
         "Enter a natural-language task alongside these commands. Type /help COMMAND for detail; /help search TEXT searches help.",
         "Tab completes command names where GNU readline can safely preserve your current editing configuration.")

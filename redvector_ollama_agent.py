@@ -8,13 +8,14 @@ import os
 from pathlib import Path
 import re
 import tempfile
+import uuid
 import time
 from contextlib import suppress
 from redvector_ollama_results import ResultsStore
 from redvector_ollama_presentation import render_scan,render_result,operation_message,approval_panel,Panel
 from redvector_ollama_analysis import summarize
 
-from redvector_ollama_policy import Policy, PolicyError, REVIEWED, DISABLED_REASONS, validate_arguments
+from redvector_ollama_policy import Policy, PolicyError, REVIEWED, DISABLED_REASONS, HTTP_READ_TOOLS, HTTP_ASSESS_TOOLS, TCP_SCAN_TOOLS, NMAP_TOOLS, ARTIFACT_TOOLS, RUNTIME_TOOLS, ADVISORY_TOOLS, validate_arguments
 from redvector_ollama_backend import inspect_backend, BackendReuseError
 from redvector_ollama_cli import handle_command, assessment_context, saved_analysis_request, automatic_context
 from redvector_ollama_errors import record_error
@@ -23,21 +24,60 @@ from redvector_ollama_setup import ROOT, SetupError, config_path, local_lock, pl
 class AgentError(SetupError):
     pass
 
-def tool_schema(tool):
+def tool_schema(tool,version=False):
     # Narrow only the model-facing copy, leaving all original MCP registrations intact.
     schema=copy.deepcopy(tool.inputSchema)
     schema["additionalProperties"]=False
     properties=schema.get("properties",{})
-    if tool.name in ("nmap_scan","whois_lookup") and "additional_args" in properties:
+    if tool.name in ("nmap_scan","nmap_advanced_scan","whois_lookup") and "additional_args" in properties:
         properties["additional_args"].update(enum=[""],default="")
-    if tool.name=="nmap_scan" and "scan_type" in properties:
-        properties["scan_type"].update(enum=["-sT","-6 -sT"],default="-sT")
+    if tool.name in NMAP_TOOLS and "scan_type" in properties:
+        properties["scan_type"].update(enum=["-sT -sV"] if version else ["-sT","-6 -sT"],default="-sT -sV" if version else "-sT")
     if tool.name=="nmap_scan" and "use_recovery" in properties:
         properties["use_recovery"].update(enum=[False],default=False)
     note=""
-    if tool.name=="nmap_scan":note=" Only authorized single hosts; TCP connect scans only; active version detection and scripts disabled, DNS disabled, no automatic recovery; reviewed bounded discovery may run automatically; intensive scans require exact approval."
+    if tool.name in NMAP_TOOLS:note=" Only authorized single hosts; TCP connect scans only; active version detection requires the attested service-version profile, scripts disabled, DNS disabled, no automatic recovery; reviewed bounded discovery may run automatically; intensive scans require exact approval."
     elif tool.name=="whois_lookup":note=" Exact authorized target and operator approval required; no extra arguments."
     elif tool.name=="clear_cache":note=" Changes backend state; separate operator approval required."
+    if tool.name=="nmap_advanced_scan":
+        for key in ("os_detection","aggressive","stealth"):
+            if key in properties:properties[key].update(enum=[False],default=False)
+        if "nse_scripts" in properties:properties["nse_scripts"].update(enum=[""],default="")
+        if "timing" in properties:properties["timing"].update(enum=["T2"],default="T2")
+        if "version_detection" in properties:properties["version_detection"].update(enum=[True],default=True)
+    if tool.name=="nuclei_scan":
+        for key in ("severity","tags","template","additional_args"):
+            if key in properties:properties[key].update(enum=[""],default="")
+        note=" Fixed offline header assessment only. Supply one authorized root HTTP(S) URL. One confined GET; Nuclei evaluates saved response with sockets denied. No arbitrary templates, OAST or inferred exploitability."
+    if tool.name in ADVISORY_TOOLS:
+        if "hours" in properties:properties["hours"].update(minimum=1,maximum=168)
+        note=" Official NVD advisory sample only; exact operator approval required. Keywords filtered locally. Advisory presence never proves target vulnerability; no exploit execution or invented threat trends."
+    if tool.name in ARTIFACT_TOOLS:
+        marker="binary" if tool.name in ("objdump_analyze","checksec_analyze") else "file_path"
+        properties[marker]={"type":"string","enum":["selected"]}
+        if "additional_args" in properties:properties["additional_args"].update(enum=[""],default="")
+        if "min_len" in properties:properties["min_len"].update(minimum=4,maximum=64)
+        if "disassemble" in properties:properties["disassemble"].update(default=False)
+        note=" Read-only operator-selected artifact only. Use literal selected, never choose a filesystem path. Uploaded code is never executed; output is actual bounded artifact evidence."
+    if tool.name=="http_repeater":
+        properties["request_spec"]={"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string","enum":["GET","HEAD"],"default":"GET"}},"required":["url"],"additionalProperties":False}
+        note=" Repeat one authorized root GET/HEAD only; no side effects, redirects or arbitrary request data."
+    if tool.name=="http_framework_test":
+        properties["method"].update(enum=["GET","HEAD"],default="GET")
+        properties["action"].update(enum=["request"],default="request")
+        for key in ("data","headers","cookies"):properties[key]={"type":"null","default":None}
+        note=" One authorized root HTTP(S) GET/HEAD only. No redirects, bodies, cookies or custom headers."
+    if tool.name in HTTP_ASSESS_TOOLS:
+        if "additional_args" in properties:properties["additional_args"].update(enum=[""],default="")
+        note=" Reviewed passive HTTP assessment: one authorized root HTTP(S) URL. One confined TLS-verified GET, no redirects or active payloads; results are actual observed response evidence only, not an external scanner run."
+    if tool.name in TCP_SCAN_TOOLS:
+        if "additional_args" in properties:properties["additional_args"].update(enum=[""],default="")
+        note=" Reviewed bounded TCP discovery: one authorized in-scope target and 1..128 explicit ports. A shared RedVector TCP connect engine runs (<=64 concurrent, bounded timeout/deadline); native masscan/rustscan are NOT executed and unbounded high-speed scanning is disabled."
+    from redvector_ollama_reporting import OFFLINE_TOOLS
+    if tool.name in OFFLINE_TOOLS:
+        marker={"create_vulnerability_report":"vulnerabilities","create_scan_summary":"target","format_tool_output_visual":"output"}[tool.name]
+        schema={"type":"object","properties":{marker:{"type":"string","enum":["saved"]}},"required":[marker],"additionalProperties":False}
+        note=" Format the latest saved real MCP evidence only. Arguments are supplied from trusted saved evidence; never invent findings."
     return {"type":"function","function":{"name":tool.name,
         "description":(tool.description or "")[:600]+note,"parameters":schema}}
 
@@ -107,7 +147,7 @@ async def bridge():
         port=int(os.environ.get("REDVECTOR_PORT","8888"))
         if not 1<=port<=65535:raise ValueError()
     except ValueError as exc:raise AgentError("Invalid RedVector port.") from exc
-    env=dict(os.environ,REDVECTOR_HOST="127.0.0.1",NO_PROXY="*",no_proxy="*")
+    env=dict(os.environ,REDVECTOR_HOST="127.0.0.1",NO_PROXY="*",no_proxy="*",REDVECTOR_OLLAMA_SESSION="1")
     env.pop("REDVECTOR_OLLAMA_BACKEND_PIN",None)
     directory=config_path().parent
     directory.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -130,6 +170,7 @@ async def bridge():
                 after=await asyncio.to_thread(inspect_backend,ROOT,"127.0.0.1",port)
                 if after is None or (before is not None and before!=after):
                     raise BackendReuseError("Backend disappeared or changed during MCP initialization; retry explicitly.")
+            session._redvector_backend_proof=after
             yield session,catalog
     except (KeyboardInterrupt,SystemExit,asyncio.CancelledError):raise
     except BackendReuseError as exc:
@@ -192,9 +233,53 @@ class Agent:
         self.history=[]
         self.results=results or ResultsStore();self.terminal=terminal
         self.last_result_id=None;self._scan_busy=False;self._unknown_until=0;self.automatic_task=False
+        self.artifact=None;self.artifact_session=uuid.uuid4().hex
+        self.policy.artifact_provider=lambda:self.artifact
         self.assessment_target=None
+        self.version_task=False;self.runtime={};self.runtime_verified=False
+        from redvector_ollama_reporting import report_arguments
+        self.policy.report_provider=lambda name:report_arguments(self.results,name)
         self.last_invocation=None
         self.selected=[name for name in ("server_health","get_cache_stats") if name in catalog]
+
+    async def refresh_profiles(self,data=None):
+        from redvector_ollama_profiles import attest
+        from redvector_ollama_results import payloads
+        self.policy.profile_status={};self.runtime={};self.runtime_verified=False
+        try:
+            if data is None:data=result_data(await asyncio.wait_for(self.session.call_tool("server_health",arguments={}),timeout=30))
+            if data.get("isError"):raise BackendReuseError("MCP health check failed.")
+            values=payloads(data)
+            health=next((v for v in values if v.get("status")=="healthy"),None)
+            if not health:raise BackendReuseError("MCP health did not confirm a healthy backend.")
+            metadata=health.get("reviewed_capabilities",{})
+            port=int(os.environ.get("REDVECTOR_PORT","8888"))
+            states=await asyncio.to_thread(attest,getattr(self.session,"_redvector_backend_proof",None),metadata,ROOT,port)
+            self.runtime=metadata;self.runtime_verified=True;self.policy.profile_status=states
+        except (asyncio.CancelledError,KeyboardInterrupt):raise
+        except Exception as exc:
+            self.policy.profile_status={name:{"state":"Restricted","detail":plain(exc)[:400]} for name in ("service-version-v1","redvector-http-read-v1","redvector-tcp-connect-v1","--redvector-profile=http-headers-v1","artifact-read-v1","runtime-read-v1","nvd-advisory-v1",*("artifact-read-v1:"+tool for tool in ARTIFACT_TOOLS))}
+        return self.policy.profile_status
+
+    async def select_artifact(self,path):
+        from redvector_ollama_artifacts import select,control
+        await self.refresh_profiles()
+        capability=self.policy.profile_status.get("artifact-read-v1",{})
+        if capability.get("state")!="Ready":raise AgentError("Artifact staging unavailable: "+capability.get("detail","Updated verified backend required."))
+        selected=await asyncio.to_thread(select,self.session,path,self.artifact_session)
+        previous=self.artifact;self.artifact=selected
+        if previous:
+            try:await asyncio.to_thread(control,self.session,{"token":previous["token"]},"DELETE")
+            except Exception:pass  # Expiry also removes unreachable private snapshots.
+        return {k:v for k,v in selected.items() if k!="token"}
+
+    async def clear_artifact(self):
+        from redvector_ollama_artifacts import control
+        previous=self.artifact;self.artifact=None
+        if previous:
+            try:await asyncio.to_thread(control,self.session,{"token":previous["token"]},"DELETE")
+            except Exception:
+                if self.terminal:self.terminal.message("warning","Local artifact authorization cleared; private backend cleanup deferred to expiry.")
 
     def select(self,query):
         raw_words=set(re.findall(r"[a-z0-9]+",query.lower()))
@@ -213,32 +298,42 @@ class Agent:
         name_matches=[tool for tool in ranked if scores[tool.name][0] or scores[tool.name][1]]
         matches=(name_matches if name_matches else [tool for tool in ranked if scores[tool.name][2]])[:8]
         self.selected=[t.name for t in matches if t.name in REVIEWED]
-        return [{"name":t.name,"description":(t.description or "")[:200],
-                 "execution":"reviewed policy" if t.name in REVIEWED else "disabled: "+DISABLED_REASONS.get(t.name,"no reviewed execution policy")} for t in matches]
+        from redvector_ollama_availability import status
+        from redvector_ollama_reporting import source_record
+        try:source_record(self.results);has_evidence=True
+        except (ValueError,OSError,KeyError,TypeError):has_evidence=False
+        rows=[]
+        for t in matches:
+            state,detail=status(t.name,self.policy,self.runtime,self.runtime_verified,has_evidence)
+            rows.append({"name":t.name,"description":(t.description or "")[:200],"execution":state,"status":state,"detail":detail})
+        return rows
 
     def schemas(self):
         result=[DISCOVERY];size=len(json.dumps(DISCOVERY))
         for name in self.selected[:8]:
-            if name=="nmap_scan" and self.assessment_target is None:continue
-            schema=tool_schema(self.catalog[name])
+            if name in NMAP_TOOLS and self.assessment_target is None:continue
+            if name in ARTIFACT_TOOLS and self.artifact is None:continue
+            if name=="get_process_status" and not self.policy.observed_processes:continue
+            schema=tool_schema(self.catalog[name],self.version_task)
+            if name=="get_process_status":schema["function"]["parameters"]["properties"]["pid"]["enum"]=list(self.policy.observed_processes)[:256]
             encoded=json.dumps(schema)
             if size+len(encoded)<=16000:
                 result.append(schema);size+=len(encoded)
         return result
 
-    async def _progress(self,started,target):
+    async def _progress(self,started,target,name="nmap_scan"):
         while True:
             await asyncio.sleep(15)
-            if self.terminal:operation_message(self.terminal,[f"ACTIVE OPERATION | {target} | nmap_scan | Running | Elapsed {time.monotonic()-started:.0f}s"])
+            if self.terminal:operation_message(self.terminal,[f"ACTIVE OPERATION | {target} | {name} | Running | Elapsed {time.monotonic()-started:.0f}s"])
 
     def _authorization_context(self,name):
-        approval=("Not required: read-only diagnostic" if name in ("server_health","get_cache_stats")
+        approval=("Operator-selected read-only artifact snapshot" if name in ARTIFACT_TOOLS else "Not required: reviewed root-response read" if name in HTTP_READ_TOOLS else "Not required: reviewed passive HTTP assessment" if name in HTTP_ASSESS_TOOLS else "Not required: reviewed bounded TCP discovery" if name in TCP_SCAN_TOOLS else "Not required: read-only diagnostic" if name in RUNTIME_TOOLS or name in ("server_health","get_cache_stats","get_telemetry","error_handling_statistics")
                   else "Reviewed bounded discovery" if self.policy.last_automatic else "Approved exact operation")
-        return {"scope":list(self.policy.snapshot()),"dns_pins":self.policy.dns_snapshot(),
+        return {"artifact_sha256":self.artifact["sha256"] if name in ARTIFACT_TOOLS and self.artifact else None,"scope":list(self.policy.snapshot()),"dns_pins":self.policy.dns_snapshot(),
                 "scope_revision":self.policy.revision,"approval":approval}
 
     def _save_scan(self,data,wire,started):
-        record=self.results.save("nmap_scan",self.last_invocation[1]["target"],self.last_invocation[1],
+        record=self.results.save(self.last_invocation[0],self.last_invocation[1]["target"],self.last_invocation[1],
                                  data,wire,time.monotonic()-started,authorization=self._authorization_context("nmap_scan"))
         self.last_result_id=record["id"]
         if self.terminal:
@@ -252,7 +347,8 @@ class Agent:
 
     def _save_operation(self,name,data,wire,started):
         args=self.last_invocation[1] if self.last_invocation else {}
-        record=self.results.save(name,args.get("target"),args,data,wire,time.monotonic()-started,authorization=self._authorization_context(name))
+        target=self.artifact["name"] if name in ARTIFACT_TOOLS and self.artifact else args.get("target") or args.get("url") or (args.get("request_spec") or {}).get("url")
+        record=self.results.save(name,target,args,data,wire,time.monotonic()-started,authorization=self._authorization_context(name))
         self.last_result_id=record["id"]
         if self.terminal:
             try:render_result(self.terminal,record)
@@ -288,38 +384,81 @@ class Agent:
                 f").\nUse /summary {record['id']} {page} to retry saved-result analysis. No additional network scan will be executed.")
 
     async def execute(self,name,args,exposed):
-        rpc_started=False;started=time.monotonic();progress=None;scan=name=="nmap_scan";claimed=False
+        rpc_started=False;started=time.monotonic();progress=None;scan=name in NMAP_TOOLS;claimed=False
         self.last_invocation=None
         self.last_result_id=None
         try:
             if name=="discover_tools":
                 validate_arguments(DISCOVERY["function"]["parameters"],args)
+                if not self.runtime_verified:await self.refresh_profiles()
                 return {"isError":False,"tools":self.select(args["query"])}
             if name not in self.catalog or name not in exposed:raise PolicyError("Tool was not selected or registered.")
             schema=self.catalog[name].inputSchema
-            validate_arguments(schema,args)
+            from redvector_ollama_reporting import OFFLINE_TOOLS
+            if name not in OFFLINE_TOOLS:validate_arguments(schema,args)
             if scan:
                 if self._scan_busy:raise PolicyError("A scan is already running in this session.")
                 if time.monotonic()<self._unknown_until:raise PolicyError("Previous backend execution is unknown. Inspect backend state before another scan.")
                 if self.assessment_target is None:raise PolicyError("No explicit assessment task is selected. Request a scan of one authorized host first.")
                 if self.policy.destination(args["target"])!=self.policy.destination(self.assessment_target):
                     raise PolicyError("Tool target differs from the operator-selected task target. No scan was executed.")
+                from redvector_ollama_cli import requests_active_versions
+                if name=="nmap_advanced_scan" and not self.version_task:
+                    raise PolicyError("Reviewed advanced profile performs active service-version probes. Explicitly request service versions, or use ordinary TCP discovery.")
+                if requests_active_versions(args.get("scan_type","")) and not self.version_task:
+                    raise PolicyError("Active version detection was not selected by the operator.")
+                if self.version_task:
+                    args=dict(args,scan_type="-sT -sV")
                 self._scan_busy=True;claimed=True
+            if (name in HTTP_READ_TOOLS or name in HTTP_ASSESS_TOOLS or name in TCP_SCAN_TOOLS or name in ARTIFACT_TOOLS or name in RUNTIME_TOOLS or name in ADVISORY_TOOLS or name=="nmap_advanced_scan") and not self.runtime_verified:await self.refresh_profiles()
+            if name in ARTIFACT_TOOLS | RUNTIME_TOOLS | ADVISORY_TOOLS:
+                from redvector_ollama_artifacts import require_backend
+                await asyncio.to_thread(require_backend,self.session)
             approved=self.policy.authorize(name,args,self.approve,allow_automatic=(not scan or self.automatic_task))
             validate_arguments(schema,approved)
             self.last_invocation=(name,dict(approved))
             if scan:
                 self.results.ensure()
                 if self.terminal:operation_message(self.terminal,["REDVECTOR AI / SCAN STARTED",
-                    "Target: "+approved["target"],"Tool: nmap_scan",
-                    "Mode: "+("Authorized discovery" if self.policy.last_automatic else "Explicitly approved discovery"),"Status: Running"])
-                progress=asyncio.create_task(self._progress(started,approved["target"]))
+                    "Target: "+approved["target"],"Tool: "+name,
+                    "Mode: "+("Authorized low-impact discovery" if self.policy.last_automatic else "Explicitly approved discovery"),"Status: Running"])
+                progress=asyncio.create_task(self._progress(started,approved["target"],name))
             if not scan:
                 self.results.ensure()
                 if self.terminal:operation_message(self.terminal,["REDVECTOR AI / TOOL EXECUTION","Tool: "+name,"Status: Running"])
             rpc_started=True
             result=await asyncio.wait_for(self.session.call_tool(name,arguments=approved),timeout=90)
             data=result_data(result)
+            if name in ARTIFACT_TOOLS:
+                await asyncio.to_thread(require_backend,self.session)
+                from redvector_ollama_results import payloads
+                actual=payloads(data)
+                if not data.get("isError") and (not actual or actual[0].get("artifact_sha256")!=self.artifact["sha256"]):
+                    data=dict(data,isError=True,error="Artifact evidence digest does not match the operator-selected snapshot.")
+            if name in ADVISORY_TOOLS:
+                await asyncio.to_thread(require_backend,self.session)
+                from redvector_ollama_results import payloads
+                actual=payloads(data)
+                if not actual or actual[0].get("profile")!="nvd-advisory-v1":
+                    data=dict(data,isError=True,error="Advisory response did not confirm the reviewed provider profile.")
+            if name in RUNTIME_TOOLS:
+                await asyncio.to_thread(require_backend,self.session)
+                from redvector_ollama_results import payloads
+                actual=payloads(data)
+                if not actual or actual[0].get("profile")!="runtime-read-v1":
+                    data=dict(data,isError=True,error="Runtime evidence did not confirm the reviewed profile.")
+                elif not data.get("isError"):
+                    value=actual[0]
+                    if name=="get_process_status":
+                        process=value.get("process",{})
+                        if process.get("start_time")!=self.policy.observed_processes.get(approved["pid"]):
+                            data=dict(data,isError=True,error="Managed job identity changed; rediscover current records.")
+                    elif name!="display_system_metrics":
+                        self.policy.observed_processes={row["pid"]:row["start_time"] for row in value.get("processes",[]) if isinstance(row,dict) and type(row.get("pid")) is int and isinstance(row.get("start_time"),(float,int))}
+            if name=="server_health":await self.refresh_profiles(data)
+            from redvector_ollama_reporting import OFFLINE_TOOLS,report_complete
+            if name in OFFLINE_TOOLS and not report_complete(name,data,approved):
+                data=dict(data,isError=True,execution_status="failed",error="MCP formatter did not return complete source-backed output; original response preserved.")
             if scan:
                 dump=getattr(result,"model_dump",None)
                 wire=dump(mode="json",by_alias=True) if callable(dump) else None
@@ -369,25 +508,42 @@ class Agent:
         if saved_analysis_request(text):
             try:return await self.summarize_saved()
             except (ValueError,OSError):return "No saved scan is available. Use /results list or /summary RESULT_ID. No network scan was executed."
-        assessment,chosen,clarification=assessment_context(text,self.policy)
+        from redvector_ollama_cli import requests_active_versions
+        self.version_task=requests_active_versions(text)
+        assessment,chosen,clarification=assessment_context(text,self.policy,allow_versions=True)
         self.assessment_target=chosen if assessment else None
         self.automatic_task=assessment and bool(chosen) and automatic_context(text,chosen)
         if clarification:return clarification
+        if assessment and self.version_task:
+            await self.refresh_profiles()
+            capability=self.policy.profile_status.get("service-version-v1",{})
+            if capability.get("state")!="Ready":
+                return "Target is authorized. Service-version execution unavailable: "+capability.get("detail","Reviewed backend profile required.")+" No scan was executed."
+            intensity=re.search(r"(?i)version[- ]intensity\s+([0-9]+)",text)
+            self.policy.version_intensity=int(intensity.group(1)) if intensity else 1
+            if not 0<=self.policy.version_intensity<=2:
+                return "Reviewed version intensity must be 0, 1 or 2. No scan was executed."
         explicit_disabled=[name for name in self.catalog if name not in REVIEWED and
                            re.search(r"(?<![A-Za-z0-9_])"+re.escape(name)+r"(?![A-Za-z0-9_])",text)]
         if explicit_disabled:
             name=sorted(explicit_disabled)[0]
-            return ("Tool: "+name+"\nStatus: Registered but execution disabled\nReason: "+
-                    DISABLED_REASONS.get(name,"No reviewed execution policy")+"\nNo scan was performed.")
+            from redvector_ollama_availability import status
+            state,detail=status(name,self.policy,self.runtime,self.runtime_verified)
+            return ("Tool: "+name+"\nStatus: "+state+"\nReason: "+detail+"\nNo operation was performed.")
         self.select(text)
         if assessment:
-            if "nmap_scan" not in self.catalog:
+            selected_scan="nmap_advanced_scan" if re.search(r"(?i)\bnmap_advanced_scan\b",text) else "nmap_scan"
+            if selected_scan not in self.catalog:
                 return "No reviewed Nmap tool is registered. No scan was performed."
-            self.selected=["nmap_scan"]
+            self.selected=[selected_scan]
         context={"authorized_scope":self.policy.snapshot(),"dns_pins":self.policy.dns_snapshot(),
                  "selected_assessment_target":chosen}
         instruction=SYSTEM+"\nTrusted application authorization state (model cannot change it): "+json.dumps(context)
-        instruction+="\nFor an authorized TCP scan use nmap_scan and its selected target. Do not enable active version detection or scripts; reported service labels are port-name mappings, not verified versions. Never repeat UI attribution labels."
+        instruction+="\nFor an authorized TCP scan use nmap_scan and its selected target. Never enable scripts or recovery. Never repeat UI attribution labels."
+        if self.version_task:
+            instruction+=" Use the selected service-version profile with 1..128 explicit TCP ports from the operator request. If ports are missing, ask for them; never guess. Product/version evidence comes only from actual probe matches."
+        else:
+            instruction+=" Port-name service labels are not verified versions."
         messages=[{"role":"system","content":instruction}]+self.history[-12:]+[{"role":"user","content":text}]
         outcomes=[]
         for _ in range(8):
@@ -417,9 +573,9 @@ class Agent:
                 elif any(item.get("isError") for item in outcomes):
                     answer="One or more requested operations failed or were blocked. Review the actual MCP results and errors above."
                 elif assessment:
-                    scans=[item for item in outcomes if item.get("tool")=="nmap_scan" and item.get("source")=="mcp" and not item.get("isError")]
+                    scans=[item for item in outcomes if item.get("tool") in NMAP_TOOLS and item.get("source")=="mcp" and not item.get("isError")]
                     if scans:
-                        answer="The actual MCP nmap_scan returned a result for "+str(scans[-1].get("target",chosen))+". Review MCP RESULT for reported open ports. Service labels are port-name mappings, not verified versions."
+                        answer="The actual MCP "+scans[-1].get("tool","nmap_scan")+" returned a result for "+str(scans[-1].get("target",chosen))+". Review MCP RESULT for source-backed findings. "+("Versions require identifying probe evidence." if self.version_task else "Service labels are port-name mappings, not verified versions.")
                     else:
                         answer="No authorized Nmap scan was confirmed. Use /tools nmap to inspect availability or clarify the target and ports."
                 elif not answer:
@@ -437,7 +593,7 @@ class Agent:
                 function=call["function"];name=function.get("name");args=function.get("arguments")
                 if not isinstance(name,str):raise AgentError("Missing structured tool name.")
                 data=await self.execute(name,args,exposed)
-                if self.last_result_id and (name=="nmap_scan" or self.terminal):
+                if self.last_result_id and (name in NMAP_TOOLS or self.terminal):
                     return await self.summarize_saved(self.last_result_id)
                 target=self.last_invocation[1].get("target") if self.last_invocation else None
                 outcomes.append(dict(data,tool=name,target=target))
@@ -487,9 +643,8 @@ async def interactive(api,model,wizard):
             "Type /help to view all commands"])
         policy=Policy()
         def approve(operation):
-            term.message("warning","Risk: intensive discovery or an unattended-session limit was reached." if operation["tool"]=="nmap_scan" else "Risk: this operation changes backend state.")
             approval_panel(term,operation)
-            return wizard.ask("Type APPROVE to execute, or anything else to deny:")=="APPROVE"
+            return wizard.ask("Enter APPROVE to execute this operation, or DENY to cancel:")=="APPROVE"
         agent=Agent(api,model,session,catalog,policy,approve,lambda out:term.write("MCP RESULT: "+plain(out)),terminal=term)
         while True:
             text=wizard.command()

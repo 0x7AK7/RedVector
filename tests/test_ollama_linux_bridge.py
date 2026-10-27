@@ -1,5 +1,6 @@
 """Opt-in real Linux launcher/ownership/MCP integration. No model or targets needed."""
 import asyncio
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -45,7 +46,13 @@ class RealLinuxBridgeTests(unittest.TestCase):
         with socket.socket() as available:
             available.bind(("127.0.0.1",0));port=available.getsockname()[1]
         self.assertEqual(backend_state(ROOT,"127.0.0.1",port),1)
-        started=time.time();owned={}
+        started=time.time();owned={};owned_scripts=[]
+        from redvector_ollama_agent import launcher_script
+        @contextmanager
+        def observed_launcher():
+            with launcher_script() as script:
+                if script.name.startswith(".ollama-launch-"):owned_scripts.append(script)
+                yield script
         def listener_pid():
             matches=[connection.pid for connection in psutil.net_connections(kind="tcp")
                      if connection.laddr.port==port and connection.status=="LISTEN" and connection.pid]
@@ -59,7 +66,7 @@ class RealLinuxBridgeTests(unittest.TestCase):
                  "REDVECTOR_API_TOKEN":secrets.token_hex(24),"XDG_CONFIG_HOME":str(directory/"config"),
                  "PATH":str(bindir)+os.pathsep+os.environ["PATH"]}
             try:
-                with patch.dict(os.environ,env):
+                with patch.dict(os.environ,env),patch("redvector_ollama_agent.launcher_script",side_effect=observed_launcher):
                     async def roundtrip():
                         async with bridge() as (session,catalog):
                             self.assertEqual(len(catalog),328)
@@ -103,4 +110,4 @@ class RealLinuxBridgeTests(unittest.TestCase):
                             except psutil.TimeoutExpired:process.kill();process.wait(timeout=5)
                     except psutil.NoSuchProcess:pass
         self.assertEqual(hashlib.sha256((ROOT/"start_redvector.sh").read_bytes()).hexdigest(),before)
-        self.assertFalse(list(ROOT.glob(".ollama-launch-*.sh")))
+        self.assertFalse([script for script in owned_scripts if script.exists()])

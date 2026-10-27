@@ -154,9 +154,11 @@ class ResultsStore:
         ident=uuid.uuid4().hex
         value={"schema":1,"id":ident,"created":datetime.now(timezone.utc).isoformat(),
                "tool":tool,"target":target,"arguments":copy.deepcopy(arguments),"mcp":copy.deepcopy(data),
-               "wire":copy.deepcopy(wire),"findings":(findings(data,target,elapsed) if tool=="nmap_scan" else __import__("redvector_ollama_views").normalize(tool,target,arguments,data,elapsed)),"persisted":True}
+               "wire":copy.deepcopy(wire),"findings":(findings(data,target,elapsed) if tool in ("nmap_scan","nmap_advanced_scan") else __import__("redvector_ollama_views").normalize(tool,target,arguments,data,elapsed)),"persisted":True}
         if authorization is not None:value["authorization"]=copy.deepcopy(authorization)
-        if tool=="nmap_scan":value["findings"]["scan_type"]=arguments.get("scan_type","Not supplied")
+        if tool in ("nmap_scan","nmap_advanced_scan"):
+            value["findings"]["scan_type"]=arguments.get("scan_type","Not supplied")
+            value["findings"]["tool"]=tool
         self.cache[ident]=value;self.latest=ident
         try:self._write(self.directory/(ident+".json"),value)
         except (OSError,ValueError,TypeError):

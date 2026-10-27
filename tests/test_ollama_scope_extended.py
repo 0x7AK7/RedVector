@@ -35,7 +35,7 @@ class ExtendedScopeTests(unittest.TestCase):
                 result = policy.authorize("nmap_scan", {"target":address,"scan_type":scan,"ports":"80,443"}, lambda call: approved.append(call) or True)
                 self.assertEqual(result, {"target":address, "scan_type":("-6 " if ":" in address else "") + scan,
                                           "ports":"80,443", "additional_args":FIXED, "use_recovery":False})
-                self.assertEqual(approved, [{"tool":"nmap_scan","arguments":result}])
+                self.assertEqual(approved, [{"tool":"nmap_scan","arguments":result,"reason":"Unattended discovery is disabled"}])
         for address in ["11.0.0.1", "2001:db9::9", "10.0.0.0/8"]:
             with self.subTest(address=address), self.assertRaises(PolicyError):
                 policy.authorize("nmap_scan", {"target":address}, lambda _: True)

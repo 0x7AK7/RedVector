@@ -74,6 +74,60 @@ class NativeNmap(unittest.TestCase):
                                 self.assertIn("timeout",failed)
                                 self.assertEqual(len(actual),1)
                                 print("REAL SCOPED NMAP PASS: explicit loopback scope, bounded automatic policy, native Nmap, real MCP/backend output, open owned TCP port, recovery disabled; 328 tools.")
+                                await agent.refresh_profiles()
+                                self.assertTrue(agent.runtime_verified,agent.policy.profile_status)
+                                self.assertEqual(agent.policy.profile_status.get("service-version-v1",{}).get("state"),"Ready",agent.policy.profile_status)
+                                agent.version_task=True
+                                data=await agent.execute("nmap_scan",{"target":host,"ports":str(scan_port),"scan_type":"-sT -sV"},{"nmap_scan"})
+                                self.assertFalse(data["isError"],data)
+                                payload=json.loads(data["content"][0]["text"])
+                                self.assertTrue(payload["success"],payload)
+                                self.assertEqual(payload["profile"],"service-version-v1")
+                                self.assertEqual(len(approvals),1)
+                                self.assertEqual(agent.policy.auto_count,1)
+                                report=await agent.execute("create_scan_summary",{"target":"saved"},{"create_scan_summary"})
+                                self.assertFalse(report["isError"],report)
+                                self.assertEqual(agent.last_invocation[1]["vulnerabilities_found"],0)
+                                print("REAL MCP REVIEWED PROFILE PASS: attested backend, exact approval, isolated native service probes, saved-evidence summary through actual MCP/backend; no inferred vulnerabilities.")
+                                for tool_name,arguments in [
+                                    ("create_vulnerability_report",{"vulnerabilities":"saved"}),
+                                    ("format_tool_output_visual",{"output":"saved"}),
+                                    ("server_health",{}),("get_cache_stats",{}),
+                                    ("get_telemetry",{}),("error_handling_statistics",{}),
+                                    ("clear_cache",{})]:
+                                    data=await agent.execute(tool_name,arguments,{tool_name})
+                                    self.assertFalse(data["isError"],(tool_name,data))
+                                self.assertEqual(len(approvals),2)  # service probes and test-owned backend cache mutation
+                                print("REAL NINE-TOOL MCP PASS: health/cache/telemetry/error statistics, approved cache clear, Nmap, three saved-evidence formatters. Only the test-owned backend was mutated.")
+                                advanced=await agent.execute("nmap_advanced_scan",{"target":host,"ports":str(scan_port),"scan_type":"-sT -sV"},{"nmap_advanced_scan"})
+                                self.assertFalse(advanced["isError"],advanced)
+                                self.assertEqual(agent.results.load()["tool"],"nmap_advanced_scan")
+                                from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+                                import threading
+                                requests=[]
+                                class OwnedHTTP(BaseHTTPRequestHandler):
+                                    def log_message(self,*args):pass
+                                    def do_GET(self):
+                                        requests.append(self.path);self.send_response(200);self.end_headers();self.wfile.write(b"Owned test response")
+                                web=ThreadingHTTPServer((host,0),OwnedHTTP);thread=threading.Thread(target=web.serve_forever,daemon=True);thread.start()
+                                url="http://"+host+":"+str(web.server_port)+"/"
+                                try:
+                                    for tool_name,args in [("http_framework_test",{"url":url}),("http_repeater",{"request_spec":{"url":url}}),("nuclei_scan",{"target":url})]:
+                                        outcome=await agent.execute(tool_name,args,{tool_name})
+                                        self.assertFalse(outcome["isError"],(tool_name,outcome))
+                                    from redvector_ollama_results import payloads
+                                    actual=payloads(outcome)[0]
+                                    self.assertEqual(len(actual["findings"]),2)
+                                    report=await agent.execute("create_vulnerability_report",{"vulnerabilities":"saved"},{"create_vulnerability_report"})
+                                    self.assertFalse(report["isError"],report)
+                                    self.assertEqual(len(json.loads(agent.last_invocation[1]["vulnerabilities"])),2)
+                                    self.assertEqual(requests,["/","/","/"])
+                                    self.assertEqual(len(approvals),3)
+                                    print("REAL THIRTEEN-TOOL MCP PASS: shared advanced Nmap, root GET/repeater, native sandboxed Nuclei; two real observations propagated into the actual report; three HTTP GETs; no extra approval for bounded reads.")
+                                finally:web.shutdown();web.server_close();thread.join()
+
+
+
                         asyncio.run(run())
                 finally:
                     owned.update(capture_started_backends(directory,ROOT,backend_port,started))

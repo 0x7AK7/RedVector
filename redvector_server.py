@@ -10918,6 +10918,73 @@ def _parse_nikto_output(raw: str) -> dict:
     return parsed
 
 
+@app.route("/api/ollama/advisories", methods=["POST"])
+def reviewed_advisory_query():
+    """Official fixed-provider data, never simulated target findings."""
+    from redvector_reviewed_advisories import run
+    data=request.get_json(silent=True) or {}
+    if not isinstance(data,dict) or set(data)-{"hours","severity_filter","keywords","dashboard"} or type(data.get("dashboard",False)) is not bool:
+        return jsonify({"success":False,"error":"Invalid reviewed advisory parameters."}),400
+    dashboard=data.pop("dashboard",False)
+    return jsonify(run(data,dashboard=dashboard))
+
+@app.route("/api/ollama/runtime", methods=["GET"])
+def reviewed_runtime_snapshot():
+    """Actual sanitized backend state; no new process management actions."""
+    from redvector_reviewed_runtime import snapshot
+    try:
+        value=request.args.get("pid")
+        if value is not None and (not value.isdecimal() or not 1<=int(value)<=2147483647):
+            return jsonify({"success":False,"error":"Invalid managed process ID."}),400
+        result=snapshot(ProcessManager,int(value) if value is not None else None)
+        return jsonify(result),200 if result.get("success") else 404
+    except (OSError,ValueError,TypeError,psutil.Error):
+        return jsonify({"success":False,"error":"Actual runtime measurements are unavailable."}),503
+
+@app.route("/api/ollama/artifacts", methods=["POST","DELETE"])
+def reviewed_artifact_control():
+    """Private bounded snapshots; original operator files are never opened by this API."""
+    import base64
+    from redvector_reviewed_artifacts import store,ArtifactError,MAX_BYTES
+    try:
+        if request.content_length is None or request.content_length>6*1024*1024:
+            raise ArtifactError("Artifact control requires a bounded Content-Length.")
+        data=request.get_json(silent=True) or {}
+        if request.method=="DELETE":
+            if set(data)!={"token"}:raise ArtifactError("Exact artifact handle required.")
+            store().remove(data["token"])
+            return jsonify({"success":True})
+        if set(data)!={"session","sha256","data"} or not isinstance(data["data"],str) or len(data["data"])>4*((MAX_BYTES+2)//3):
+            raise ArtifactError("Invalid artifact staging payload.")
+        raw=base64.b64decode(data["data"],validate=True)
+        token=store().put(data["session"],raw,data["sha256"])
+        return jsonify({"success":True,"token":token,"id":token.split(":")[2]})
+    except (ArtifactError,OSError,ValueError,KeyError,TypeError) as exc:
+        return jsonify({"success":False,"error":str(exc)[:200]}),400
+
+@app.route("/api/ollama/profiles", methods=["GET"])
+def reviewed_ollama_profiles():
+    """Authenticated opt-in capability metadata; legacy health routes unchanged."""
+    import hashlib
+    from pathlib import Path
+    import redvector_reviewed_profiles as reviewed
+    import redvector_reviewed_assessment as assessment
+    import redvector_reviewed_artifacts as artifacts
+    import redvector_reviewed_runtime as runtime
+    import redvector_reviewed_advisories as advisories
+    module = Path(reviewed.__file__)
+    modules={module.name:hashlib.sha256(module.read_bytes().replace(b"\r\n",b"\n")).hexdigest(),
+             Path(assessment.__file__).name:hashlib.sha256(Path(assessment.__file__).read_bytes().replace(b"\r\n",b"\n")).hexdigest()}
+    modules[Path(artifacts.__file__).name]=hashlib.sha256(Path(artifacts.__file__).read_bytes().replace(b"\r\n",b"\n")).hexdigest()
+    modules[Path(runtime.__file__).name]=hashlib.sha256(Path(runtime.__file__).read_bytes().replace(b"\r\n",b"\n")).hexdigest()
+    modules[Path(advisories.__file__).name]=hashlib.sha256(Path(advisories.__file__).read_bytes().replace(b"\r\n",b"\n")).hexdigest()
+    return jsonify({
+        "profiles": dict(reviewed.capabilities(),**assessment.capabilities(),**artifacts.capabilities(),**runtime.capabilities(),**advisories.capabilities()),
+        "modules_sha256": modules,
+        "tools_status": _get_tools_status_snapshot(["nmap", "nuclei", "jaeles", "clairctl"]),
+        "module_sha256": hashlib.sha256(module.read_bytes().replace(b"\r\n", b"\n")).hexdigest(),
+    })
+
 @app.route("/api/tools/nmap", methods=["POST"])
 def nmap():
     """Execute nmap scan with enhanced logging, caching, and intelligent error handling"""
@@ -10928,6 +10995,11 @@ def nmap():
         ports = params.get("ports", "")
         additional_args = params.get("additional_args", "-T4 -Pn")
         use_recovery = params.get("use_recovery", True)
+
+        # Opt-in reviewed handler. Legacy tool behavior and route/schema stay intact.
+        if scan_type == "--redvector-profile=service-version-v1":
+            from redvector_reviewed_profiles import run_profile
+            return jsonify(run_profile("nmap_scan", params))
 
         if not target:
             logger.warning("🎯 Nmap called without target parameter")
@@ -11030,6 +11102,10 @@ def nuclei():
     """Execute Nuclei vulnerability scanner with enhanced logging and intelligent error handling"""
     try:
         params = request.get_json(silent=True) or {}
+        if params.get("template")=="--redvector-profile=http-headers-v1":
+            from redvector_reviewed_assessment import run_nuclei
+            return jsonify(run_nuclei(params))
+
         target = params.get("target", "")
         severity = params.get("severity", "")
         tags = params.get("tags", "")
@@ -11588,6 +11664,9 @@ def nikto():
     """Execute nikto with enhanced logging"""
     try:
         params = request.get_json(silent=True) or {}
+        from redvector_reviewed_assessment import HTTP_ASSESS_MARKER,run_http_assessment
+        if params.get("additional_args")==HTTP_ASSESS_MARKER:
+            return jsonify(run_http_assessment("nikto_scan",params))
         target = params.get("target", "")
         additional_args = params.get("additional_args", "")
 
@@ -12099,6 +12178,9 @@ def rustscan():
     """Execute Rustscan for ultra-fast port scanning with enhanced logging"""
     try:
         params = request.get_json(silent=True) or {}
+        from redvector_reviewed_assessment import SCAN_MARKER,run_tcp_connect
+        if params.get("additional_args")==SCAN_MARKER:
+            return jsonify(run_tcp_connect("rustscan_fast_scan",params))
         target = params.get("target", "")
         ports = params.get("ports", "")
         ulimit = params.get("ulimit", 5000)
@@ -12135,6 +12217,9 @@ def masscan():
     """Execute Masscan for high-speed Internet-scale port scanning with intelligent rate limiting"""
     try:
         params = request.get_json(silent=True) or {}
+        from redvector_reviewed_assessment import SCAN_MARKER,run_tcp_connect
+        if params.get("additional_args")==SCAN_MARKER:
+            return jsonify(run_tcp_connect("masscan_high_speed",params))
         target = params.get("target", "")
         ports = params.get("ports", "1-65535")
         rate = params.get("rate", 1000)
@@ -12178,6 +12263,13 @@ def nmap_advanced():
     """Execute advanced Nmap scans with custom NSE scripts and optimized timing"""
     try:
         params = request.get_json(silent=True) or {}
+        if params.get("scan_type")=="--redvector-profile=service-version-v1":
+            from redvector_reviewed_profiles import run_profile
+            allowed={"target","scan_type","ports","timing","nse_scripts","os_detection","version_detection","aggressive","stealth","additional_args"}
+            if set(params)-allowed or params.get("timing")!="T2" or params.get("nse_scripts","") or any(params.get(k,False) for k in ("os_detection","aggressive","stealth")) or params.get("version_detection") is not True:
+                return jsonify({"success":False,"error":"Exact reviewed advanced service profile required."}),400
+            return jsonify(run_profile("nmap_scan",dict(target=params.get("target"),ports=params.get("ports"),scan_type=params["scan_type"],additional_args=params.get("additional_args"),use_recovery=False)))
+
         target = params.get("target", "")
         scan_type = params.get("scan_type", "-sS")
         ports = params.get("ports", "")
@@ -12730,6 +12822,10 @@ def checksec():
     """Check security features of a binary with enhanced logging"""
     try:
         params = request.get_json(silent=True) or {}
+        if isinstance(params.get("binary"),str) and params["binary"].startswith("rv-artifact-v1:"):
+            from redvector_reviewed_artifacts import run_profile
+            return jsonify(run_profile("checksec_analyze",params))
+
         binary = params.get("binary", "")
 
         if not binary:
@@ -12755,6 +12851,10 @@ def xxd():
     """Create a hex dump of a file using xxd with enhanced logging"""
     try:
         params = request.get_json(silent=True) or {}
+        if isinstance(params.get("file_path"),str) and params["file_path"].startswith("rv-artifact-v1:"):
+            from redvector_reviewed_artifacts import run_profile
+            return jsonify(run_profile("xxd_hexdump",params))
+
         file_path = params.get("file_path", "")
         offset = params.get("offset", "0")
         length = params.get("length", "")
@@ -12791,6 +12891,10 @@ def strings():
     """Extract strings from a binary file with enhanced logging"""
     try:
         params = request.get_json(silent=True) or {}
+        if isinstance(params.get("file_path"),str) and params["file_path"].startswith("rv-artifact-v1:"):
+            from redvector_reviewed_artifacts import run_profile
+            return jsonify(run_profile("strings_extract",params))
+
         file_path = params.get("file_path", "")
         min_len = params.get("min_len", 4)
         additional_args = params.get("additional_args", "")
@@ -12823,6 +12927,10 @@ def objdump():
     """Analyze a binary using objdump with enhanced logging"""
     try:
         params = request.get_json(silent=True) or {}
+        if isinstance(params.get("binary"),str) and params["binary"].startswith("rv-artifact-v1:"):
+            from redvector_reviewed_artifacts import run_profile
+            return jsonify(run_profile("objdump_analyze",params))
+
         binary = params.get("binary", "")
         disassemble = params.get("disassemble", True)
         additional_args = params.get("additional_args", "")
@@ -13665,6 +13773,9 @@ def jaeles():
     """Execute Jaeles for advanced vulnerability scanning with custom signatures"""
     try:
         params = request.get_json(silent=True) or {}
+        from redvector_reviewed_assessment import HTTP_ASSESS_MARKER,run_http_assessment
+        if params.get("additional_args")==HTTP_ASSESS_MARKER:
+            return jsonify(run_http_assessment("jaeles_vulnerability_scan",params))
         url = params.get("url", "")
         signatures = params.get("signatures", "")
         config = params.get("config", "")
@@ -13745,6 +13856,9 @@ def httpx():
     """Execute httpx for fast HTTP probing and technology detection"""
     try:
         params = request.get_json(silent=True) or {}
+        from redvector_reviewed_assessment import HTTP_ASSESS_MARKER,run_http_assessment
+        if params.get("additional_args")==HTTP_ASSESS_MARKER:
+            return jsonify(run_http_assessment("httpx_probe",params))
         target = params.get("target", "")
         probe = params.get("probe", True)
         tech_detect = params.get("tech_detect", False)
@@ -14669,6 +14783,12 @@ def http_framework_endpoint():
     """Enhanced HTTP testing framework (Burp Suite alternative)"""
     try:
         params = request.get_json(silent=True) or {}
+        from redvector_reviewed_assessment import HTTP_PROFILE,run_http
+        if params.get("action")==HTTP_PROFILE:
+            return jsonify(run_http(params))
+        if params.get("action")=="repeater" and isinstance(params.get("request"),dict) and params["request"].get("action")==HTTP_PROFILE:
+            return jsonify(run_http(params["request"]))
+
         action = params.get("action", "request")  # request, spider, proxy_history, set_rules, set_scope, repeater, intruder
         url = params.get("url", "")
         method = params.get("method", "GET")
@@ -14996,6 +15116,9 @@ def wafw00f():
     """Execute wafw00f to identify and fingerprint WAF products with enhanced logging"""
     try:
         params = request.get_json(silent=True) or {}
+        from redvector_reviewed_assessment import HTTP_ASSESS_MARKER,run_http_assessment
+        if params.get("additional_args")==HTTP_ASSESS_MARKER:
+            return jsonify(run_http_assessment("wafw00f_scan",params))
         target = params.get("target", "")
         additional_args = params.get("additional_args", "")
 

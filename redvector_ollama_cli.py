@@ -96,6 +96,57 @@ async def handle_command(text,agent,wizard):
     elif route=="help":render_help(term,argument)
     return "handled"
 
+def _looks_like_target(token):
+    """True only for tokens shaped like a network destination: an IP literal, a CIDR, a
+    bracketed IPv6 address, or a dotted hostname. Plain English words, bare port numbers and
+    port ranges (e.g. 'of', '65535', '1-65535', '80,443') return False and are never read as
+    hosts. This is the generic guard against false out-of-scope rejections; it hardcodes no
+    target and defers actual authorization to the policy."""
+    if not token:
+        return False
+    if "/" in token:
+        try:
+            ipaddress.ip_network(token,strict=False);return True
+        except ValueError:
+            return False
+    host=token[1:-1] if token.startswith("[") and token.endswith("]") else token
+    try:
+        ipaddress.ip_address(host);return True
+    except ValueError:
+        pass
+    # Dotted hostname grammar; the final label must start with a letter so numeric strings and
+    # port ranges (all-numeric labels) are not mistaken for hosts.
+    return bool("." in host and re.fullmatch(
+        r"(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]{0,61}",host))
+
+_STOPWORDS=frozenset("""a an the this that these those my our your his her their its it them they we you
+scan scans scanned scanning nmap nmap_scan nmap_advanced_scan run runs running execute executes executing perform performs performing
+do does did please can could would will shall want wants wanted like help let me i
+identify identifies find finds check checks enumerate enumerates discover discovers probe probes detect detects map list show get
+summarize summarise summarized analyze analyse analyzes report reports result results output outputs call calls then next
+of on in into to at by for from with without within via using use over across against and or but as
+all any both each more most some few only just exactly precisely once twice then also now new current up down live
+open closed filtered tcp udp port ports service services version versions intensity banner banners actual real
+host hosts hostname hostnames target targets authorized authorised unauthorized destination destinations machine machines box boxes
+system systems node nodes device devices server servers endpoint endpoints asset assets lab labs environment
+network networks subnet subnets cidr range ranges full complete comprehensive quick fast deep basic thorough standard default
+number numbers entire whole every please""".split())
+
+def _named_operands(view):
+    """Yield host labels in scan-operand position (immediately after a scan verb or a target
+    preposition), skipping English function/scan words and numeric/port tokens. This lets a
+    genuinely named but unauthorized host (e.g. 'intranet') be rejected while ordinary words
+    (e.g. 'of' in 'port scan of HOST') are never treated as destinations. No target is hardcoded."""
+    operands=[]
+    for anchor in re.finditer(r"(?i)\b(?:scan|nmap(?:_scan)?|on|against|at|target|host|hostname|named|called)\b",view):
+        for raw in re.findall(r"[A-Za-z0-9_.:/%\[\]\-]+",view[anchor.end():]):
+            token=raw.strip("[]").rstrip(".?,;")
+            low=token.lower()
+            if not token or low in _STOPWORDS:continue
+            if re.fullmatch(r"[0-9]+(?:[-,][0-9]+)*",low):continue  # port number / range / list
+            operands.append(token);break  # first content token after the verb is the operand
+    return operands
+
 def assessment_context(text,policy,allow_versions=False):
     """Return (is_assessment, chosen_target, clarification), without model calls."""
     text=text.strip()
@@ -112,32 +163,34 @@ def assessment_context(text,policy,allow_versions=False):
     scope=policy.snapshot()
     if not scope:
         return True,None,"No authorized target is configured.\n\nUse /scope TARGET to configure an authorized target.\nNo scan was executed."
-    relative={"my","our","the","a","an","this","authorized","target","targets","host","hosts","network","subnet","for","open","tcp","ports","port","services","and","on","against","all","current","it","them","these","those"}
-    operand_patterns=(r"(?i)\b(?:scan|nmap(?:_scan)?)(?:\s+(?:on|against))?\s+([A-Za-z0-9_.:/%\-]+)",
-                      r"(?i)\b(?:on|against|at|called|named|hostname|host|target)\s+([A-Za-z0-9_.:/%\-]+)")
-    for pattern in operand_patterns:
-        matches=list(re.finditer(pattern,view))
-        for match in matches:
-            operand=match.group(1)
-            value=operand.rstrip(".?").lower()
-            if match.group(0).lower().startswith("nmap") and value in {"exactly","once","only","then","with","using"}:continue
-            if value in relative or value in scope:continue
-            if value=="only" and re.match(r"(?i)\s+(?:the\s+)?(?:ports?|services?)\b",view[match.end():]):continue
-            try:authorized_operand(value,policy)
-            except (PolicyError,ValueError):
-                return True,None,"The requested target is outside the operator-authorized scope. Use /scope TARGET or select an explicitly authorized host. No scan was executed."
+    scope_lower={entry.lower() for entry in scope}
+    # Single pass over the request: only destination-SHAPED tokens (IP/CIDR/bracketed IPv6/
+    # dotted host) or tokens already in scope are considered targets. Ordinary words, bare port
+    # numbers and port ranges are ignored, so they cannot trigger a false out-of-scope block.
+    # A destination-shaped token that is genuinely out of scope is still rejected; scope is
+    # never silently expanded.
     explicit=[]
-    for token in re.findall(r"[A-Za-z0-9:][A-Za-z0-9_.:/%\-]*",text):
-        token=token.rstrip(".")
-        if token.lower() in scope:explicit.append(token.lower());continue
+    for raw in re.findall(r"[A-Za-z0-9:\[][A-Za-z0-9_.:/%\[\]\-]*",text):
+        token=raw.rstrip(".?,;")
+        if token.startswith("[") and token.endswith("]"):token=token[1:-1]
+        if token.lower() in scope_lower:
+            explicit.append(authorized_operand(token,policy));continue
         if "://" in token or "%" in token:
             return True,None,"Use a plain authorized host, without URLs or zone identifiers. No scan was executed."
+        if not _looks_like_target(token):continue
         try:
-            # Ordinary prose labels such as "ports:" are not IPv6 addresses.
-            if "." not in token and "/" not in token and token.count(":")<2:continue
             explicit.append(authorized_operand(token,policy))
         except (PolicyError,ValueError):
-            return True,None,"The requested target is outside the operator-authorized scope. Use /scope and select one authorized host. No scan was executed."
+            return True,None,"The requested target is outside the operator-authorized scope. Use /scope TARGET or select an explicitly authorized host. No scan was executed."
+    # A host NAMED as the scan operand (after a scan verb or target preposition) must be
+    # authorized even when it is a single label; ordinary function words are skipped above.
+    for operand in _named_operands(view):
+        low=operand.lower()
+        if low in scope_lower or _looks_like_target(operand):continue  # in scope or already validated by shape
+        try:
+            explicit.append(authorized_operand(operand,policy))
+        except (PolicyError,ValueError):
+            return True,None,"The requested target is outside the operator-authorized scope. Use /scope TARGET or select an explicitly authorized host. No scan was executed."
     choices=list(dict.fromkeys(explicit))
     if len(choices)>1:return True,None,"Multiple targets were requested. Select one authorized host for this operation. No scan was executed."
     if not choices:

@@ -9,7 +9,7 @@
     "redvector_ollama_profiles.py": "ef821ce7286a52089284cc7e7debadf666e7882e2ce71126e28ef599e73fe8c9",
     "redvector_ollama_reporting.py": "23db3fcf60242f67eb874306809a8e3a72a2e57a752b7450367533c426b27182",
     "redvector_ollama_availability.py": "5e1f0fb6fd75024937b54df92f9a7cfeec3adfabc12fdc880f0005e90c225611",
-    "redvector_ollama_cli.py": "eecd1e483da272e8202bd014a1ecc4f65a844e2abc282ff3ebbfc185d03cbebb",
+    "redvector_ollama_cli.py": "1c885714f99c97bcff4153956e0243b5da7d5465d6dc04094347aff31401f0a7",
     "redvector_ollama_presentation.py": "7485f815f41f011c22b1242cd7b5485d51841bbd56439aa0fa62eab5f2235ba2",
     "redvector_reviewed_assessment.py": "774d8e14c17f277925c047fbd1021b00c51ba0488a4bce016bc03b10df82c8ee",
     "redvector_ollama_results.py": "33791a82fbad6b851c045a7a3f689f8c60e5c7e6de668af55f71427242e8e626",
@@ -273,10 +273,23 @@
       "failed": 0,
       "skipped": 0,
       "note": "full-range 1-65535 discovery live + staged ai_vulnerability_assessment live (owned loopback) + 9 discovery/orchestrator unit tests."
+    },
+    "windows_full_scope_fix": {
+      "passed": 543,
+      "failed": 0,
+      "skipped": 48,
+      "subtests_passed": 129
+    },
+    "native_core_scope_fix": {
+      "passed": 582,
+      "failed": 0,
+      "skipped": 7,
+      "subtests_passed": 136,
+      "seconds": 700.36
     }
   },
   "limits": [
-    "30 independently verified constrained tool workflows (prior 29 + ai_vulnerability_assessment staged orchestrator); full functional coverage of 328 tools remains incomplete.",
+    "30 independently verified constrained tool workflows; the dynamic scope-parsing repair fixed false out-of-scope rejections without adding a newly verified tool. Full 328-tool coverage remains incomplete.",
     "Full-range discovery (tcp-discovery-v1) is native nmap -sT only: XML open/closed/filtered states, bounded --max-rate/--host-timeout and a 300s cancellable deadline; no UDP, OS detection or NSE. Service/version identification uses the 128-port service-version-v1 profile in chunks.",
     "ai_vulnerability_assessment chains reviewed profiles only; its internal discovery defaults to a bounded 1-10000 range (full 1-65535 is the explicit nmap stage); candidate CVEs are NVD keyword matches requiring validation, not exploitability.",
     "Bounded TCP discovery (masscan_high_speed/rustscan_fast_scan) and confined HTTP assessment (httpx/nikto/wafw00f/jaeles) are RedVector's own bounded/passive engines; the native scanners are never executed (Masscan/RustScan are not installed).",
@@ -355,7 +368,8 @@
     "Profile attestation allowlist did not register redvector-tcp-connect-v1, so SCAN_PROFILE was dropped by attest() and never became Ready; added it to the assessment-module attestation set (same source-integrity gate), and the full-bridge TCP discovery MCP test now passes.",
     "Full-range TCP discovery: added reviewed tcp-discovery-v1 profile (real attested nmap -sT, 1..65535, XML open/closed/filtered states) and policy routing so full-range requests run it instead of being silently capped to the 128-port service profile; service-version then runs on discovered open ports in <=128 chunks.",
     "Vulnerability assessment: implemented the reviewed ai_vulnerability_assessment staged orchestrator chaining reviewed profiles with a ranked taxonomy and per-stage audit trail; fixed availability.status so reviewed passive tools (jaeles/nikto/httpx/wafw00f/masscan/rustscan) no longer report a native 'Missing Dependency'; clarified Nuclei checksum-vs-missing diagnostics without bypassing attestation; stopped hard-failing reviewed HTTP assessment on benign extra arguments.",
-    "Authorization UX: reviewed passive HTTP and bounded TCP tools no longer prompt within scope (high-impact scans still require explicit approval each time); approval input is case-insensitive (approve/deny); a distinct error taxonomy (out-of-scope / approval-required / missing-dependency / missing-integration / unsupported / invalid-arguments / execution-failed) replaces treating a missing adapter as a denial."
+    "Authorization UX: reviewed passive HTTP and bounded TCP tools no longer prompt within scope (high-impact scans still require explicit approval each time); approval input is case-insensitive (approve/deny); a distinct error taxonomy (out-of-scope / approval-required / missing-dependency / missing-integration / unsupported / invalid-arguments / execution-failed) replaces treating a missing adapter as a denial.",
+    "Dynamic scope parsing: assessment_context now treats a request token as a destination only when it is destination-shaped (IP/CIDR/bracketed IPv6/dotted host) or a host NAMED in scan-operand position (function words skipped), so ordinary words (e.g. 'of' in 'port scan of HOST'), bare port numbers and ranges (65535, 1-65535, 80,443) are never read as hosts and cannot cause a false out-of-scope rejection; explicitly-named unknown hosts and genuinely out-of-scope destinations are still denied, and scope is never silently expanded. No target is hardcoded."
   ],
   "real_model_verification": {
     "source": "actual installed Ollama model",

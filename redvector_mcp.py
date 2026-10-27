@@ -4830,6 +4830,10 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
         """
         logger.info(f"🔬 Starting AI vulnerability assessment for {target}")
 
+        # Opt-in reviewed staged assessment for the Ollama client session; legacy behavior unchanged.
+        if os.environ.get("REDVECTOR_OLLAMA_SESSION") == "1":
+            return redvector_client.safe_post("api/ollama/assessment", {"target": target, "focus_areas": focus_areas})
+
         # Analyze target first
         analysis_result = redvector_client.safe_post("api/intelligence/analyze-target", {"target": target})
 

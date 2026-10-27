@@ -21,7 +21,8 @@ HTTP_READ_TOOLS=frozenset({"http_framework_test","http_repeater","nuclei_scan"})
 HTTP_ASSESS_TOOLS=frozenset({"httpx_probe","nikto_scan","wafw00f_scan","jaeles_vulnerability_scan"})
 TCP_SCAN_TOOLS=frozenset({"masscan_high_speed","rustscan_fast_scan"})
 NMAP_TOOLS=frozenset({"nmap_scan","nmap_advanced_scan"})
-REVIEWED = DIAGNOSTICS | OFFLINE_TOOLS | HTTP_READ_TOOLS | HTTP_ASSESS_TOOLS | TCP_SCAN_TOOLS | ARTIFACT_TOOLS | RUNTIME_TOOLS | ADVISORY_TOOLS | NMAP_TOOLS | {"clear_cache"}
+ASSESSMENT_TOOLS=frozenset({"ai_vulnerability_assessment"})
+REVIEWED = DIAGNOSTICS | OFFLINE_TOOLS | HTTP_READ_TOOLS | HTTP_ASSESS_TOOLS | TCP_SCAN_TOOLS | ARTIFACT_TOOLS | RUNTIME_TOOLS | ADVISORY_TOOLS | NMAP_TOOLS | ASSESSMENT_TOOLS | {"clear_cache"}
 DISABLED_REASONS = {"whois_lookup": "WHOIS registry and referral destinations cannot be confined by the existing backend."}
 FIXED_NMAP_ARGS = "-n -Pn --unprivileged --max-retries 1 --host-timeout 60s"
 AUTO_NMAP_ARGS = FIXED_NMAP_ARGS + " --max-rate 50 --scan-delay 20ms --max-parallelism 8"
@@ -317,7 +318,8 @@ class Policy:
             except ValueError:raise PolicyError("Invalid URL port.") from None
             if u.scheme not in ("http","https") or u.username or u.password or u.query or u.fragment or u.path not in ("","/"):
                 raise PolicyError("Reviewed HTTP assessment permits one root HTTP(S) URL, without credentials, queries or fragments.")
-            if args.get("additional_args",""):raise PolicyError("Reviewed HTTP assessment uses a fixed passive profile; no extra arguments.")
+            # The reviewed passive profile ignores any model-supplied scanner flags rather than
+            # failing the workflow; it always runs the fixed confined root-response assessment.
             capability=self.profile_status.get(HTTP_PROFILE,{})
             if capability.get("state")!="Ready":raise PolicyError("Reviewed assessment unavailable. "+str(capability.get("detail","Refresh backend capabilities with /tools.")))
             destination=self._destination(u.hostname or "")
@@ -325,6 +327,17 @@ class Policy:
             authority=("["+destination+"]" if ip.version==6 else destination)+((":"+str(port)) if port else "")
             pinned=urlunsplit((u.scheme,authority,"/","",""))
             return {key:pinned,"additional_args":HTTP_ASSESS_MARKER}
+        if name in ASSESSMENT_TOOLS:
+            if "target" not in args or set(args)-{"target","focus_areas"}:
+                raise PolicyError("The staged assessment requires one authorized target and an optional focus area.")
+            value=self._destination(args["target"])
+            focus=args.get("focus_areas","all")
+            if not isinstance(focus,str) or focus not in ("all","web","network","api","http"):
+                focus="all"
+            capability=self.profile_status.get("tcp-discovery-v1",{})
+            if capability.get("state")!="Ready":
+                raise PolicyError("Reviewed staged assessment unavailable: discovery profile not ready. "+str(capability.get("detail","Refresh backend capabilities with /tools.")))
+            return {"target":value,"focus_areas":focus}
         if name in TCP_SCAN_TOOLS:
             from redvector_reviewed_assessment import SCAN_PROFILE,SCAN_MARKER
             if "target" not in args:raise PolicyError("One explicit authorized target is required.")
@@ -375,6 +388,8 @@ class Policy:
         ports = args.get("ports", "")
         if not isinstance(ports, str) or len(ports) > 2048:
             raise PolicyError("Invalid port selection.")
+        if not version_profile and ports.strip() == "-":
+            ports = "1-65535"  # explicit full-range discovery shorthand
         if ports:
             for group in ports.split(","):
                 if not re.fullmatch(r"[0-9]{1,5}(?:-[0-9]{1,5})?", group):
@@ -388,6 +403,15 @@ class Policy:
             from redvector_reviewed_profiles import NMAP_PROFILE
             return {"target":value,"additional_args":"--version-intensity "+str(self.version_intensity),
                     "scan_type":NMAP_PROFILE,"ports":ports,"use_recovery":False}
+        if ports=="1-65535":
+            # Explicit full-range discovery uses the attested reviewed discovery profile
+            # (real native nmap -sT, XML parsed), never a silent fallback to the 128 service profile.
+            # Smaller/partial scans keep their existing bounded-discovery approval path unchanged.
+            from redvector_reviewed_profiles import DISCOVERY_PROFILE
+            capability=self.profile_status.get("tcp-discovery-v1",{})
+            if capability.get("state")!="Ready":
+                raise PolicyError("Reviewed full-range TCP discovery profile unavailable. "+str(capability.get("detail","Updated verified backend and native runtime required.")))
+            return {"target":value,"additional_args":"","scan_type":DISCOVERY_PROFILE,"ports":ports,"use_recovery":False}
         return {"target":value, "additional_args":FIXED_NMAP_ARGS, "scan_type":("-6 " if version == 6 else "") + scan,
                 "ports":ports, "use_recovery":False}
 
@@ -401,7 +425,10 @@ class Policy:
                 raise PolicyError("Operator declined the public advisory query.")
             if self.revision!=revision or self._prepare(name,original)!=result:
                 raise PolicyError("Authorization state changed during advisory approval.")
-        if name not in DIAGNOSTICS | OFFLINE_TOOLS | HTTP_READ_TOOLS | ARTIFACT_TOOLS | RUNTIME_TOOLS | ADVISORY_TOOLS:
+        # Scope-gated low-impact reviewed reads (diagnostics, saved-evidence, passive HTTP read and
+        # assessment, bounded TCP connect, artifact, runtime, advisory) do not prompt per call;
+        # high-impact operations below still require an explicit approval each time.
+        if name not in DIAGNOSTICS | OFFLINE_TOOLS | HTTP_READ_TOOLS | HTTP_ASSESS_TOOLS | TCP_SCAN_TOOLS | ARTIFACT_TOOLS | RUNTIME_TOOLS | ADVISORY_TOOLS:
             count=1000
             if name in NMAP_TOOLS and result["ports"]:
                 ports=set()
@@ -409,14 +436,17 @@ class Policy:
                     bounds=[int(n) for n in group.split("-")]
                     ports.update(range(bounds[0],bounds[-1]+1))
                 count=len(ports)
-            version_profile=name in NMAP_TOOLS and result.get("scan_type","").startswith("--redvector-profile=")
-            automatic=(allow_automatic is True and name=="nmap_scan" and not version_profile and self.auto_discovery and count<=1000
+            version_profile=name in NMAP_TOOLS and result.get("scan_type","")=="--redvector-profile=service-version-v1"
+            discovery_profile=name in NMAP_TOOLS and result.get("scan_type","")=="--redvector-profile=tcp-discovery-v1"
+            automatic=(allow_automatic is True and name=="nmap_scan" and not version_profile and not discovery_profile and self.auto_discovery and count<=1000
                        and self.auto_count<5 and self.clock()-self.last_auto>=30)
             if not automatic:
                 reasons=[]
-                if name not in NMAP_TOOLS:reasons.append("State-changing operation requires explicit approval")
+                if name in ASSESSMENT_TOOLS:reasons.append("Staged reviewed assessment (chains multiple reviewed scanners against the authorized target) requires one operator approval")
+                elif name not in NMAP_TOOLS:reasons.append("State-changing operation requires explicit approval")
                 else:
                     if version_profile:reasons.append("Reviewed active service probes require exact operator approval")
+                    if discovery_profile:reasons.append("Full-range native TCP connect discovery requires one operator approval")
                     if count>1000:reasons.append("Port count exceeds the unattended 1,000-port bound")
                     if not allow_automatic:reasons.append("No explicit low-impact discovery instruction selected")
                     if not self.auto_discovery:reasons.append("Unattended discovery is disabled")

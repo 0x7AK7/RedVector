@@ -108,8 +108,14 @@ def nuclei_binary():
     value=os.environ.get("REDVECTOR_NUCLEI_BIN") or shutil.which("nuclei")
     if not value:raise AssessmentError("Missing Dependency: configure REDVECTOR_NUCLEI_BIN or install Nuclei on the backend PATH.")
     path=Path(value)
-    if not path.is_absolute() or path.is_symlink() or not path.is_file() or digest(path)!=NUCLEI_SHA256:
-        raise AssessmentError("Unsupported Nuclei runtime: reviewed Linux amd64 v3.11.1 checksum required.")
+    if not path.is_absolute() or path.is_symlink() or not path.is_file():
+        raise AssessmentError("Unsupported Nuclei runtime: an absolute, non-symlink regular-file path is required.")
+    actual=digest(path)
+    if actual!=NUCLEI_SHA256:
+        # Distinguish a wrong/unverified build from a missing one; never bypass attestation.
+        raise AssessmentError("Unsupported Nuclei runtime: checksum mismatch (configured binary sha256 "+actual[:12]
+            +"... != reviewed v3.11.1 "+NUCLEI_SHA256[:12]+"...). Install the verified build with "
+            "tools/install_reviewed_nuclei.py and point REDVECTOR_NUCLEI_BIN at it; a different Nuclei build is not accepted.")
     return path
 
 def no_network():

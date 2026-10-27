@@ -22,10 +22,16 @@ import xml.etree.ElementTree as ET
 
 NMAP_PROFILE = "--redvector-profile=service-version-v1"
 PROFILE = "service-version-v1"
+DISCOVERY_PROFILE = "--redvector-profile=tcp-discovery-v1"
+DISCOVERY = "tcp-discovery-v1"
 _LOCK = threading.Lock()
 _LIMIT = 1024 * 1024
 _DEADLINE = 45
+_DISCOVERY_DEADLINE = 300
+_DISCOVERY_MAX_RATE = "500"
+_DISCOVERY_HOST_TIMEOUT = "280s"
 MAX_PORTS = 128
+MAX_DISCOVERY_PORTS = 65535
 # No default/fallback probes, SSL upgrade, RPC match, proxy request or redirect.
 _PROBES = r"""Exclude T:9100-9107
 Probe TCP NULL q||
@@ -123,8 +129,19 @@ def _runtime():
     return executable, root, files, snapshots
 
 def capabilities():
+    states={}
+    # Both profiles use the same attested native runtime (the dpkg-located ELF nmap, since
+    # /usr/bin/nmap is a wrapper script on some distros). Discovery (-sT) needs no version
+    # script verification, so it is Ready once the runtime attests even if the fuller
+    # service-version check below fails.
     try:
         executable,root,files,snapshots=_runtime()
+    except (ProfileError, OSError, subprocess.SubprocessError) as exc:
+        detail = str(exc) if isinstance(exc,ProfileError) else "Native scanner runtime unavailable or verification failed"
+        state = "Missing Dependency" if "Missing" in detail else "Unsupported"
+        return {DISCOVERY:{"state":state,"detail":detail},PROFILE:{"state":state,"detail":detail}}
+    states[DISCOVERY]={"state":"Ready","detail":"Native attested nmap -sT connect discovery; 1..65535 ports, bounded rate/host-timeout; no NSE/UDP/OS; XML parsed"}
+    try:
         with tempfile.TemporaryDirectory(prefix="redvector-profile-check-") as name:
             directory=Path(name)
             private=_stage(root,files,snapshots,directory)
@@ -132,11 +149,12 @@ def capabilities():
             _check(snapshots)
             if any(_digest(p)!=digest for p,digest in private.items()):
                 raise ProfileError("Private scanner profile integrity changed")
-        return {PROFILE: {"state":"Ready", "detail":"Native reviewed TCP profile; at most 128 ports, intensity 0-2; SSH/HTTP/FTP/SMTP/POP3/IMAP/MySQL greeting evidence"}}
+        states[PROFILE]={"state":"Ready", "detail":"Native reviewed TCP profile; at most 128 ports, intensity 0-2; SSH/HTTP/FTP/SMTP/POP3/IMAP/MySQL greeting evidence"}
     except (ProfileError, OSError, subprocess.SubprocessError) as exc:
         detail = str(exc) if isinstance(exc,ProfileError) else "Native scanner runtime unavailable or verification failed"
         state = "Missing Dependency" if "Missing" in detail else "Unsupported"
-        return {PROFILE: {"state":state, "detail":detail}}
+        states[PROFILE]={"state":state, "detail":detail}
+    return states
 
 def _validate(tool, params):
     if tool != "nmap_scan" or not isinstance(params, dict):
@@ -314,4 +332,118 @@ def run_profile(tool, params):
     except (ProfileError,OSError,subprocess.SubprocessError) as exc:
         detail=str(exc) if isinstance(exc,ProfileError) else "Native scanner runtime unavailable or verification failed"
         return {"success":False,"error":detail,"profile":PROFILE,
+                "execution_time":time.monotonic()-started}
+
+def _validate_discovery(tool,params):
+    if tool!="nmap_scan" or not isinstance(params,dict):
+        raise ProfileError("Unsupported reviewed tool")
+    if set(params)!={"target","ports","scan_type","additional_args","use_recovery"}:
+        raise ProfileError("Reviewed profile requires exact arguments")
+    if params["scan_type"]!=DISCOVERY_PROFILE or params["use_recovery"] is not False:
+        raise ProfileError("Only the fixed discovery profile with recovery disabled is permitted")
+    if params.get("additional_args","") not in ("",):
+        raise ProfileError("The reviewed discovery profile accepts no free-form arguments")
+    target=params["target"]
+    if not isinstance(target,str) or "%" in target:
+        raise ProfileError("A numeric single host is required")
+    try:
+        address=ipaddress.ip_address(target)
+    except ValueError:
+        raise ProfileError("A numeric single host is required") from None
+    if address.is_multicast or address.is_unspecified or str(address)!=target:
+        raise ProfileError("A canonical unicast numeric host is required")
+    ports=params["ports"]
+    if not isinstance(ports,str) or not ports or len(ports)>2048:
+        raise ProfileError("Explicit bounded TCP ports are required")
+    spec="1-65535" if ports.strip()=="-" else ports
+    selected=set()
+    for group in spec.split(","):
+        if not re.fullmatch(r"[0-9]{1,5}(?:-[0-9]{1,5})?",group):
+            raise ProfileError("Only TCP port numbers and ascending ranges are permitted")
+        values=[int(x) for x in group.split("-")]
+        if min(values)<1 or max(values)>65535 or values[0]>values[-1]:
+            raise ProfileError("Invalid TCP port bounds")
+        selected.update(range(values[0],values[-1]+1))
+    if not selected or len(selected)>MAX_DISCOVERY_PORTS:
+        raise ProfileError("Discovery permits 1..65535 TCP ports for one authorized host")
+    # Preserve the operator's exact range string for nmap; dedupe only for counting.
+    return target,spec,len(selected),address.version
+
+def parse_discovery_xml(raw):
+    sanitized=re.sub(r"<!DOCTYPE\s+nmaprun\s*>","",raw,flags=re.I)
+    if len(raw.encode("utf-8"))>_LIMIT or "<!ENTITY" in raw.upper() or "<!DOCTYPE" in sanitized.upper():
+        raise ProfileError("Invalid or oversized scanner XML")
+    try:
+        root=ET.fromstring(raw)
+    except ET.ParseError as exc:
+        raise ProfileError("Invalid scanner XML") from exc
+    if root.tag!="nmaprun":
+        raise ProfileError("Unexpected scanner output")
+    result={"target":"","hosts":[],"host_state":"","open_ports":[],"ports":[],
+            "state_counts":{"open":0,"closed":0,"filtered":0},"profile":DISCOVERY,
+            "note":"TCP connect discovery; service names are nmap's port guesses, not probed versions"}
+    for host in root.findall("host"):
+        status=host.find("status")
+        # With -Pn the host is treated as up; never infer offline from no ping reply.
+        result["host_state"]=status.get("state","up") if status is not None else "up"
+        address=host.find("address")
+        if address is not None:
+            try: result["target"]=str(ipaddress.ip_address(address.get("addr","")))
+            except ValueError: raise ProfileError("Scanner returned an invalid numeric destination") from None
+            result["hosts"].append(result["target"])
+        for port in host.findall("./ports/port"):
+            state_el=port.find("state")
+            state=state_el.get("state","unknown") if state_el is not None else "unknown"
+            service=port.find("service")
+            name=service.get("name","unknown") if service is not None else "unknown"
+            entry={"port":port.get("portid"),"protocol":port.get("protocol","tcp"),"state":state,
+                   "service_guess":name,"confidence":"port-name-guess; run service-version stage to verify"}
+            result["ports"].append(entry)
+            if state in result["state_counts"]:result["state_counts"][state]+=1
+            if state=="open":result["open_ports"].append(entry)
+    finished=root.find("./runstats/finished")
+    result["scan_complete"]=(finished is not None and finished.get("exit")=="success"
+                             and not any(h.get("timedout")=="true" for h in root.findall("host")))
+    result["scan_summary"]=finished.get("summary","") if finished is not None else ""
+    return result
+
+def run_discovery(tool,params):
+    started=time.monotonic()
+    try:
+        target,ports,count,version=_validate_discovery(tool,params)
+        if not _LOCK.acquire(blocking=False):
+            raise ProfileError("Reviewed scanner concurrency limit reached")
+        try:
+            executable,root,files,snapshots=_runtime()
+            with tempfile.TemporaryDirectory(prefix="redvector-discovery-") as name:
+                directory=Path(name)
+                private=_stage(root,files,snapshots,directory)
+                _check(snapshots)
+                command=[str(executable),"-sT","--unprivileged","-n","-Pn","--disable-arp-ping",
+                         "--max-retries","1","--max-rate",_DISCOVERY_MAX_RATE,
+                         "--host-timeout",_DISCOVERY_HOST_TIMEOUT,"--datadir",str(directory),
+                         "-p",ports,"-oX","-","--no-stylesheet"]
+                if version==6:command.append("-6")
+                command.append(target)
+                code,stdout,stderr=_execute(command,directory,timeout=_DISCOVERY_DEADLINE)
+                _check(snapshots)
+                if any(_digest(p)!=digest for p,digest in private.items()):
+                    raise ProfileError("Private scanner profile integrity changed")
+                parsed=parse_discovery_xml(stdout)
+                if code or not parsed["scan_complete"] or len(parsed["hosts"])!=1:
+                    return {"success":False,"error":"Reviewed discovery did not complete successfully",
+                            "stdout":stdout,"stderr":stderr,"parsed":parsed,
+                            "execution_time":time.monotonic()-started,"profile":DISCOVERY}
+                if any(x!=target for x in parsed["hosts"]):
+                    raise ProfileError("Scanner returned an unexpected destination")
+                return {"success":True,"stdout":stdout,"stderr":stderr,"parsed":parsed,
+                        "execution_time":time.monotonic()-started,"profile":DISCOVERY,
+                        "reviewed_profile":{"ports_requested":ports,"ports_count":count,
+                           "engine":"native nmap -sT connect discovery","runtime_sha256":snapshots[executable],
+                           "note":"Bounded native Nmap TCP connect discovery; no version probes, NSE, UDP or OS detection in this stage"}}
+        finally:
+            _LOCK.release()
+    except (ProfileError,OSError,subprocess.SubprocessError) as exc:
+        detail=str(exc) if isinstance(exc,ProfileError) else "Native scanner runtime unavailable or verification failed"
+        return {"success":False,"error":detail,"profile":DISCOVERY,
                 "execution_time":time.monotonic()-started}

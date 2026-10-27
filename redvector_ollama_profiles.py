@@ -49,7 +49,7 @@ def attest(proof,metadata,root,port):
             raise BackendReuseError("Advisory profile source differs from the reviewed module.")
     states={}
     for name,value in profiles.items():
-        if name not in {"service-version-v1"}|assessment_names|artifact_keys|runtime_keys|advisory_keys:continue
+        if name not in {"service-version-v1","tcp-discovery-v1"}|assessment_names|artifact_keys|runtime_keys|advisory_keys:continue
         if not isinstance(value,dict) or value.get("state") not in ("Ready","Missing Dependency","Unsupported","Restricted"):
             raise BackendReuseError("Backend profile status is invalid.")
         states[name]=dict(value)

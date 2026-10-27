@@ -39,7 +39,7 @@ def test_categories_never_grant_execution(tool,category):
         "list_active_processes","get_process_dashboard","get_live_dashboard","get_process_status","display_system_metrics",
         "monitor_cve_feeds","vulnerability_intelligence_dashboard",
         "httpx_probe","nikto_scan","wafw00f_scan","jaeles_vulnerability_scan",
-        "masscan_high_speed","rustscan_fast_scan"}
+        "masscan_high_speed","rustscan_fast_scan","ai_vulnerability_assessment"}
     if tool not in REVIEWED:
         from redvector_ollama_policy import PolicyError
         with pytest.raises(PolicyError):Policy().authorize(tool,{},lambda _:True)

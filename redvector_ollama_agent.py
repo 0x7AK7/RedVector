@@ -15,7 +15,7 @@ from redvector_ollama_results import ResultsStore
 from redvector_ollama_presentation import render_scan,render_result,operation_message,approval_panel,Panel
 from redvector_ollama_analysis import summarize
 
-from redvector_ollama_policy import Policy, PolicyError, REVIEWED, DISABLED_REASONS, HTTP_READ_TOOLS, HTTP_ASSESS_TOOLS, TCP_SCAN_TOOLS, NMAP_TOOLS, ARTIFACT_TOOLS, RUNTIME_TOOLS, ADVISORY_TOOLS, validate_arguments
+from redvector_ollama_policy import Policy, PolicyError, REVIEWED, DISABLED_REASONS, HTTP_READ_TOOLS, HTTP_ASSESS_TOOLS, TCP_SCAN_TOOLS, NMAP_TOOLS, ARTIFACT_TOOLS, RUNTIME_TOOLS, ADVISORY_TOOLS, ASSESSMENT_TOOLS, validate_arguments
 from redvector_ollama_backend import inspect_backend, BackendReuseError
 from redvector_ollama_cli import handle_command, assessment_context, saved_analysis_request, automatic_context
 from redvector_ollama_errors import record_error
@@ -258,7 +258,7 @@ class Agent:
             self.runtime=metadata;self.runtime_verified=True;self.policy.profile_status=states
         except (asyncio.CancelledError,KeyboardInterrupt):raise
         except Exception as exc:
-            self.policy.profile_status={name:{"state":"Restricted","detail":plain(exc)[:400]} for name in ("service-version-v1","redvector-http-read-v1","redvector-tcp-connect-v1","--redvector-profile=http-headers-v1","artifact-read-v1","runtime-read-v1","nvd-advisory-v1",*("artifact-read-v1:"+tool for tool in ARTIFACT_TOOLS))}
+            self.policy.profile_status={name:{"state":"Restricted","detail":plain(exc)[:400]} for name in ("service-version-v1","tcp-discovery-v1","redvector-http-read-v1","redvector-tcp-connect-v1","--redvector-profile=http-headers-v1","artifact-read-v1","runtime-read-v1","nvd-advisory-v1",*("artifact-read-v1:"+tool for tool in ARTIFACT_TOOLS))}
         return self.policy.profile_status
 
     async def select_artifact(self,path):
@@ -410,7 +410,7 @@ class Agent:
                 if self.version_task:
                     args=dict(args,scan_type="-sT -sV")
                 self._scan_busy=True;claimed=True
-            if (name in HTTP_READ_TOOLS or name in HTTP_ASSESS_TOOLS or name in TCP_SCAN_TOOLS or name in ARTIFACT_TOOLS or name in RUNTIME_TOOLS or name in ADVISORY_TOOLS or name=="nmap_advanced_scan") and not self.runtime_verified:await self.refresh_profiles()
+            if (name in HTTP_READ_TOOLS or name in HTTP_ASSESS_TOOLS or name in TCP_SCAN_TOOLS or name in ARTIFACT_TOOLS or name in RUNTIME_TOOLS or name in ADVISORY_TOOLS or name in ASSESSMENT_TOOLS or name=="nmap_advanced_scan") and not self.runtime_verified:await self.refresh_profiles()
             if name in ARTIFACT_TOOLS | RUNTIME_TOOLS | ADVISORY_TOOLS:
                 from redvector_ollama_artifacts import require_backend
                 await asyncio.to_thread(require_backend,self.session)
@@ -644,7 +644,10 @@ async def interactive(api,model,wizard):
         policy=Policy()
         def approve(operation):
             approval_panel(term,operation)
-            return wizard.ask("Enter APPROVE to execute this operation, or DENY to cancel:")=="APPROVE"
+            # Affirmative decision required; accept case-insensitive approve/deny. Anything that is
+            # not an explicit approval (including ambiguous input) is treated as declined.
+            decision=wizard.ask("Enter APPROVE to execute this operation, or DENY to cancel:").strip().lower()
+            return decision in ("approve","approved","a","yes","y")
         agent=Agent(api,model,session,catalog,policy,approve,lambda out:term.write("MCP RESULT: "+plain(out)),terminal=term)
         while True:
             text=wizard.command()

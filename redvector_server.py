@@ -10928,6 +10928,15 @@ def reviewed_advisory_query():
     dashboard=data.pop("dashboard",False)
     return jsonify(run(data,dashboard=dashboard))
 
+@app.route("/api/ollama/assessment", methods=["POST"])
+def reviewed_vulnerability_assessment():
+    """Staged reviewed vulnerability assessment; chains reviewed profiles only, no unreviewed scanners."""
+    from redvector_reviewed_vulnscan import run_assessment
+    data=request.get_json(silent=True) or {}
+    if not isinstance(data,dict) or set(data)-{"target","focus_areas"}:
+        return jsonify({"success":False,"error":"Invalid reviewed assessment parameters."}),400
+    return jsonify(run_assessment(data))
+
 @app.route("/api/ollama/runtime", methods=["GET"])
 def reviewed_runtime_snapshot():
     """Actual sanitized backend state; no new process management actions."""
@@ -10996,10 +11005,13 @@ def nmap():
         additional_args = params.get("additional_args", "-T4 -Pn")
         use_recovery = params.get("use_recovery", True)
 
-        # Opt-in reviewed handler. Legacy tool behavior and route/schema stay intact.
+        # Opt-in reviewed handlers. Legacy tool behavior and route/schema stay intact.
         if scan_type == "--redvector-profile=service-version-v1":
             from redvector_reviewed_profiles import run_profile
             return jsonify(run_profile("nmap_scan", params))
+        if scan_type == "--redvector-profile=tcp-discovery-v1":
+            from redvector_reviewed_profiles import run_discovery
+            return jsonify(run_discovery("nmap_scan", params))
 
         if not target:
             logger.warning("🎯 Nmap called without target parameter")

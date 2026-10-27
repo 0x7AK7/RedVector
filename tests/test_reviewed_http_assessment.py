@@ -64,11 +64,15 @@ def test_policy_pins_destination_and_injects_marker():
 
 def test_policy_refuses_nonroot_credentials_and_extra_args():
     from redvector_ollama_policy import Policy,PolicyError
-    from redvector_reviewed_assessment import HTTP_PROFILE
+    from redvector_reviewed_assessment import HTTP_PROFILE,HTTP_ASSESS_MARKER
     pol=Policy(["127.0.0.1"]);pol.profile_status={HTTP_PROFILE:{"state":"Ready"}}
     for bad in ({"target":"http://127.0.0.1/path"},{"target":"http://127.0.0.1/?q=1"},
-                {"target":"http://u:p@127.0.0.1/"},{"target":"http://127.0.0.1/","additional_args":"-x"}):
+                {"target":"http://u:p@127.0.0.1/"}):
         with pytest.raises(PolicyError):pol._prepare("httpx_probe",bad)
+    # Benign model-supplied additional_args are ignored (not a hard failure) and the fixed
+    # passive marker is injected, so the workflow is not blocked.
+    ok=pol._prepare("httpx_probe",{"target":"http://127.0.0.1/","additional_args":"-x"})
+    assert ok["additional_args"]==HTTP_ASSESS_MARKER
 
 def test_policy_requires_ready_capability():
     from redvector_ollama_policy import Policy,PolicyError

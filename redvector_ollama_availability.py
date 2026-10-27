@@ -11,10 +11,33 @@ REASONS={
 BINARIES={"nmap_scan":"nmap","nuclei_scan":"nuclei","jaeles_vulnerability_scan":"jaeles","clair_vulnerability_scan":"clairctl"}
 
 def status(name,policy,runtime=None,verified=False,report_available=False):
-    from redvector_ollama_policy import DIAGNOSTICS,OFFLINE_TOOLS,ARTIFACT_TOOLS,RUNTIME_TOOLS,ADVISORY_TOOLS
+    from redvector_ollama_policy import (DIAGNOSTICS,OFFLINE_TOOLS,ARTIFACT_TOOLS,RUNTIME_TOOLS,ADVISORY_TOOLS,
+        HTTP_ASSESS_TOOLS,TCP_SCAN_TOOLS)
     runtime=runtime or {}
     dependency=BINARIES.get(name)
     binary_state=runtime.get("tools_status",{}).get(dependency) if verified else None
+    if name in HTTP_ASSESS_TOOLS:
+        # Reviewed PASSIVE HTTP adapter over the shared root-response collector; the native
+        # scanner binary (nikto/jaeles/wafw00f/httpx) is never executed, so do not gate on it.
+        native={"httpx_probe":"httpx","nikto_scan":"Nikto","wafw00f_scan":"Wafw00f","jaeles_vulnerability_scan":"Jaeles"}.get(name,name)
+        capability=policy.profile_status.get("redvector-http-read-v1",{})
+        if not verified:return "Restricted","Verified backend assessment capability required; refresh /tools."
+        if capability.get("state")!="Ready":return capability.get("state","Restricted"),capability.get("detail","Reviewed assessment module required.")
+        if not policy.snapshot():return "Restricted","Set /scope TARGET before a reviewed passive HTTP assessment."
+        return "Ready","Reviewed passive HTTP-response assessment (one confined TLS-verified root GET); native "+native+" is NOT executed."
+    if name in TCP_SCAN_TOOLS:
+        native={"masscan_high_speed":"Masscan","rustscan_fast_scan":"RustScan"}.get(name,name)
+        capability=policy.profile_status.get("redvector-tcp-connect-v1",{})
+        if not verified:return "Restricted","Verified backend TCP-connect capability required; refresh /tools."
+        if capability.get("state")!="Ready":return capability.get("state","Restricted"),capability.get("detail","Reviewed TCP connect profile required.")
+        if not policy.snapshot():return "Restricted","Set /scope TARGET before bounded TCP discovery."
+        return "Ready","Reviewed bounded TCP connect discovery (<=128 ports, capped concurrency/timeouts); native "+native+" is NOT executed."
+    if name=="ai_vulnerability_assessment":
+        discovery=policy.profile_status.get("tcp-discovery-v1",{})
+        if not verified:return "Restricted","Verified backend required for this staged assessment integration; refresh /tools."
+        if not policy.snapshot():return "Restricted","Set /scope TARGET before this staged assessment integration."
+        if discovery.get("state")!="Ready":return discovery.get("state","Restricted"),discovery.get("detail","Reviewed discovery profile required for the staged assessment integration.")
+        return "Requires Approval","Staged reviewed assessment integration (discovery -> service-version -> passive HTTP/Nuclei -> NVD) producing an evidence-ranked report; one operator approval."
     if name in ADVISORY_TOOLS:
         capability=policy.profile_status.get("nvd-advisory-v1",{})
         if not verified:return "Restricted","Verified advisory backend required."

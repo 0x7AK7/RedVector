@@ -160,6 +160,11 @@ def main(probe):
    r["authorization_requirements"]=["One explicit in-scope target; numeric destination pinning","1..128 explicit TCP ports; unbounded full-range or high-speed scanning disabled","Shared RedVector Python TCP connect engine; native "+native[name]+" is never executed"]
    r["dependencies"]["reviewed_profile_runtime"]={"engine":"RedVector reviewed bounded TCP connect engine (Python stdlib sockets)","required":["reviewed TCP connect profile"]}
    issues=["At most 128 explicit ports, <=64 concurrent connections, 1s per-connect timeout and a 20s overall deadline.","TCP connect() discovery only: no raw sockets, UDP, OS detection, banners or internet-scale rates.","Engine labeled accurately as RedVector's bounded connect implementation; it is not "+native[name]+" and does not substitute another scanner while claiming native execution."]
+  if name=="ai_vulnerability_assessment":
+   r["implementation_status"]="Reviewed staged orchestrator implemented; chains reviewed profiles only; current named-MCP execution evidence below"
+   r["authorization_requirements"]=["One authorized target in operator scope; one explicit orchestrator approval","Each stage uses an already-reviewed profile with its own destination/argument confinement","No unreviewed scanner is executed; findings are evidence-ranked and never fabricated"]
+   r["dependencies"]["reviewed_profile_runtime"]={"engine":"RedVector staged orchestrator (nmap discovery/-sV, passive HTTP collector, reviewed Nuclei, NVD advisories)","required":["reviewed discovery profile","reviewed service-version profile"]}
+   issues=["Chains only reviewed profiles: native nmap -sT discovery and -sV, RedVector passive HTTP collector (not native Nikto/Jaeles), reviewed offline Nuclei when its verified binary is configured, and NVD advisories.","Candidate CVEs from NVD keyword matches require validation and do not establish exploitability or applicability.","A missing scanner dependency is reported accurately per stage; no native Nikto/Jaeles/Masscan/RustScan execution and no fabricated findings."]
   r["remaining_technical_issues"]=issues
   r["shared_adapter_group"]=adapter_group(r)
   if name=="nuclei_scan":

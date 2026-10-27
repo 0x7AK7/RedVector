@@ -13,11 +13,14 @@ class Automatic(unittest.TestCase):
         self.assertIn("--max-parallelism 8",args["additional_args"])
         self.assertFalse(args["use_recovery"])
     def test_full_range_and_state_change_still_require_exact_approval(self):
+        # Full-range discovery now runs the attested reviewed discovery profile, which must be
+        # Ready; it still requires one explicit operator approval (never silent auto-run).
         for tool,args in [("nmap_scan",{"target":"192.0.2.8","ports":"1-65535"}),("clear_cache",{})]:
-            policy=self.policy();approve=Mock(return_value=False)
+            policy=self.policy();policy.profile_status={"tcp-discovery-v1":{"state":"Ready"}};approve=Mock(return_value=False)
             with self.assertRaises(PolicyError):policy.authorize(tool,args,approve)
             approve.assert_called_once()
-        p=self.policy();p.authorize("nmap_scan",{"target":"192.0.2.8","ports":"1-65535"},lambda operation:True)
+        p=self.policy();p.profile_status={"tcp-discovery-v1":{"state":"Ready"}}
+        p.authorize("nmap_scan",{"target":"192.0.2.8","ports":"1-65535"},lambda operation:True)
         self.assertFalse(p.last_automatic)
     def test_scope_and_malformed_destinations_cannot_be_automated(self):
         for policy,args in [(Policy(),{"target":"192.0.2.8"}),(self.policy(),{"target":"192.0.2.9"}),

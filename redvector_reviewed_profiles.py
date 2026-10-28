@@ -28,7 +28,7 @@ _LOCK = threading.Lock()
 _LIMIT = 1024 * 1024
 _DEADLINE = 45
 _DISCOVERY_DEADLINE = 300
-_DISCOVERY_MAX_RATE = "500"
+_DISCOVERY_MAX_RATE = "2000"  # bounded single-host connect rate; completes full-range within the client call budget
 _DISCOVERY_HOST_TIMEOUT = "280s"
 MAX_PORTS = 128
 MAX_DISCOVERY_PORTS = 65535
@@ -128,20 +128,43 @@ def _runtime():
     snapshots = {path: _trusted(path) for path in [executable, *files]}
     return executable, root, files, snapshots
 
+def _discovery_runtime():
+    # Locate the attested native ELF nmap via package metadata, not PATH: on some distros
+    # /usr/bin/nmap is a wrapper script and only the dpkg-listed binary is the real ELF.
+    # -sT -n discovery runs no NSE, so a minimal private datadir is sufficient (fast, no
+    # nselib copy), which keeps a full 1..65535 scan within the client call budget.
+    if not sys.platform.startswith("linux"):
+        raise ProfileError("Unsupported: reviewed discovery profile requires native Linux")
+    if not shutil.which("nmap"):
+        raise ProfileError("Missing Dependency: native Nmap binary unavailable")
+    dpkg=shutil.which("dpkg-query")
+    if not dpkg:
+        raise ProfileError("Unsupported: native package runtime cannot be verified")
+    _trusted(Path(dpkg).resolve())
+    metadata=subprocess.run([dpkg,"-L","nmap-common","nmap"],capture_output=True,text=True,timeout=5,
+                            env={"PATH":os.defpath,"LC_ALL":"C"})
+    if metadata.returncode:
+        raise ProfileError("Missing Dependency: native Nmap runtime package unavailable")
+    binaries=[Path(line) for line in metadata.stdout.splitlines()
+              if Path(line).name=="nmap" and Path(line).is_file() and _elf(Path(line))]
+    if len(binaries)!=1:
+        raise ProfileError("Unsupported: a unique native ELF scanner is required")
+    executable=binaries[0]
+    _trusted(executable)
+    return executable
+
 def capabilities():
     states={}
-    # Both profiles use the same attested native runtime (the dpkg-located ELF nmap, since
-    # /usr/bin/nmap is a wrapper script on some distros). Discovery (-sT) needs no version
-    # script verification, so it is Ready once the runtime attests even if the fuller
-    # service-version check below fails.
+    # Discovery (-sT) only needs the attested ELF binary; report it independently (fast) so a
+    # missing service-version data package does not also disable plain TCP discovery.
     try:
-        executable,root,files,snapshots=_runtime()
+        _discovery_runtime()
+        states[DISCOVERY]={"state":"Ready","detail":"Native attested nmap -sT connect discovery; 1..65535 ports, bounded rate/host-timeout; no NSE/UDP/OS; XML parsed"}
     except (ProfileError, OSError, subprocess.SubprocessError) as exc:
         detail = str(exc) if isinstance(exc,ProfileError) else "Native scanner runtime unavailable or verification failed"
-        state = "Missing Dependency" if "Missing" in detail else "Unsupported"
-        return {DISCOVERY:{"state":state,"detail":detail},PROFILE:{"state":state,"detail":detail}}
-    states[DISCOVERY]={"state":"Ready","detail":"Native attested nmap -sT connect discovery; 1..65535 ports, bounded rate/host-timeout; no NSE/UDP/OS; XML parsed"}
+        states[DISCOVERY]={"state":"Missing Dependency" if "Missing" in detail else "Unsupported","detail":detail}
     try:
+        executable,root,files,snapshots=_runtime()
         with tempfile.TemporaryDirectory(prefix="redvector-profile-check-") as name:
             directory=Path(name)
             private=_stage(root,files,snapshots,directory)
@@ -414,11 +437,12 @@ def run_discovery(tool,params):
         if not _LOCK.acquire(blocking=False):
             raise ProfileError("Reviewed scanner concurrency limit reached")
         try:
-            executable,root,files,snapshots=_runtime()
+            executable=_discovery_runtime();before=_trusted(executable)
             with tempfile.TemporaryDirectory(prefix="redvector-discovery-") as name:
                 directory=Path(name)
-                private=_stage(root,files,snapshots,directory)
-                _check(snapshots)
+                # Minimal private datadir (no nselib): -sT -n discovery runs no scripts, so a
+                # full 1..65535 scan stays well within the client call budget.
+                private=_write_private(directory)
                 command=[str(executable),"-sT","--unprivileged","-n","-Pn","--disable-arp-ping",
                          "--max-retries","1","--max-rate",_DISCOVERY_MAX_RATE,
                          "--host-timeout",_DISCOVERY_HOST_TIMEOUT,"--datadir",str(directory),
@@ -426,7 +450,8 @@ def run_discovery(tool,params):
                 if version==6:command.append("-6")
                 command.append(target)
                 code,stdout,stderr=_execute(command,directory,timeout=_DISCOVERY_DEADLINE)
-                _check(snapshots)
+                if _trusted(executable)!=before:
+                    raise ProfileError("Scanner runtime integrity changed")
                 if any(_digest(p)!=digest for p,digest in private.items()):
                     raise ProfileError("Private scanner profile integrity changed")
                 parsed=parse_discovery_xml(stdout)
@@ -439,7 +464,7 @@ def run_discovery(tool,params):
                 return {"success":True,"stdout":stdout,"stderr":stderr,"parsed":parsed,
                         "execution_time":time.monotonic()-started,"profile":DISCOVERY,
                         "reviewed_profile":{"ports_requested":ports,"ports_count":count,
-                           "engine":"native nmap -sT connect discovery","runtime_sha256":snapshots[executable],
+                           "engine":"native nmap -sT connect discovery","runtime_sha256":before,
                            "note":"Bounded native Nmap TCP connect discovery; no version probes, NSE, UDP or OS detection in this stage"}}
         finally:
             _LOCK.release()

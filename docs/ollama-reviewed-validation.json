@@ -2,14 +2,14 @@
   "source_sha256": {
     "redvector_mcp.py": "f94e07fd4fa1ae83919d1f5e0efd57f0a29c4b0124dc4c44315b6323ead154e3",
     "redvector_server.py": "57f440611c46258155be52a1a58841d4961581cb9a07eab01431a66d8ee292cc",
-    "redvector_reviewed_profiles.py": "b7c88603e43a5cc6d61dd7d05106b05ae3eb237f1b28182ff78df88db0bbdb9c",
+    "redvector_reviewed_profiles.py": "a28545fc00a12f7b4e9092c23d63adab9175058b40c7250c3e944bb613df0c3c",
     "redvector_ollama_agent.py": "ebd1ef2d03f281ac4510ee7f3adc26dc64324781033beb31edb65547337b186a",
     "redvector_ollama_policy.py": "45d832d7ff0a5d6f51acd75f7a8d420a0f5be3dd53f0bbcc44b840973cdf4527",
     "redvector_ollama_backend.py": "ed5d25d2983966479287b9710257a738d265ae01376d82375e58ebcdefe7ba1f",
     "redvector_ollama_profiles.py": "ef821ce7286a52089284cc7e7debadf666e7882e2ce71126e28ef599e73fe8c9",
     "redvector_ollama_reporting.py": "23db3fcf60242f67eb874306809a8e3a72a2e57a752b7450367533c426b27182",
     "redvector_ollama_availability.py": "5e1f0fb6fd75024937b54df92f9a7cfeec3adfabc12fdc880f0005e90c225611",
-    "redvector_ollama_cli.py": "1c885714f99c97bcff4153956e0243b5da7d5465d6dc04094347aff31401f0a7",
+    "redvector_ollama_cli.py": "d1171c7afbd0f23dcbb8c667d71c41d435d8042376fccbab88e0ea837baec1a5",
     "redvector_ollama_presentation.py": "7485f815f41f011c22b1242cd7b5485d51841bbd56439aa0fa62eab5f2235ba2",
     "redvector_reviewed_assessment.py": "774d8e14c17f277925c047fbd1021b00c51ba0488a4bce016bc03b10df82c8ee",
     "redvector_ollama_results.py": "33791a82fbad6b851c045a7a3f689f8c60e5c7e6de668af55f71427242e8e626",
@@ -286,6 +286,19 @@
       "skipped": 7,
       "subtests_passed": 136,
       "seconds": 700.36
+    },
+    "windows_full_discovery_runtime_fix": {
+      "passed": 543,
+      "failed": 0,
+      "skipped": 49,
+      "subtests_passed": 129
+    },
+    "native_core_discovery_runtime_fix": {
+      "passed": 583,
+      "failed": 0,
+      "skipped": 7,
+      "subtests_passed": 136,
+      "seconds": 642.93
     }
   },
   "limits": [
@@ -369,7 +382,9 @@
     "Full-range TCP discovery: added reviewed tcp-discovery-v1 profile (real attested nmap -sT, 1..65535, XML open/closed/filtered states) and policy routing so full-range requests run it instead of being silently capped to the 128-port service profile; service-version then runs on discovered open ports in <=128 chunks.",
     "Vulnerability assessment: implemented the reviewed ai_vulnerability_assessment staged orchestrator chaining reviewed profiles with a ranked taxonomy and per-stage audit trail; fixed availability.status so reviewed passive tools (jaeles/nikto/httpx/wafw00f/masscan/rustscan) no longer report a native 'Missing Dependency'; clarified Nuclei checksum-vs-missing diagnostics without bypassing attestation; stopped hard-failing reviewed HTTP assessment on benign extra arguments.",
     "Authorization UX: reviewed passive HTTP and bounded TCP tools no longer prompt within scope (high-impact scans still require explicit approval each time); approval input is case-insensitive (approve/deny); a distinct error taxonomy (out-of-scope / approval-required / missing-dependency / missing-integration / unsupported / invalid-arguments / execution-failed) replaces treating a missing adapter as a denial.",
-    "Dynamic scope parsing: assessment_context now treats a request token as a destination only when it is destination-shaped (IP/CIDR/bracketed IPv6/dotted host) or a host NAMED in scan-operand position (function words skipped), so ordinary words (e.g. 'of' in 'port scan of HOST'), bare port numbers and ranges (65535, 1-65535, 80,443) are never read as hosts and cannot cause a false out-of-scope rejection; explicitly-named unknown hosts and genuinely out-of-scope destinations are still denied, and scope is never silently expanded. No target is hardcoded."
+    "Dynamic scope parsing: assessment_context now treats a request token as a destination only when it is destination-shaped (IP/CIDR/bracketed IPv6/dotted host) or a host NAMED in scan-operand position (function words skipped), so ordinary words (e.g. 'of' in 'port scan of HOST'), bare port numbers and ranges (65535, 1-65535, 80,443) are never read as hosts and cannot cause a false out-of-scope rejection; explicitly-named unknown hosts and genuinely out-of-scope destinations are still denied, and scope is never silently expanded. No target is hardcoded.",
+    "Full-range discovery runtime/timeout: run_discovery now locates the attested ELF nmap via dpkg (handling the /usr/bin/nmap wrapper) and stages only a minimal private datadir (no nselib copy, since -sT -n runs no NSE), with a bounded single-host rate, so a full 1..65535 scan completes within the client call budget. Attestation (binary trust + datadir integrity) is preserved; no security gate is bypassed. The end-to-end test_ollama_fullrange_live.py passes natively.",
+    "tcp-discovery-v1 availability: verified end-to-end that agent.refresh_profiles() populates profile_status['tcp-discovery-v1'] = Ready through the genuine server_health -> /api/ollama/profiles -> attest() pipeline (attest allowlist includes the profile), not injected test state."
   ],
   "real_model_verification": {
     "source": "actual installed Ollama model",

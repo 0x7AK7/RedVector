@@ -7,7 +7,7 @@ extra acceptance input, never as a constant the tests depend on.
 import os
 import ipaddress
 import pytest
-from redvector_ollama_cli import assessment_context, _looks_like_target, _named_operands
+from redvector_ollama_cli import assessment_context, _looks_like_target, _named_unknown_host
 from redvector_ollama_policy import Policy
 
 V4="192.0.2.10"            # TEST-NET-1
@@ -54,9 +54,11 @@ def test_port_number_65535_is_never_a_host():
     assert (clar is None or "outside" not in clar) and (target==V4 or target is None)
 
 def test_ordinary_words_do_not_invent_targets():
-    # 'of','a','full','across' etc. must not be read as hosts.
-    assert _named_operands("do a full port scan of the authorized host")==[] or \
-           all(not _looks_like_target(o) for o in _named_operands("do a full port scan of the authorized host"))
+    # Ordinary words after 'scan' (prepositions/determiners/domain nouns) must not be read as
+    # named hosts; only a real label immediately after a scan verb is a named operand.
+    assert _named_unknown_host("do a full port scan of the authorized host",set())==[]
+    assert _named_unknown_host("scan all 65535 tcp ports and identify services",set())==[]
+    assert _named_unknown_host("scan intranet for ports",set())==["intranet"]
 
 def test_named_unknown_single_label_host_is_denied():
     ok,target,clar=ctx([V4],"scan intranet for open ports")

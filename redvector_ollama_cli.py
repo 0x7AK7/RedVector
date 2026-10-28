@@ -119,33 +119,37 @@ def _looks_like_target(token):
     return bool("." in host and re.fullmatch(
         r"(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]{0,61}",host))
 
-_STOPWORDS=frozenset("""a an the this that these those my our your his her their its it them they we you
-scan scans scanned scanning nmap nmap_scan nmap_advanced_scan run runs running execute executes executing perform performs performing
-do does did please can could would will shall want wants wanted like help let me i
-identify identifies find finds check checks enumerate enumerates discover discovers probe probes detect detects map list show get
-summarize summarise summarized analyze analyse analyzes report reports result results output outputs call calls then next
-of on in into to at by for from with without within via using use over across against and or but as
-all any both each more most some few only just exactly precisely once twice then also now new current up down live
-open closed filtered tcp udp port ports service services version versions intensity banner banners actual real
-host hosts hostname hostnames target targets authorized authorised unauthorized destination destinations machine machines box boxes
-system systems node nodes device devices server servers endpoint endpoints asset assets lab labs environment
-network networks subnet subnets cidr range ranges full complete comprehensive quick fast deep basic thorough standard default
-number numbers entire whole every please""".split())
+# Closed grammatical classes (articles, determiners, prepositions, conjunctions, pronouns,
+# quantifiers, polite/auxiliary verbs) plus the small, stable port-scan domain vocabulary.
+# This is deliberately NOT an open-ended stopword list: the named-host check only ever inspects
+# the token IMMEDIATELY after a scan verb, so adjectives, adverbs and other verbs elsewhere in
+# the sentence are never mistaken for destinations and need not be enumerated.
+_FUNCTION=frozenset("""a an the this that these those my our your his her their its it them they we us you i
+of on in to at for from with without within via by over across against into onto upon about
+and or but nor so then than as if when while
+all any both each every some few more most no not none only just exactly precisely once twice also now up down out
+please can could would will shall should may might must do does did let want wants like help""".split())
+_DOMAIN=frozenset("""scan scans scanned scanning rescan nmap nmap_scan nmap_advanced_scan run runs running execute executes perform performs
+port ports portrange service services version versions tcp udp protocol protocols intensity banner banners
+target targets host hosts hostname hostnames machine machines box boxes system systems server servers
+node nodes device devices network networks subnet subnets endpoint endpoints asset assets range ranges
+number numbers ip address addresses""".split())
 
-def _named_operands(view):
-    """Yield host labels in scan-operand position (immediately after a scan verb or a target
-    preposition), skipping English function/scan words and numeric/port tokens. This lets a
-    genuinely named but unauthorized host (e.g. 'intranet') be rejected while ordinary words
-    (e.g. 'of' in 'port scan of HOST') are never treated as destinations. No target is hardcoded."""
-    operands=[]
-    for anchor in re.finditer(r"(?i)\b(?:scan|nmap(?:_scan)?|on|against|at|target|host|hostname|named|called)\b",view):
-        for raw in re.findall(r"[A-Za-z0-9_.:/%\[\]\-]+",view[anchor.end():]):
-            token=raw.strip("[]").rstrip(".?,;")
-            low=token.lower()
-            if not token or low in _STOPWORDS:continue
-            if re.fullmatch(r"[0-9]+(?:[-,][0-9]+)*",low):continue  # port number / range / list
-            operands.append(token);break  # first content token after the verb is the operand
-    return operands
+def _named_unknown_host(view,scope_lower):
+    """Return hosts explicitly NAMED as the scan operand. Only the token immediately following a
+    scan verb is considered, so ordinary words elsewhere in the sentence never trigger a false
+    rejection. In-scope, destination-shaped, numeric and closed-class function/domain tokens are
+    excluded; whatever remains is a named host whose authorization is decided by the policy. No
+    target, network or hostname is hardcoded."""
+    named=[]
+    for match in re.finditer(r"(?i)\b(?:scan|rescan|nmap(?:_scan|_advanced_scan)?)\b\s+([A-Za-z0-9_][A-Za-z0-9_.\-]*)",view):
+        token=match.group(1).rstrip(".?,;:")
+        low=token.lower()
+        if not low or low in scope_lower or low in _FUNCTION or low in _DOMAIN:continue
+        if re.fullmatch(r"[0-9]+(?:[-,][0-9]+)*",low):continue  # port number / range / list
+        if _looks_like_target(token):continue                   # shaped -> handled by the shape pass
+        named.append(token)
+    return named
 
 def assessment_context(text,policy,allow_versions=False):
     """Return (is_assessment, chosen_target, clarification), without model calls."""
@@ -182,11 +186,10 @@ def assessment_context(text,policy,allow_versions=False):
             explicit.append(authorized_operand(token,policy))
         except (PolicyError,ValueError):
             return True,None,"The requested target is outside the operator-authorized scope. Use /scope TARGET or select an explicitly authorized host. No scan was executed."
-    # A host NAMED as the scan operand (after a scan verb or target preposition) must be
-    # authorized even when it is a single label; ordinary function words are skipped above.
-    for operand in _named_operands(view):
-        low=operand.lower()
-        if low in scope_lower or _looks_like_target(operand):continue  # in scope or already validated by shape
+    # A host NAMED directly as the scan operand must be authorized even when it is a single
+    # label; function/domain words in that position are ignored, so only a real named host here
+    # can be rejected.
+    for operand in _named_unknown_host(view,scope_lower):
         try:
             explicit.append(authorized_operand(operand,policy))
         except (PolicyError,ValueError):

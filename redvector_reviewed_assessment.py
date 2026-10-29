@@ -5,7 +5,19 @@ import subprocess,sys,tempfile,threading,time
 from urllib.parse import urlsplit
 HTTP_PROFILE="redvector-http-read-v1"
 NUCLEI_PROFILE="--redvector-profile=http-headers-v1"
-NUCLEI_SHA256="c49588140f357cbdddd5436dec11201953a4c5390faeec90777f9ee2cfd70251"
+# Reviewed Nuclei builds keyed by verified binary SHA256. A build is usable only when its exact
+# checksum is a key here (identity + integrity) AND its -version banner matches the recorded version
+# (binds identity to the claimed version). Add a build ONLY after reviewing it and recording real
+# verified-execution evidence on native Kali; never trust a whole version range and never bypass
+# attestation. Unknown or unverified builds stay unavailable. Operators' installed versions are
+# never global requirements: each legitimate build is reviewed and listed on its own merits.
+NUCLEI_BUILDS={
+    "c49588140f357cbdddd5436dec11201953a4c5390faeec90777f9ee2cfd70251":{
+        "version":"v3.11.1","platform":"linux/amd64",
+        "capabilities":["offline-root-response-header-templates"],
+        "template_requirements":"fixed reviewed root-response header templates; remote template download disabled",
+        "evidence":"Installed and checksum-verified via tools/install_reviewed_nuclei.py; offline header profile exercised in the native sandbox regression."},
+}
 _LIMIT=65536
 _LOCK=threading.Lock()
 _HTTP_SLOTS=threading.BoundedSemaphore(2)
@@ -104,19 +116,32 @@ def run_http(params):
     except (AssessmentError,OSError,ValueError,http.client.HTTPException) as exc:
         return {"success":False,"profile":HTTP_PROFILE,"error":str(exc)[:300]}
 
+def nuclei_version(output):
+    """Parse a Nuclei -version banner (bytes or str) into a canonical 'vX.Y.Z' string, or '' when
+    no version can be read. Tolerant of surrounding banner text and ANSI so it works across builds."""
+    text=output.decode("utf-8","replace") if isinstance(output,(bytes,bytearray)) else str(output)
+    match=re.search(r"\bv?([0-9]+\.[0-9]+\.[0-9]+)\b",text)
+    return ("v"+match.group(1)) if match else ""
+
 def nuclei_binary():
+    """Resolve the configured Nuclei binary and match it against the reviewed-build registry.
+    Returns (path, build_meta). Identity/integrity (the exact SHA256 must be a registry key) is kept
+    separate from version compatibility (the registry metadata); an unknown/unverified build is
+    reported Unsupported and never run, and attestation is never bypassed."""
     value=os.environ.get("REDVECTOR_NUCLEI_BIN") or shutil.which("nuclei")
     if not value:raise AssessmentError("Missing Dependency: configure REDVECTOR_NUCLEI_BIN or install Nuclei on the backend PATH.")
     path=Path(value)
     if not path.is_absolute() or path.is_symlink() or not path.is_file():
         raise AssessmentError("Unsupported Nuclei runtime: an absolute, non-symlink regular-file path is required.")
     actual=digest(path)
-    if actual!=NUCLEI_SHA256:
-        # Distinguish a wrong/unverified build from a missing one; never bypass attestation.
-        raise AssessmentError("Unsupported Nuclei runtime: checksum mismatch (configured binary sha256 "+actual[:12]
-            +"... != reviewed v3.11.1 "+NUCLEI_SHA256[:12]+"...). Install the verified build with "
-            "tools/install_reviewed_nuclei.py and point REDVECTOR_NUCLEI_BIN at it; a different Nuclei build is not accepted.")
-    return path
+    meta=NUCLEI_BUILDS.get(actual)
+    if not meta:
+        # Unknown/unverified build: distinct from a missing one; never bypass attestation.
+        raise AssessmentError("Unsupported Nuclei runtime: unknown/unverified build (configured binary sha256 "+actual[:12]
+            +"...). Only individually reviewed, checksum-verified Nuclei builds are accepted; install a reviewed build "
+            "with tools/install_reviewed_nuclei.py and point REDVECTOR_NUCLEI_BIN at it. A different build stays "
+            "unavailable until reviewed; attestation is not bypassed.")
+    return path,dict(meta,sha256=actual)
 
 def no_network():
     """Linux amd64 seccomp: scanner cannot create or connect network sockets."""
@@ -150,14 +175,16 @@ def capabilities():
     states={HTTP_PROFILE:{"state":"Ready","detail":"Pinned one-root GET/HEAD; redirects/proxies/credentials disabled."},
             SCAN_PROFILE:{"state":"Ready","detail":"Bounded TCP connect discovery; <=128 explicit ports, <=64 concurrent, 1s connect timeout, 20s deadline; native masscan/rustscan not executed."}}
     try:
-        binary=nuclei_binary()
+        binary,meta=nuclei_binary()
         if not sys.platform.startswith("linux") or platform.machine() not in ("x86_64","amd64"):
             raise AssessmentError("Unsupported native sandbox platform.")
         with tempfile.TemporaryDirectory(prefix="rv-nuclei-check-") as d:
             result=_command(binary,["-version"],Path(d))
-            if result.returncode or b"v3.11.1" not in result.stdout+result.stderr:
-                raise AssessmentError("Nuclei runtime or network sandbox preflight failed.")
-        states[NUCLEI_PROFILE]={"state":"Ready","detail":"Offline Nuclei v3.11.1; fixed root-response header templates; scanner sockets denied by seccomp."}
+            detected=nuclei_version(result.stdout+result.stderr)
+            if result.returncode or detected!=meta["version"]:
+                raise AssessmentError("Nuclei runtime or network sandbox preflight failed"
+                    +((": detected "+(detected or "unknown")+" does not match the reviewed build's version "+meta["version"]) if detected!=meta["version"] else "")+".")
+        states[NUCLEI_PROFILE]={"state":"Ready","detail":"Offline Nuclei "+meta["version"]+" (reviewed build "+meta["sha256"][:12]+"...); fixed root-response header templates; scanner sockets denied by seccomp."}
     except (AssessmentError,OSError,subprocess.SubprocessError) as exc:
         detail=str(exc)[:300];states[NUCLEI_PROFILE]={"state":"Missing Dependency" if "Missing Dependency" in detail else "Unsupported","detail":detail}
     return states
@@ -174,7 +201,7 @@ def run_nuclei(params):
             raise AssessmentError("Unexpected Nuclei arguments.")
         if params.get("template")!=NUCLEI_PROFILE or params.get("use_recovery") is not False or any(params.get(k,"") for k in ("severity","tags")):
             raise AssessmentError("Fixed offline Nuclei profile with recovery disabled required.")
-        binary=nuclei_binary()
+        binary,meta=nuclei_binary()
         if not _LOCK.acquire(blocking=False):raise AssessmentError("Assessment concurrency limit reached.")
         try:
             authority=params.get("additional_args","")
@@ -217,7 +244,7 @@ def run_nuclei(params):
                 return {"success":True,"input_representation":"Canonical header-only response; body/framing excluded from offline checks.","profile":NUCLEI_PROFILE,"target":params["target"],"findings":rows,
                         "stdout":result.stdout.decode(),"execution_time":time.monotonic()-started,
                         "limitations":"Two passive root-response header checks only; absence is not proof of exploitable vulnerability.",
-                        "scanner":{"name":"nuclei","version":"3.11.1","sha256":NUCLEI_SHA256,"network":"seccomp denied sockets"}}
+                        "scanner":{"name":"nuclei","version":meta["version"],"sha256":meta["sha256"],"network":"seccomp denied sockets"}}
         finally:_LOCK.release()
     except (AssessmentError,OSError,ValueError,KeyError,subprocess.SubprocessError,http.client.HTTPException) as exc:
         return {"success":False,"profile":NUCLEI_PROFILE,"error":str(exc)[:300]}
@@ -401,6 +428,7 @@ def run_tcp_connect(tool,params):
 if __name__=="__main__":
     if len(sys.argv)<4 or sys.argv[1]!="--offline-nuclei":raise SystemExit(2)
     binary=Path(sys.argv[2])
-    if digest(binary)!=NUCLEI_SHA256:raise SystemExit("Reviewed binary checksum mismatch")
+    if binary.is_symlink() or not binary.is_file() or digest(binary) not in NUCLEI_BUILDS:
+        raise SystemExit("Reviewed Nuclei build not recognized")
     no_network()
     os.execv(str(binary),[str(binary),*sys.argv[3:]])

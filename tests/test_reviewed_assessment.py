@@ -41,7 +41,7 @@ def test_http_concurrency_exhaustion_fails_before_socket_creation():
 
 def test_nuclei_internal_authority_reaches_confined_collector():
     from types import SimpleNamespace
-    with patch.object(a,"nuclei_binary",return_value=__import__("pathlib").Path("fixture")),patch.object(a,"fetch",return_value={"status_code":200,"headers":{"x-content-type-options":"nosniff","x-frame-options":"DENY"},"raw":"HTTP/1.0 200 OK\r\n\r\n"}) as request,patch.object(a,"_command",return_value=SimpleNamespace(returncode=0,stdout=b"",stderr=b"")):
+    with patch.object(a,"nuclei_binary",return_value=(__import__("pathlib").Path("fixture"),{"version":"v3.11.1","sha256":"f"*64,"platform":"linux/amd64"})),patch.object(a,"fetch",return_value={"status_code":200,"headers":{"x-content-type-options":"nosniff","x-frame-options":"DENY"},"raw":"HTTP/1.0 200 OK\r\n\r\n"}) as request,patch.object(a,"_command",return_value=SimpleNamespace(returncode=0,stdout=b"",stderr=b"")):
         result=a.run_nuclei({"target":"https://192.0.2.15/","template":a.NUCLEI_PROFILE,"use_recovery":False,"additional_args":"--redvector-authority=lab.example"})
         assert result["success"],result
         request.assert_called_once_with("https://192.0.2.15/",headers={"Host":"lab.example"})
@@ -49,7 +49,7 @@ def test_nuclei_internal_authority_reaches_confined_collector():
 def test_nuclei_match_mismatch_is_failure_not_false_clean():
     from types import SimpleNamespace
     from pathlib import Path
-    with patch.object(a,"nuclei_binary",return_value=Path("fixture")),patch.object(a,"fetch",return_value={"status_code":200,"headers":{},"raw":"HTTP/1.0 200 OK\r\n\r\n"}),patch.object(a,"_command",return_value=SimpleNamespace(returncode=0,stdout=b"",stderr=b"")):
+    with patch.object(a,"nuclei_binary",return_value=(Path("fixture"),{"version":"v3.11.1","sha256":"f"*64,"platform":"linux/amd64"})),patch.object(a,"fetch",return_value={"status_code":200,"headers":{},"raw":"HTTP/1.0 200 OK\r\n\r\n"}),patch.object(a,"_command",return_value=SimpleNamespace(returncode=0,stdout=b"",stderr=b"")):
         result=a.run_nuclei({"target":"http://127.0.0.1/","template":a.NUCLEI_PROFILE,"use_recovery":False})
     assert not result["success"] and "conflict" in result["error"]
 

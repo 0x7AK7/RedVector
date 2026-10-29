@@ -12,7 +12,7 @@ BINARIES={"nmap_scan":"nmap","nuclei_scan":"nuclei","jaeles_vulnerability_scan":
 
 def status(name,policy,runtime=None,verified=False,report_available=False):
     from redvector_ollama_policy import (DIAGNOSTICS,OFFLINE_TOOLS,ARTIFACT_TOOLS,RUNTIME_TOOLS,ADVISORY_TOOLS,
-        HTTP_ASSESS_TOOLS,TCP_SCAN_TOOLS)
+        HTTP_ASSESS_TOOLS,TCP_SCAN_TOOLS,SEARCHSPLOIT_TOOLS)
     runtime=runtime or {}
     dependency=BINARIES.get(name)
     binary_state=runtime.get("tools_status",{}).get(dependency) if verified else None
@@ -32,6 +32,11 @@ def status(name,policy,runtime=None,verified=False,report_available=False):
         if capability.get("state")!="Ready":return capability.get("state","Restricted"),capability.get("detail","Reviewed TCP connect profile required.")
         if not policy.snapshot():return "Restricted","Set /scope TARGET before bounded TCP discovery."
         return "Ready","Reviewed bounded TCP connect discovery (<=128 ports, capped concurrency/timeouts); native "+native+" is NOT executed."
+    if name in SEARCHSPLOIT_TOOLS:
+        capability=policy.profile_status.get("searchsploit-v1",{})
+        if not verified:return "Restricted","Verified backend searchsploit capability required; refresh /tools."
+        if capability.get("state")!="Ready":return capability.get("state","Restricted"),capability.get("detail","Reviewed searchsploit profile required.")
+        return "Ready","Reviewed offline local Exploit-DB lookup (searchsploit --json); read-only, no network or exploit mirroring. Matches are candidate references requiring validation, not confirmed exploits."
     if name=="ai_vulnerability_assessment":
         discovery=policy.profile_status.get("tcp-discovery-v1",{})
         if not verified:return "Restricted","Verified backend required for this staged assessment integration; refresh /tools."

@@ -1,15 +1,15 @@
 {
   "source_sha256": {
     "redvector_mcp.py": "f94e07fd4fa1ae83919d1f5e0efd57f0a29c4b0124dc4c44315b6323ead154e3",
-    "redvector_server.py": "57f440611c46258155be52a1a58841d4961581cb9a07eab01431a66d8ee292cc",
+    "redvector_server.py": "69ac9cb8d25f10cd1879ccb32ca48b17bab3cfc9cc8d7710a7db77881859105e",
     "redvector_reviewed_profiles.py": "a28545fc00a12f7b4e9092c23d63adab9175058b40c7250c3e944bb613df0c3c",
-    "redvector_ollama_agent.py": "ebd1ef2d03f281ac4510ee7f3adc26dc64324781033beb31edb65547337b186a",
-    "redvector_ollama_policy.py": "45d832d7ff0a5d6f51acd75f7a8d420a0f5be3dd53f0bbcc44b840973cdf4527",
+    "redvector_ollama_agent.py": "bc08548f7fc6927af6d14ea48a7868a7c31ffb8a3f05a6f7e9cafef3acafeae5",
+    "redvector_ollama_policy.py": "9d65ae1fc685b1ba214b5407697253d5b38fe329cfb5afd7fe168871bf02cfb1",
     "redvector_ollama_backend.py": "ed5d25d2983966479287b9710257a738d265ae01376d82375e58ebcdefe7ba1f",
-    "redvector_ollama_profiles.py": "ef821ce7286a52089284cc7e7debadf666e7882e2ce71126e28ef599e73fe8c9",
+    "redvector_ollama_profiles.py": "19c8f63ca479ba62ace4cec08c3604e0c9a7654f4ba1eac71fbd7f83119c6a2b",
     "redvector_ollama_reporting.py": "23db3fcf60242f67eb874306809a8e3a72a2e57a752b7450367533c426b27182",
-    "redvector_ollama_availability.py": "5e1f0fb6fd75024937b54df92f9a7cfeec3adfabc12fdc880f0005e90c225611",
-    "redvector_ollama_cli.py": "d1171c7afbd0f23dcbb8c667d71c41d435d8042376fccbab88e0ea837baec1a5",
+    "redvector_ollama_availability.py": "63ded2942a3065b00baf58355ce90245fc4450e1d77a2cda6cf47ab17b968264",
+    "redvector_ollama_cli.py": "b6fc96dc084b101f3fa89a215feb629b8efbbed869f01be88e6140bf8993377a",
     "redvector_ollama_presentation.py": "7485f815f41f011c22b1242cd7b5485d51841bbd56439aa0fa62eab5f2235ba2",
     "redvector_reviewed_assessment.py": "774d8e14c17f277925c047fbd1021b00c51ba0488a4bce016bc03b10df82c8ee",
     "redvector_ollama_results.py": "33791a82fbad6b851c045a7a3f689f8c60e5c7e6de668af55f71427242e8e626",
@@ -18,7 +18,8 @@
     "redvector_reviewed_runtime.py": "d65c753e007567ffe74a65931def4a0200f2279df0db81dcda394ebcc37541cc",
     "redvector_reviewed_advisories.py": "451982ff4eb677a99c52c720edbbfdc47eabf9c8a4f209d61c810809622c17bf",
     "redvector_ollama_artifacts.py": "522f8c56dd823c606a8172209852797d34b9284f5cf11816e68f604e2cbad7fe",
-    "redvector_reviewed_vulnscan.py": "3c48a5a8706db4cd31f405d895b7d93191a28f48919d36689f58c2e4e5381e45"
+    "redvector_reviewed_vulnscan.py": "3c48a5a8706db4cd31f405d895b7d93191a28f48919d36689f58c2e4e5381e45",
+    "redvector_reviewed_searchsploit.py": "241338990ad890705e9321855c9c5a81d6a131a21caf701f434e331f0ed038c8"
   },
   "tool_tests": {
     "server_health": {
@@ -140,6 +141,10 @@
     "ai_vulnerability_assessment": {
       "status": "Passed real native MCP/backend execution (reviewed staged assessment orchestrator ollama-assessment-v1)",
       "evidence": "Ollama-session MCP tool routes to the reviewed backend orchestrator (/api/ollama/assessment) that chains ONLY reviewed profiles: native nmap -sT discovery and -sV service versioning (chunked <=128), RedVector's passive HTTP-response collector (not native Nikto/Jaeles), the reviewed offline Nuclei header profile when its verified binary is configured, and NVD advisories. Verified natively against an owned loopback web service: discovery and service-version stages ran, findings carry a ranking taxonomy, a per-stage audit trail is produced, a missing scanner is reported accurately (not faked), and no CVEs/findings are fabricated. 328 signatures unchanged. Full-bridge/backend live tests tests/test_reviewed_discovery_live.py and tests/test_ollama_vulnscan_live.py plus unit tests tests/test_reviewed_discovery.py and tests/test_reviewed_vulnscan.py. Windows regression: 516 passed, 0 failed, 47 skipped. Native Kali core regression: 555 passed, 0 failed, 6 skipped."
+    },
+    "searchsploit_lookup": {
+      "status": "Passed real native MCP/backend execution (reviewed offline searchsploit --json Exploit-DB lookup; execution mode A)",
+      "evidence": "New reviewed adapter redvector_reviewed_searchsploit.py runs the real native `searchsploit --json` binary as a fixed argv vector (no shell), bounded by a 30s deadline and 1MiB output cap, read-only (mirroring disabled, option-injection and shell metacharacters rejected), with honest A/D/E/R execution-mode labeling that never reports native execution unless the binary ran. Verified natively on Kali: the searchsploit-v1 capability attested Ready and run_searchsploit returned execution_mode 'A' (native binary executed) with parsed Exploit-DB rows for both a query and a CVE lookup (tests/test_reviewed_searchsploit_live.py). Backend /api/tools/searchsploit marker interception + attest() source-hash verification (redvector_ollama_profiles.py); the policy injects the reserved marker and forces read-only JSON. 328 MCP signatures unchanged. Unit tests: tests/test_reviewed_searchsploit.py (22) and tests/test_ollama_searchsploit_policy.py (9, including attestation plumbing). Windows regression: 588 passed, 0 failed, 52 skipped. Native Kali core regression: 635 passed, 0 failed, 8 skipped."
     }
   },
   "test_runs": {
@@ -299,17 +304,34 @@
       "skipped": 7,
       "subtests_passed": 136,
       "seconds": 642.93
+    },
+    "windows_full_searchsploit": {
+      "passed": 588,
+      "failed": 0,
+      "skipped": 52,
+      "subtests_passed": 129,
+      "command": ".ollama-test-env/Scripts/python.exe -m pytest -q -rs"
+    },
+    "native_core_searchsploit": {
+      "passed": 635,
+      "failed": 0,
+      "skipped": 8,
+      "subtests_passed": 136,
+      "seconds": 725.7,
+      "command": "REDVECTOR_RUN_SMOKE=1 .ollama-linux-env/bin/python3.13 -m pytest -q -rs --ignore=tests/test_ollama_kali_uat.py --ignore=tests/test_ollama_unified_live.py",
+      "note": "Adds staged full-range discovery -> service-ID (area 9), native searchsploit mode-A live evidence, and real-PTY approval tests. 8 skips are opt-in public-advisory/installed-model, Windows DACL semantics, shared-model live and the non-Linux-only searchsploit unit."
     }
   },
   "limits": [
-    "30 independently verified constrained tool workflows; the dynamic scope-parsing repair fixed false out-of-scope rejections without adding a newly verified tool. Full 328-tool coverage remains incomplete.",
+    "31 independently verified constrained tool workflows (the reviewed offline searchsploit_lookup Exploit-DB lookup is the newest, with native execution-mode-A evidence). Full 328-tool coverage remains incomplete.",
     "Full-range discovery (tcp-discovery-v1) is native nmap -sT only: XML open/closed/filtered states, bounded --max-rate/--host-timeout and a 300s cancellable deadline; no UDP, OS detection or NSE. Service/version identification uses the 128-port service-version-v1 profile in chunks.",
     "ai_vulnerability_assessment chains reviewed profiles only; its internal discovery defaults to a bounded 1-10000 range (full 1-65535 is the explicit nmap stage); candidate CVEs are NVD keyword matches requiring validation, not exploitability.",
     "Bounded TCP discovery (masscan_high_speed/rustscan_fast_scan) and confined HTTP assessment (httpx/nikto/wafw00f/jaeles) are RedVector's own bounded/passive engines; the native scanners are never executed (Masscan/RustScan are not installed).",
     "Nuclei runs only when its pinned v3.11.1 build is configured via REDVECTOR_NUCLEI_BIN; a mismatched build is reported as a checksum mismatch, never bypassed.",
     "Nmap active service profile covers SSH/HTTP/FTP/SMTP/POP3/IMAP/MySQL greeting evidence; artifact profile is operator-selected read-only files; runtime profile is read-only (no process mutation); advisory profile samples anonymous NVD publications and does not establish target applicability.",
     "Real-model Ollama acceptance (qwen3:8b) MCP tool-selection against the operator's live environment and the authorized Metasploitable2 lab target remain to be exercised by the operator; this pass verified the reviewed profiles/orchestrator against owned loopback services and native nmap.",
-    "All assessment/scan traffic was to test-owned loopback listeners except the advisory test (official public NVD endpoint). Existing backends were not stopped/reconfigured."
+    "All assessment/scan traffic was to test-owned loopback listeners except the advisory test (official public NVD endpoint). Existing backends were not stopped/reconfigured.",
+    "searchsploit_lookup is a reviewed OFFLINE local Exploit-DB lookup (native searchsploit --json): read-only, no network, no exploit mirroring; matches are candidate references requiring validation, never confirmed or executed exploits. The native binary really runs (execution mode A) or absence/rejection is reported accurately as mode D/E/R."
   ],
   "previous_checkpoint": {
     "source_sha256": {
@@ -384,7 +406,9 @@
     "Authorization UX: reviewed passive HTTP and bounded TCP tools no longer prompt within scope (high-impact scans still require explicit approval each time); approval input is case-insensitive (approve/deny); a distinct error taxonomy (out-of-scope / approval-required / missing-dependency / missing-integration / unsupported / invalid-arguments / execution-failed) replaces treating a missing adapter as a denial.",
     "Dynamic scope parsing: assessment_context now treats a request token as a destination only when it is destination-shaped (IP/CIDR/bracketed IPv6/dotted host) or a host NAMED in scan-operand position (function words skipped), so ordinary words (e.g. 'of' in 'port scan of HOST'), bare port numbers and ranges (65535, 1-65535, 80,443) are never read as hosts and cannot cause a false out-of-scope rejection; explicitly-named unknown hosts and genuinely out-of-scope destinations are still denied, and scope is never silently expanded. No target is hardcoded.",
     "Full-range discovery runtime/timeout: run_discovery now locates the attested ELF nmap via dpkg (handling the /usr/bin/nmap wrapper) and stages only a minimal private datadir (no nselib copy, since -sT -n runs no NSE), with a bounded single-host rate, so a full 1..65535 scan completes within the client call budget. Attestation (binary trust + datadir integrity) is preserved; no security gate is bypassed. The end-to-end test_ollama_fullrange_live.py passes natively.",
-    "tcp-discovery-v1 availability: verified end-to-end that agent.refresh_profiles() populates profile_status['tcp-discovery-v1'] = Ready through the genuine server_health -> /api/ollama/profiles -> attest() pipeline (attest allowlist includes the profile), not injected test state."
+    "tcp-discovery-v1 availability: verified end-to-end that agent.refresh_profiles() populates profile_status['tcp-discovery-v1'] = Ready through the genuine server_health -> /api/ollama/profiles -> attest() pipeline (attest allowlist includes the profile), not injected test state.",
+    "Staged combined workflow (area 9): a request for full-range discovery AND service identification now runs a staged workflow (full 1-65535 tcp-discovery-v1, then service-version-v1 on the discovered open ports in <=128 chunks) instead of a single truncated 128-port version scan; discovery-only and bounded-version requests are never reclassified. Interactive CLI accuracy repairs: a deterministic post-scan summary with no automatic AI pass, suppressed internal tool-eligibility dumps, a distinct execution-state taxonomy, and a re-prompting approval loop (empty/invalid input re-prompts, never a silent deny) verified by real pseudo-terminal tests.",
+    "Added reviewed native searchsploit_lookup (offline local Exploit-DB) with fixed-argv execution (no shell), read-only operation (mirroring disabled), strict argument validation, honest A/D/E/R execution-mode labeling and source-hash attestation (attest() allowlist + backend /ollama/profiles module hash); native execution-mode-A verified on Kali. 328 MCP signatures unchanged."
   ],
   "real_model_verification": {
     "source": "actual installed Ollama model",

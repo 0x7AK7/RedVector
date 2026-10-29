@@ -110,7 +110,21 @@ def normalize(tool,target,arguments,data,elapsed):
         if isinstance(parsed,list):fields.extend(flatten(parsed,"content["+str(index)+"]"))
         else:fields.append(("content["+str(index)+"]",text))
     counts={key:0 for key in ("Critical","High","Medium","Low","Informational","Unknown")}
-    confirmed=0;finding_count=0
+    classes={};confirmed=0;candidate=0;finding_count=0
+    def _severity(finding):
+        # CVSS severity DIMENSION only; read an explicit severity, a nested info.severity, a
+        # provider severity, or derive bands from a CVSS score. Findings that carry no severity
+        # signal at all (identified services, config observations) are NOT forced into the
+        # histogram, so they never inflate "Unknown" or masquerade as vulnerabilities.
+        value=finding.get("severity")
+        if value is None and isinstance(finding.get("info"),dict):value=finding["info"].get("severity")
+        if value is None:value=finding.get("provider_severity")
+        score=finding.get("cvss",finding.get("provider_cvss_score"))
+        if value is None and isinstance(score,(int,float)) and score>0:
+            value="Critical" if score>=9 else "High" if score>=7 else "Medium" if score>=4 else "Low"
+        if value is None:return None
+        label=str(value).title()
+        return "Informational" if label=="Info" else label
     stack=[source]
     while stack:
         item=stack.pop()
@@ -120,19 +134,23 @@ def normalize(tool,target,arguments,data,elapsed):
                     for finding in value:
                         if not isinstance(finding,dict):continue
                         finding_count+=1
-                        severity=finding.get("severity")
-                        if severity is None and isinstance(finding.get("info"),dict):severity=finding["info"].get("severity")
-                        label=str(severity).title()
-                        if label=="Info":label="Informational"
-                        counts[label if label in counts else "Unknown"]+=1
+                        label=_severity(finding)
+                        if label is not None:counts[label if label in counts else "Unknown"]+=1
+                        # Separate CLASSIFICATION dimension (orchestrator taxonomy): a candidate CVE
+                        # is tallied as a candidate, never as a confirmed vulnerability.
+                        cls=finding.get("classification")
+                        if isinstance(cls,str):
+                            classes[cls]=classes.get(cls,0)+1
+                            if cls.lower().startswith("candidate"):candidate+=1
                         validation=finding.get("validation_state",finding.get("validation"))
-                        if isinstance(validation,str) and validation.lower()=="confirmed":confirmed+=1
+                        if (isinstance(validation,str) and validation.lower()=="confirmed") or cls=="Confirmed":confirmed+=1
                 else:stack.append(value)
         elif isinstance(item,list):stack.extend(item)
     duration=source.get("execution_time",elapsed)
     if type(duration) not in (int,float) or not math.isfinite(duration) or duration<0:duration=elapsed
     return {"kind":"generic","source":data.get("source","Not supplied"),"category":category(tool),"tool":tool,"target":target,
             "status":status,"duration":duration,"fields":fields,"severity":counts,
+            "classification":classes,"candidate":candidate,
             "finding_count":finding_count,"confirmed":confirmed,"warnings":warnings,
             "errors":"Tool reported a failure; inspect source evidence." if failed else "None reported"}
 

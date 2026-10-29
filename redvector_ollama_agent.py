@@ -15,7 +15,7 @@ from redvector_ollama_results import ResultsStore
 from redvector_ollama_presentation import render_scan,render_result,operation_message,approval_panel,Panel
 from redvector_ollama_analysis import summarize
 
-from redvector_ollama_policy import Policy, PolicyError, REVIEWED, DISABLED_REASONS, HTTP_READ_TOOLS, HTTP_ASSESS_TOOLS, TCP_SCAN_TOOLS, NMAP_TOOLS, ARTIFACT_TOOLS, RUNTIME_TOOLS, ADVISORY_TOOLS, ASSESSMENT_TOOLS, validate_arguments
+from redvector_ollama_policy import Policy, PolicyError, REVIEWED, DISABLED_REASONS, HTTP_READ_TOOLS, HTTP_ASSESS_TOOLS, TCP_SCAN_TOOLS, NMAP_TOOLS, ARTIFACT_TOOLS, RUNTIME_TOOLS, ADVISORY_TOOLS, ASSESSMENT_TOOLS, SEARCHSPLOIT_TOOLS, validate_arguments
 from redvector_ollama_backend import inspect_backend, BackendReuseError
 from redvector_ollama_cli import handle_command, assessment_context, saved_analysis_request, automatic_context
 from redvector_ollama_errors import record_error
@@ -73,6 +73,11 @@ def tool_schema(tool,version=False):
     if tool.name in TCP_SCAN_TOOLS:
         if "additional_args" in properties:properties["additional_args"].update(enum=[""],default="")
         note=" Reviewed bounded TCP discovery: one authorized in-scope target and 1..128 explicit ports. A shared RedVector TCP connect engine runs (<=64 concurrent, bounded timeout/deadline); native masscan/rustscan are NOT executed and unbounded high-speed scanning is disabled."
+    if tool.name in SEARCHSPLOIT_TOOLS:
+        if "additional_args" in properties:properties["additional_args"].update(enum=[""],default="")
+        if "mirror" in properties:properties["mirror"].update(enum=[""],default="")
+        if "json_output" in properties:properties["json_output"].update(enum=[True],default=True)
+        note=" Reviewed offline Exploit-DB lookup: a single local searchsploit --json search by query or CVE. Read-only; no network, no exploit mirroring, no exploitation. Results are local database matches (candidate references requiring validation), never confirmed or executed exploits."
     from redvector_ollama_reporting import OFFLINE_TOOLS
     if tool.name in OFFLINE_TOOLS:
         marker={"create_vulnerability_report":"vulnerabilities","create_scan_summary":"target","format_tool_output_visual":"output"}[tool.name]
@@ -97,6 +102,35 @@ def check_schema(schema):
     refs(schema)
     try:Draft202012Validator.check_schema(schema)
     except Exception as exc:raise AgentError("MCP returned an invalid JSON schema.") from exc
+
+_APPROVE_WORDS=frozenset({"approve","approved","a","yes","y"})
+_DENY_WORDS=frozenset({"deny","denied","d","no","n","cancel","c"})
+
+def _resolve_approval(ask,notify=None,attempts=3):
+    """Operator approval decision loop. Case-insensitive, whitespace-tolerant. Empty or
+    unrecognized input is NOT a decision: it re-prompts (bounded) instead of being treated as a
+    silent DENY. Returns True only on an explicit approval; otherwise False (explicit deny or
+    exhausted retries). `notify` receives a short message per invalid attempt and on cancel."""
+    for _ in range(max(1,attempts)):
+        decision=str(ask()).strip().lower()
+        if decision in _APPROVE_WORDS:return True
+        if decision in _DENY_WORDS:return False
+        if notify:notify("INVALID INPUT — RETRY: type APPROVE or DENY (empty input is not a decision; nothing was executed).")
+    if notify:notify("CANCELLED BY OPERATOR: no explicit APPROVE was supplied.")
+    return False
+
+def _execution_state(message):
+    """Map a policy/execution error to a distinct, accurate terminal state so a voluntary
+    cancellation, a missing dependency or an unsupported integration is never mislabeled as a
+    security-policy block. Genuine authorization failures are preserved."""
+    low=str(message).lower()
+    if "declined" in low or "cancel" in low:return "TOOL EXECUTION / CANCELLED BY OPERATOR"
+    if "outside the operator-authorized scope" in low or "out of scope" in low:return "TOOL EXECUTION / AUTHORIZATION DENIED"
+    if "missing dependency" in low:return "TOOL EXECUTION / DEPENDENCY UNAVAILABLE"
+    if "missing integration" in low or "unsupported" in low:return "TOOL EXECUTION / UNSUPPORTED INTEGRATION"
+    if "approval" in low:return "TOOL EXECUTION / APPROVAL REQUIRED"
+    if "invalid" in low or "do not match" in low or "unexpected" in low:return "TOOL EXECUTION / INVALID INPUT — RETRY"
+    return "TOOL EXECUTION / EXECUTION FAILED"
 
 async def discover(session):
     catalog={};cursor=None;seen=set()
@@ -258,7 +292,7 @@ class Agent:
             self.runtime=metadata;self.runtime_verified=True;self.policy.profile_status=states
         except (asyncio.CancelledError,KeyboardInterrupt):raise
         except Exception as exc:
-            self.policy.profile_status={name:{"state":"Restricted","detail":plain(exc)[:400]} for name in ("service-version-v1","tcp-discovery-v1","redvector-http-read-v1","redvector-tcp-connect-v1","--redvector-profile=http-headers-v1","artifact-read-v1","runtime-read-v1","nvd-advisory-v1",*("artifact-read-v1:"+tool for tool in ARTIFACT_TOOLS))}
+            self.policy.profile_status={name:{"state":"Restricted","detail":plain(exc)[:400]} for name in ("service-version-v1","tcp-discovery-v1","redvector-http-read-v1","redvector-tcp-connect-v1","--redvector-profile=http-headers-v1","artifact-read-v1","runtime-read-v1","nvd-advisory-v1","searchsploit-v1",*("artifact-read-v1:"+tool for tool in ARTIFACT_TOOLS))}
         return self.policy.profile_status
 
     async def select_artifact(self,path):
@@ -327,7 +361,7 @@ class Agent:
             if self.terminal:operation_message(self.terminal,[f"ACTIVE OPERATION | {target} | {name} | Running | Elapsed {time.monotonic()-started:.0f}s"])
 
     def _authorization_context(self,name):
-        approval=("Operator-selected read-only artifact snapshot" if name in ARTIFACT_TOOLS else "Not required: reviewed root-response read" if name in HTTP_READ_TOOLS else "Not required: reviewed passive HTTP assessment" if name in HTTP_ASSESS_TOOLS else "Not required: reviewed bounded TCP discovery" if name in TCP_SCAN_TOOLS else "Not required: read-only diagnostic" if name in RUNTIME_TOOLS or name in ("server_health","get_cache_stats","get_telemetry","error_handling_statistics")
+        approval=("Operator-selected read-only artifact snapshot" if name in ARTIFACT_TOOLS else "Not required: reviewed root-response read" if name in HTTP_READ_TOOLS else "Not required: reviewed passive HTTP assessment" if name in HTTP_ASSESS_TOOLS else "Not required: reviewed bounded TCP discovery" if name in TCP_SCAN_TOOLS else "Not required: reviewed offline Exploit-DB lookup" if name in SEARCHSPLOIT_TOOLS else "Not required: read-only diagnostic" if name in RUNTIME_TOOLS or name in ("server_health","get_cache_stats","get_telemetry","error_handling_statistics")
                   else "Reviewed bounded discovery" if self.policy.last_automatic else "Approved exact operation")
         return {"artifact_sha256":self.artifact["sha256"] if name in ARTIFACT_TOOLS and self.artifact else None,"scope":list(self.policy.snapshot()),"dns_pins":self.policy.dns_snapshot(),
                 "scope_revision":self.policy.revision,"approval":approval}
@@ -410,7 +444,7 @@ class Agent:
                 if self.version_task:
                     args=dict(args,scan_type="-sT -sV")
                 self._scan_busy=True;claimed=True
-            if (name in HTTP_READ_TOOLS or name in HTTP_ASSESS_TOOLS or name in TCP_SCAN_TOOLS or name in ARTIFACT_TOOLS or name in RUNTIME_TOOLS or name in ADVISORY_TOOLS or name in ASSESSMENT_TOOLS or name=="nmap_advanced_scan") and not self.runtime_verified:await self.refresh_profiles()
+            if (name in HTTP_READ_TOOLS or name in HTTP_ASSESS_TOOLS or name in TCP_SCAN_TOOLS or name in ARTIFACT_TOOLS or name in RUNTIME_TOOLS or name in ADVISORY_TOOLS or name in ASSESSMENT_TOOLS or name in SEARCHSPLOIT_TOOLS or name=="nmap_advanced_scan") and not self.runtime_verified:await self.refresh_profiles()
             if name in ARTIFACT_TOOLS | RUNTIME_TOOLS | ADVISORY_TOOLS:
                 from redvector_ollama_artifacts import require_backend
                 await asyncio.to_thread(require_backend,self.session)
@@ -471,7 +505,7 @@ class Agent:
                 self._save_operation(name,data,wire,started)
             return data
         except PolicyError as exc:
-            if self.terminal:Panel(self.terminal).section("TOOL EXECUTION / BLOCKED",[str(exc)],"error")
+            if self.terminal:Panel(self.terminal).section(_execution_state(str(exc)),[str(exc)],"error")
             return {"isError":True,"execution_status":"blocked","error":str(exc)}
         except asyncio.CancelledError:
             if scan and rpc_started:
@@ -492,13 +526,103 @@ class Agent:
                 self._unknown_until=time.monotonic()+90
                 self._save_scan(data,None,started)
             elif rpc_started:self._save_operation(name,data,None,started)
-            elif self.terminal:Panel(self.terminal).section("TOOL EXECUTION / BLOCKED",[data["error"]],"error")
+            elif self.terminal:Panel(self.terminal).section("TOOL EXECUTION / EXECUTION FAILED",[data["error"]],"error")
             return data
         finally:
             if progress:
                 progress.cancel()
                 with suppress(asyncio.CancelledError):await progress
             if claimed:self._scan_busy=False
+
+    def deterministic_summary(self,ident=None):
+        """Concise, model-free scan/assessment summary. Keeps the taxonomy dimensions separate
+        (CVSS severity, classification, candidate vs confirmed) and never starts an AI pass.
+        Deep AI analysis is available only on explicit /summary."""
+        record=self.results.load(ident);finding=record["findings"]
+        status=str(finding.get("status","UNKNOWN"))
+        header="SCAN COMPLETED SUCCESSFULLY" if status=="COMPLETED" else "SCAN STATUS: "+status
+        lines=[header,
+               "Source: actual MCP/backend execution (no AI analysis run automatically).",
+               "Target: "+str(finding.get("target","unspecified"))+" | Tool: "+str(finding.get("tool","unspecified"))]
+        severity={k:v for k,v in (finding.get("severity") or {}).items() if v}
+        if severity:lines.append("CVSS severity (candidate/observed, not confirmed unless stated): "+", ".join(k+" "+str(v) for k,v in severity.items()))
+        classification=finding.get("classification") or {}
+        if classification:lines.append("Classification: "+", ".join(k+": "+str(v) for k,v in classification.items()))
+        if finding.get("candidate"):lines.append("Candidate CVEs (require validation; not confirmed): "+str(finding["candidate"]))
+        lines.append("Confirmed vulnerabilities: "+str(finding.get("confirmed",0))+" | total findings: "+str(finding.get("finding_count",0)))
+        lines.append("Evidence saved as "+str(record["id"])+". Use /summary "+str(record["id"])+" for AI analysis, or /results / /raw / /export.")
+        return "\n".join(lines)
+
+    async def staged_discovery_service(self,target):
+        """Area 9: full-range TCP discovery (1-65535, never truncated), then service/version
+        identification on the discovered OPEN ports only, chunked to <=128 ports per call. Each
+        stage runs through the normal policy authorization at its own impact level and every
+        stage's evidence is preserved. No AI analysis is started automatically."""
+        from redvector_ollama_results import payloads
+        self.assessment_target=target
+        # Stage A: attested full-range discovery; active service-version detection stays OFF so
+        # the request is never silently reclassified into a 128-port version scan.
+        self.version_task=False
+        if self.terminal:self.terminal.message("info","Stage 1/2: full-range TCP discovery (1-65535), not truncated.")
+        disc=await self.execute("nmap_scan",{"target":target,"ports":"1-65535"},{"nmap_scan"})
+        disc_id=self.last_result_id
+        if disc.get("isError") or not disc_id:
+            return self._staged_summary(target,disc_id,[],"discovery-incomplete")
+        actual=payloads(disc)
+        parsed=(actual[0].get("parsed") if actual and isinstance(actual[0],dict) else {}) or {}
+        open_ports=[str(entry.get("port")) for entry in parsed.get("ports",[])
+                    if isinstance(entry,dict) and entry.get("state")=="open" and entry.get("port") is not None]
+        if not open_ports:
+            return self._staged_summary(target,disc_id,[],"no-open-ports")
+        # Stage B: service/version identification confined to the discovered open ports, chunked
+        # to respect the reviewed service-version profile's 128-port bound (never truncated: all
+        # discovered open ports are covered across sequential bounded calls).
+        self.version_task=True
+        service_ids=[]
+        if self.terminal:self.terminal.message("info","Stage 2/2: service identification on "+str(len(open_ports))+" discovered open port(s).")
+        for index in range(0,len(open_ports),128):
+            svc=await self.execute("nmap_scan",{"target":target,"scan_type":"-sV","ports":",".join(open_ports[index:index+128])},{"nmap_scan"})
+            if self.last_result_id:service_ids.append(self.last_result_id)
+            if svc.get("isError"):break
+        return self._staged_summary(target,disc_id,service_ids,"complete")
+
+    def _staged_summary(self,target,disc_id,service_ids,stage):
+        """Concise, model-free summary of the staged discovery+service workflow. Taxonomy
+        dimensions (CVSS severity, classification, candidate vs confirmed) stay separate and
+        every stage's evidence id is surfaced for /summary, /results, /raw and /export."""
+        header="STAGED ASSESSMENT COMPLETED" if stage=="complete" else "STAGED ASSESSMENT — "+stage.replace("-"," ").upper()
+        lines=[header,"Source: actual MCP/backend execution (no AI analysis run automatically).","Target: "+str(target)]
+        if disc_id:
+            disc=self.results.load(disc_id)["findings"]
+            lines.append("Stage 1 — full-range discovery (1-65535, not truncated): status "+str(disc.get("status","UNKNOWN"))+
+                         "; open TCP ports "+str(disc.get("open_count",0))+"; evidence "+str(disc_id)+".")
+        else:
+            lines.append("Stage 1 — full-range discovery did not complete; no evidence was saved.")
+        if stage=="no-open-ports":
+            lines.append("Stage 2 — service identification skipped: no open ports were discovered.")
+        elif service_ids:
+            services=versioned=candidate=confirmed=0
+            for sid in service_ids:
+                finding=self.results.load(sid)["findings"]
+                candidate+=int(finding.get("candidate",0) or 0)
+                confirmed+=int(finding.get("confirmed",0) or 0)
+                for row in finding.get("ports",[]) or []:
+                    if not isinstance(row,dict) or row.get("state")!="open":continue
+                    services+=1
+                    version=str(row.get("version","")).strip().lower()
+                    if version and version not in ("not verified","unknown"):versioned+=1
+            detail=("Stage 2 — service/version identification on discovered open ports ("+str(len(service_ids))+
+                    " scan(s), <=128 ports each): "+str(services)+" open service(s) examined, "+str(versioned)+
+                    " with an identified version")
+            if candidate or confirmed:
+                detail+=("; candidate CVEs "+str(candidate)+" (require validation; not confirmed), confirmed "+str(confirmed))
+            lines.append(detail+".")
+            lines.append("Service evidence: "+", ".join(str(s) for s in service_ids)+".")
+        elif disc_id:
+            lines.append("Stage 2 — service identification did not complete; discovery evidence is preserved above.")
+        tail=service_ids[-1] if service_ids else disc_id
+        if tail:lines.append("Use /summary "+str(tail)+" for AI analysis, or /results / /raw / /export.")
+        return "\n".join(lines)
 
     async def turn(self,text):
         if not isinstance(text,str) or len(text)>8000:raise AgentError("Task text is limited to 8000 characters.")
@@ -508,12 +632,25 @@ class Agent:
         if saved_analysis_request(text):
             try:return await self.summarize_saved()
             except (ValueError,OSError):return "No saved scan is available. Use /results list or /summary RESULT_ID. No network scan was executed."
-        from redvector_ollama_cli import requests_active_versions
+        from redvector_ollama_cli import requests_active_versions,requests_combined_discovery_service
         self.version_task=requests_active_versions(text)
         assessment,chosen,clarification=assessment_context(text,self.policy,allow_versions=True)
         self.assessment_target=chosen if assessment else None
         self.automatic_task=assessment and bool(chosen) and automatic_context(text,chosen)
         if clarification:return clarification
+        if assessment and chosen and requests_combined_discovery_service(text):
+            # Area 9: a combined full-range discovery + service-identification request runs as a
+            # staged workflow (full discovery, then service-ID on discovered open ports), never a
+            # single truncated 128-port version scan. Discovery readiness is required to start.
+            await self.refresh_profiles()
+            discovery=self.policy.profile_status.get("tcp-discovery-v1",{})
+            if discovery.get("state")!="Ready":
+                return "Target is authorized. Staged full-range discovery unavailable: "+str(discovery.get("detail","Reviewed discovery profile required."))+" No scan was executed."
+            intensity=re.search(r"(?i)version[- ]intensity\s+([0-9]+)",text)
+            self.policy.version_intensity=int(intensity.group(1)) if intensity else 1
+            if not 0<=self.policy.version_intensity<=2:
+                return "Reviewed version intensity must be 0, 1 or 2. No scan was executed."
+            return await self.staged_discovery_service(chosen)
         if assessment and self.version_task:
             await self.refresh_profiles()
             capability=self.policy.profile_status.get("service-version-v1",{})
@@ -594,14 +731,17 @@ class Agent:
                 if not isinstance(name,str):raise AgentError("Missing structured tool name.")
                 data=await self.execute(name,args,exposed)
                 if self.last_result_id and (name in NMAP_TOOLS or self.terminal):
-                    return await self.summarize_saved(self.last_result_id)
+                    # Concise deterministic summary immediately; no automatic (expensive) AI pass.
+                    # Deep analysis runs only on explicit /summary.
+                    return self.deterministic_summary(self.last_result_id)
                 target=self.last_invocation[1].get("target") if self.last_invocation else None
                 outcomes.append(dict(data,tool=name,target=target))
                 output=json.dumps(data,ensure_ascii=True)
                 if not self.terminal:self.render(output)
                 if self.terminal and name=="discover_tools":
-                    from redvector_ollama_presentation import render_tools
-                    render_tools(self.terminal,data.get("tools",[]))
+                    # Internal discovery stays quiet: show only a concise count, not the full
+                    # eligibility table (that remains available via the explicit /tools command).
+                    self.terminal.message("info","Selected "+str(len(data.get("tools",[])))+" task-specific tool(s) internally. Use /tools to list eligibility.")
                 if self.last_result_id:
                     from redvector_ollama_views import evidence_page
                     output=json.dumps(evidence_page(self.results.load()["findings"]),ensure_ascii=True)
@@ -644,10 +784,11 @@ async def interactive(api,model,wizard):
         policy=Policy()
         def approve(operation):
             approval_panel(term,operation)
-            # Affirmative decision required; accept case-insensitive approve/deny. Anything that is
-            # not an explicit approval (including ambiguous input) is treated as declined.
-            decision=wizard.ask("Enter APPROVE to execute this operation, or DENY to cancel:").strip().lower()
-            return decision in ("approve","approved","a","yes","y")
+            green="\033[92m";red="\033[91m";reset="\033[0m"
+            yes=(green+"APPROVE"+reset) if term.color else "APPROVE"
+            no=(red+"DENY"+reset) if term.color else "DENY"
+            label="Enter "+yes+" to execute this operation, or "+no+" to cancel:"
+            return _resolve_approval(lambda:wizard.ask(label),lambda m:term.message("warning",m))
         agent=Agent(api,model,session,catalog,policy,approve,lambda out:term.write("MCP RESULT: "+plain(out)),terminal=term)
         while True:
             text=wizard.command()

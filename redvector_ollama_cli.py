@@ -241,3 +241,29 @@ def requests_active_versions(text):
     view=re.sub(r"(?i)\b(?:without|no)\s+(?:active\s+)?(?:service[- ]?)?versions?(?:\s+detection)?\b"," ",text)
     view=re.sub(r"(?i)\b(?:do\s+not|don't|never)\s+(?:detect|identify|check|probe|use|run)\s+(?:active\s+)?(?:service[- ]?)?versions?(?:\s+detection)?\b"," ",view)
     return bool(re.search(r"(?i)\bversions?\b|(?<!\S)-sV\b",view))
+
+def requests_full_range(text):
+    """True when the operator asks to cover the ENTIRE TCP port space (all 65535 ports / full
+    range) rather than a bounded list. Reads intent only; no target or port list is hardcoded.
+    Negated phrasing ('do not scan all ports') does not qualify."""
+    view=re.sub(r"(?i)\b(?:do\s+not|don't|never|without|no)\s+(?:scan(?:ning)?\s+)?(?:the\s+)?(?:all|every|entire|full|whole|complete)\b"," ",text)
+    return bool(re.search(
+        r"(?i)(?:\b(?:all|every|entire|full|whole|complete)\s+(?:the\s+)?(?:single\s+)?(?:tcp\s+|udp\s+)?ports?\b"
+        r"|\b(?:full|entire|whole|complete)(?:[- ](?:tcp|udp))?(?:[- ]port)?[- ]range\b"
+        r"|\b(?:full|entire|whole|complete)\s+range\s+of\s+(?:tcp\s+|udp\s+)?ports?\b"
+        r"|\ball\s+65535\b|\b65535\s+(?:tcp\s+|udp\s+)?ports?\b"
+        r"|\b(?:0|1)\s*-\s*65535\b)",view))
+
+def requests_service_identification(text):
+    """True when the operator asks to identify/determine running services or versions (the
+    second stage of a combined discovery+service workflow). No target is hardcoded."""
+    if requests_active_versions(text):return True
+    view=re.sub(r"(?i)\b(?:do\s+not|don't|never|without)\s+(?:also\s+)?(?:try\s+to\s+)?(?:identify|determine|detect|enumerate|fingerprint|find|discover|check)\b"," ",text)
+    return bool(re.search(r"(?i)\b(?:identify|determine|detect|enumerate|fingerprint|discover|check|find)\b[^.?!]*\bservices?\b",view))
+
+def requests_combined_discovery_service(text):
+    """Area 9: a single request asking for FULL-RANGE discovery AND service/version
+    identification together -> run the staged workflow (full discovery, then service-ID on the
+    discovered open ports), never a truncated single 128-port version scan. A discovery-only or a
+    bounded version request never qualifies, so neither is reclassified."""
+    return requests_full_range(text) and requests_service_identification(text)

@@ -47,9 +47,16 @@ def attest(proof,metadata,root,port):
         actual=_source(path,limit)
         if actual!=_source(Path(root)/path.name) or actual.hex()!=metadata.get("modules_sha256",{}).get(path.name):
             raise BackendReuseError("Advisory profile source differs from the reviewed module.")
+    searchsploit_keys={"searchsploit-v1"}
+    if searchsploit_keys.intersection(profiles):
+        limit=_source_start_limit(proof.pid,proof.started)
+        path=_script_path(proof.script.parent/"redvector_reviewed_searchsploit.py",limit)
+        actual=_source(path,limit)
+        if actual!=_source(Path(root)/path.name) or actual.hex()!=metadata.get("modules_sha256",{}).get(path.name):
+            raise BackendReuseError("Searchsploit profile source differs from the reviewed module.")
     states={}
     for name,value in profiles.items():
-        if name not in {"service-version-v1","tcp-discovery-v1"}|assessment_names|artifact_keys|runtime_keys|advisory_keys:continue
+        if name not in {"service-version-v1","tcp-discovery-v1"}|assessment_names|artifact_keys|runtime_keys|advisory_keys|searchsploit_keys:continue
         if not isinstance(value,dict) or value.get("state") not in ("Ready","Missing Dependency","Unsupported","Restricted"):
             raise BackendReuseError("Backend profile status is invalid.")
         states[name]=dict(value)

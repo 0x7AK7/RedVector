@@ -63,9 +63,12 @@ class NativeNmap(unittest.TestCase):
                                 self.assertFalse(payload.get("recovery_info",{}).get("recovery_applied",False))
                                 self.assertFalse(agent.last_invocation[1]["use_recovery"])
                                 self.assertIn("--max-rate 50",agent.last_invocation[1]["additional_args"])
-                                compact=json.loads(exchanges[-1][-1]["content"])
-                                self.assertIn(str(scan_port)+"/tcp",compact["open_ports"])
-                                self.assertNotIn("stdout",compact)
+                                # Area 5: no automatic AI pass, so turn() makes only the tool-selection
+                                # chat (no no-schema summary exchange) and returns a deterministic summary.
+                                self.assertEqual(api.async_chat.await_count,1)
+                                self.assertIn("SCAN COMPLETED SUCCESSFULLY",answer)
+                                self.assertIn("no AI analysis run",answer)
+                                self.assertNotIn("stdout",answer)
                                 self.assertEqual(agent.results.load()["mcp"],actual[0])
                                 from redvector_ollama_setup import OllamaTimeout
                                 api.async_chat.side_effect=OllamaTimeout("Injected summary timeout")

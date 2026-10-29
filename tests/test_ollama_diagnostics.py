@@ -46,14 +46,13 @@ class DiagnosticReplay(unittest.IsolatedAsyncioTestCase):
                         lambda operation:False,lambda text:None,results=ResultsStore(Path(d)/"results"),terminal=term)
             answer=await agent.turn("Scan 192.0.2.8 TCP ports 10000-10030")
             self.assertIn("COMPLETED SUCCESSFULLY",answer)
-            self.assertIn("Unavailable (timeout)",answer)
+            self.assertIn("no AI analysis run",answer)  # area 5: no automatic post-scan AI pass
             record=agent.results.load()
             self.assertEqual(record["findings"]["open_count"],31)
             self.assertEqual(record["findings"]["duration"],20.16)
             self.assertEqual(record["wire"],wire)
             for port in range(10000,10031):self.assertIn(str(port)+"/tcp",term.stream.getvalue())
-            compact=api.async_chat.call_args.args[1]
-            self.assertLess(len(json.dumps(compact)),4096-512)
-            self.assertNotIn("stdout",json.dumps(compact))
-            self.assertEqual(api.async_chat.call_args.args[2],[])
+            # Area 5: no automatic post-scan AI pass, so the turn makes only the tool-selection
+            # chat and returns a concise deterministic summary; evidence is preserved above.
+            self.assertEqual(api.async_chat.await_count,1)
             session.call_tool.assert_awaited_once()

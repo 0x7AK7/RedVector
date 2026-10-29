@@ -33,7 +33,8 @@ class Recovery(unittest.IsolatedAsyncioTestCase):
         self.api.async_chat.side_effect=[self.call,OllamaTimeout("timeout")]
         answer=await self.agent.turn("Scan 192.0.2.8 ports 22,80")
         self.assertIn("SCAN COMPLETED SUCCESSFULLY",answer)
-        self.assertIn("timeout",answer)
+        self.assertIn("no AI analysis run",answer)  # area 5: no automatic post-scan AI pass
+        self.assertEqual(self.api.async_chat.await_count,1)  # only the tool-selection chat; no auto-AI
         record=self.agent.results.load()
         self.assertEqual(record["findings"]["status"],"COMPLETED")
         self.assertTrue(record["persisted"])

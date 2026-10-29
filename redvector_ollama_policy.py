@@ -22,7 +22,8 @@ HTTP_ASSESS_TOOLS=frozenset({"httpx_probe","nikto_scan","wafw00f_scan","jaeles_v
 TCP_SCAN_TOOLS=frozenset({"masscan_high_speed","rustscan_fast_scan"})
 NMAP_TOOLS=frozenset({"nmap_scan","nmap_advanced_scan"})
 ASSESSMENT_TOOLS=frozenset({"ai_vulnerability_assessment"})
-REVIEWED = DIAGNOSTICS | OFFLINE_TOOLS | HTTP_READ_TOOLS | HTTP_ASSESS_TOOLS | TCP_SCAN_TOOLS | ARTIFACT_TOOLS | RUNTIME_TOOLS | ADVISORY_TOOLS | NMAP_TOOLS | ASSESSMENT_TOOLS | {"clear_cache"}
+SEARCHSPLOIT_TOOLS=frozenset({"searchsploit_lookup"})
+REVIEWED = DIAGNOSTICS | OFFLINE_TOOLS | HTTP_READ_TOOLS | HTTP_ASSESS_TOOLS | TCP_SCAN_TOOLS | ARTIFACT_TOOLS | RUNTIME_TOOLS | ADVISORY_TOOLS | NMAP_TOOLS | ASSESSMENT_TOOLS | SEARCHSPLOIT_TOOLS | {"clear_cache"}
 DISABLED_REASONS = {"whois_lookup": "WHOIS registry and referral destinations cannot be confined by the existing backend."}
 FIXED_NMAP_ARGS = "-n -Pn --unprivileged --max-retries 1 --host-timeout 60s"
 AUTO_NMAP_ARGS = FIXED_NMAP_ARGS + " --max-rate 50 --scan-delay 20ms --max-parallelism 8"
@@ -327,6 +328,26 @@ class Policy:
             authority=("["+destination+"]" if ip.version==6 else destination)+((":"+str(port)) if port else "")
             pinned=urlunsplit((u.scheme,authority,"/","",""))
             return {key:pinned,"additional_args":HTTP_ASSESS_MARKER}
+        if name in SEARCHSPLOIT_TOOLS:
+            # Offline, read-only local Exploit-DB lookup (no network target). The backend adapter
+            # re-validates strictly and runs a fixed argv vector; here we constrain the arguments,
+            # require the attested profile, force read-only JSON output and inject the marker.
+            from redvector_reviewed_searchsploit import SEARCHSPLOIT_MARKER,PROFILE as SEARCHSPLOIT_PROFILE
+            if set(args)-{"query","cve","exact","title_only","exclude","json_output","mirror","additional_args"}:
+                raise PolicyError("Unexpected reviewed searchsploit arguments.")
+            capability=self.profile_status.get(SEARCHSPLOIT_PROFILE,{})
+            if capability.get("state")!="Ready":
+                raise PolicyError("Reviewed searchsploit unavailable. "+str(capability.get("detail","Refresh backend capabilities with /tools.")))
+            query=args.get("query","") or "";cve=args.get("cve","") or ""
+            if not isinstance(query,str) or not isinstance(cve,str):raise PolicyError("Searchsploit query and CVE must be text.")
+            if not query.strip() and not cve.strip():raise PolicyError("A searchsploit query or CVE is required.")
+            if args.get("mirror"):raise PolicyError("Reviewed searchsploit is read-only; mirroring is disabled.")
+            for flag in ("exact","title_only"):
+                if args.get(flag) not in (True,False,None):raise PolicyError("Searchsploit "+flag+" must be boolean.")
+            exclude=args.get("exclude","") or ""
+            if not isinstance(exclude,str):raise PolicyError("Searchsploit exclude terms must be text.")
+            return {"query":query,"cve":cve,"exact":bool(args.get("exact")),"title_only":bool(args.get("title_only")),
+                    "exclude":exclude,"json_output":True,"mirror":"","additional_args":SEARCHSPLOIT_MARKER}
         if name in ASSESSMENT_TOOLS:
             if "target" not in args or set(args)-{"target","focus_areas"}:
                 raise PolicyError("The staged assessment requires one authorized target and an optional focus area.")
@@ -428,7 +449,7 @@ class Policy:
         # Scope-gated low-impact reviewed reads (diagnostics, saved-evidence, passive HTTP read and
         # assessment, bounded TCP connect, artifact, runtime, advisory) do not prompt per call;
         # high-impact operations below still require an explicit approval each time.
-        if name not in DIAGNOSTICS | OFFLINE_TOOLS | HTTP_READ_TOOLS | HTTP_ASSESS_TOOLS | TCP_SCAN_TOOLS | ARTIFACT_TOOLS | RUNTIME_TOOLS | ADVISORY_TOOLS:
+        if name not in DIAGNOSTICS | OFFLINE_TOOLS | HTTP_READ_TOOLS | HTTP_ASSESS_TOOLS | TCP_SCAN_TOOLS | ARTIFACT_TOOLS | RUNTIME_TOOLS | ADVISORY_TOOLS | SEARCHSPLOIT_TOOLS:
             count=1000
             if name in NMAP_TOOLS and result["ports"]:
                 ports=set()

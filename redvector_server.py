@@ -10981,14 +10981,16 @@ def reviewed_ollama_profiles():
     import redvector_reviewed_artifacts as artifacts
     import redvector_reviewed_runtime as runtime
     import redvector_reviewed_advisories as advisories
+    import redvector_reviewed_searchsploit as searchsploit
     module = Path(reviewed.__file__)
     modules={module.name:hashlib.sha256(module.read_bytes().replace(b"\r\n",b"\n")).hexdigest(),
              Path(assessment.__file__).name:hashlib.sha256(Path(assessment.__file__).read_bytes().replace(b"\r\n",b"\n")).hexdigest()}
     modules[Path(artifacts.__file__).name]=hashlib.sha256(Path(artifacts.__file__).read_bytes().replace(b"\r\n",b"\n")).hexdigest()
     modules[Path(runtime.__file__).name]=hashlib.sha256(Path(runtime.__file__).read_bytes().replace(b"\r\n",b"\n")).hexdigest()
     modules[Path(advisories.__file__).name]=hashlib.sha256(Path(advisories.__file__).read_bytes().replace(b"\r\n",b"\n")).hexdigest()
+    modules[Path(searchsploit.__file__).name]=hashlib.sha256(Path(searchsploit.__file__).read_bytes().replace(b"\r\n",b"\n")).hexdigest()
     return jsonify({
-        "profiles": dict(reviewed.capabilities(),**assessment.capabilities(),**artifacts.capabilities(),**runtime.capabilities(),**advisories.capabilities()),
+        "profiles": dict(reviewed.capabilities(),**assessment.capabilities(),**artifacts.capabilities(),**runtime.capabilities(),**advisories.capabilities(),**searchsploit.capabilities()),
         "modules_sha256": modules,
         "tools_status": _get_tools_status_snapshot(["nmap", "nuclei", "jaeles", "clairctl"]),
         "module_sha256": hashlib.sha256(module.read_bytes().replace(b"\r\n", b"\n")).hexdigest(),
@@ -19514,6 +19516,11 @@ def searchsploit():
     """Execute SearchSploit for local Exploit-DB exploit database searching"""
     try:
         params = request.get_json(silent=True) or {}
+        # Opt-in reviewed handler. Legacy tool behavior, route and schema stay intact; only a
+        # request carrying the reserved reviewed marker is routed to the confined adapter.
+        from redvector_reviewed_searchsploit import SEARCHSPLOIT_MARKER, run_searchsploit
+        if params.get("additional_args") == SEARCHSPLOIT_MARKER:
+            return jsonify(run_searchsploit(params))
         query = params.get("query", "")
         exact = params.get("exact", False)
         cve = params.get("cve", "")

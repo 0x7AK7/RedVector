@@ -41,7 +41,7 @@ class Responses(unittest.IsolatedAsyncioTestCase):
     async def test_no_scope_has_actionable_instruction(self):
         agent,_=self.agent()
         agent.api.async_chat.side_effect=AssertionError("Missing scope must not reach model")
-        self.assertIn("Use /scope TARGET",await agent.turn("Scan my authorized target for open TCP ports"))
+        self.assertIn("No target has been authorized yet",await agent.turn("Scan my authorized target for open TCP ports"))
 
     async def test_ambiguous_scope_requires_operator_choice(self):
         agent,_=self.agent(["192.0.2.4","192.0.2.5"])
@@ -190,7 +190,7 @@ class Responses(unittest.IsolatedAsyncioTestCase):
         agent,_=self.agent()
         for text in ("Do not scan logs; scan my authorized target.", "Never scan logs. Run nmap_scan against my target.",
                      "Do not scan logs but scan my target.", "Call server_health then scan my target."):
-            self.assertIn("Use /scope TARGET",await agent.turn(text))
+            self.assertIn("No target has been authorized yet",await agent.turn(text))
         agent.api.async_chat.assert_not_called()
         agent.session.call_tool.assert_not_called()
 

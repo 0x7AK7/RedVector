@@ -76,7 +76,9 @@ def test_dispatcher_recognizes_every_registry_command_without_inventing_commands
     assert "Unknown command" not in term.stream.getvalue()
     agent.execute.assert_not_called()
 
-def test_actual_interactive_startup_advertises_help():
+def test_actual_interactive_startup_is_natural_language_first():
+    # The redesigned session is natural-language-first: startup guidance and the help a plain-English
+    # request produces must NOT advertise slash commands. The /help alias remains (covered above).
     asyncio.run(_startup())
 
 async def _startup():
@@ -85,11 +87,14 @@ async def _startup():
     @asynccontextmanager
     async def connection():yield Mock(),{}
     term,agent,wizard=interface()
-    wizard.command=Mock(side_effect=["/help","/back"])
+    wizard.command=Mock(side_effect=["What can RedVector do?","Return to the main menu."])
     with patch("redvector_ollama_agent.verify_tools",new=AsyncMock()),patch("redvector_ollama_agent.bridge",connection):
         await interactive(Mock(),"unit-fixture",wizard)
-    assert "Type /help to view all commands" in term.stream.getvalue()
-    assert "REDVECTOR OPERATOR HELP" in term.stream.getvalue()
+    text=term.stream.getvalue()
+    assert "plain English" in text                                   # natural-language startup guidance
+    assert "no commands to memorize" in text                          # the NL "what can RedVector do?" help
+    for slashed in ("/help","/scope","/status","/tools","/summary","/results","/raw","/export","/back"):
+        assert slashed not in text                                    # nothing slash-based is advertised
 
 def test_artifact_command_selects_only_operator_path_without_model_dispatch():
     term,agent,wizard=interface()

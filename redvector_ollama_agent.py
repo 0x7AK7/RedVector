@@ -374,7 +374,7 @@ class Agent:
             try:render_result(self.terminal,record)
             except Exception as exc:
                 record_error("Scan presentation",exc)
-                self.terminal.message("error","Scan evidence preserved; formatted display failed. Use /raw or /export.")
+                self.terminal.message("error","Scan evidence preserved; formatted display failed. Ask to show the raw evidence or export the report.")
             if not record["persisted"]:self.terminal.message("error",record["storage_warning"])
         else:self.render(json.dumps(data,ensure_ascii=True))
         return record
@@ -388,7 +388,7 @@ class Agent:
             try:render_result(self.terminal,record)
             except Exception as exc:
                 record_error("Tool presentation",exc)
-                self.terminal.message("error","Evidence preserved; display failed. Use /raw or /export.")
+                self.terminal.message("error","Evidence preserved; display failed. Ask to show the raw evidence or export the report.")
             if not record["persisted"]:self.terminal.message("error",record["storage_warning"])
         return record
 
@@ -397,7 +397,7 @@ class Agent:
         status=record["findings"]["status"]
         generic=record["findings"].get("kind")=="generic"
         if status not in ("COMPLETED","PARTIAL"):
-            return f"SCAN STATUS: {status}. Evidence preserved. AI summary not requested because execution is not confirmed successful. Inspect /results or /raw; no scan was repeated."
+            return f"SCAN STATUS: {status}. Evidence preserved. AI summary not requested because execution is not confirmed successful. Ask to show the results or the raw evidence; no scan was repeated."
         if self.terminal:self.terminal.message("info","Results preserved. Generating optional AI analysis; Ctrl-C cancels analysis only.")
         analysis=await summarize(self.api,self.model,record,page)
         record["analysis"]=analysis
@@ -410,12 +410,12 @@ class Agent:
         title=("OPERATION "+status if generic else "SCAN COMPLETED SUCCESSFULLY" if status=="COMPLETED" else "SCAN PARTIAL RESULTS")
         if generic:
             detail=analysis.get("text","AI Analysis: "+("Cancelled" if analysis["state"]=="cancelled" else "Unavailable")+" ("+analysis.get("reason","unknown")+").")
-            return title+"\nVerified tool results are preserved.\nAI SECURITY ANALYSIS\n"+detail+f"\nEvidence ID: {record['id']}. /summary {record['id']} {page} retries analysis only; no tool is executed."
+            return title+"\nVerified tool results are preserved.\nAI SECURITY ANALYSIS\n"+detail+f"\nEvidence ID: {record['id']}. Ask to analyze this result again to retry; no tool is executed."
         if analysis["state"]=="verified":
-            return title+"\nThe actual MCP scan finished and results were preserved.\n"+analysis["text"]+f"\nEvidence ID: {record['id']}. Use /results for all findings."
+            return title+"\nThe actual MCP scan finished and results were preserved.\n"+analysis["text"]+f"\nEvidence ID: {record['id']}. Ask to show the results for all findings."
         return (title+"\nThe actual MCP scan finished and results were preserved.\nAI summary: "+
                 ("Cancelled" if analysis["state"]=="cancelled" else "Unavailable")+" ("+analysis["reason"]+
-                f").\nUse /summary {record['id']} {page} to retry saved-result analysis. No additional network scan will be executed.")
+                f").\nAsk to analyze the saved result again to retry. No additional network scan will be executed.")
 
     async def execute(self,name,args,exposed):
         rpc_started=False;started=time.monotonic();progress=None;scan=name in NMAP_TOOLS;claimed=False
@@ -550,7 +550,7 @@ class Agent:
         if classification:lines.append("Classification: "+", ".join(k+": "+str(v) for k,v in classification.items()))
         if finding.get("candidate"):lines.append("Candidate CVEs (require validation; not confirmed): "+str(finding["candidate"]))
         lines.append("Confirmed vulnerabilities: "+str(finding.get("confirmed",0))+" | total findings: "+str(finding.get("finding_count",0)))
-        lines.append("Evidence saved as "+str(record["id"])+". Use /summary "+str(record["id"])+" for AI analysis, or /results / /raw / /export.")
+        lines.append("Evidence saved as "+str(record["id"])+". Ask me to analyze the results, show the raw evidence, or export the report.")
         return "\n".join(lines)
 
     async def staged_discovery_service(self,target):
@@ -621,17 +621,17 @@ class Agent:
         elif disc_id:
             lines.append("Stage 2 — service identification did not complete; discovery evidence is preserved above.")
         tail=service_ids[-1] if service_ids else disc_id
-        if tail:lines.append("Use /summary "+str(tail)+" for AI analysis, or /results / /raw / /export.")
+        if tail:lines.append("Ask me to analyze the results, show the raw evidence, or export the report.")
         return "\n".join(lines)
 
     async def turn(self,text):
         if not isinstance(text,str) or len(text)>8000:raise AgentError("Task text is limited to 8000 characters.")
         text=text.strip()
-        if not text:return "Enter a task or use /help. No MCP operation was executed."
+        if not text:return "Enter a request in plain English, or ask what RedVector can do. No MCP operation was executed."
         if text.startswith("/"):return "Use the interactive CLI for operator commands. Nothing was sent to Ollama."
         if saved_analysis_request(text):
             try:return await self.summarize_saved()
-            except (ValueError,OSError):return "No saved scan is available. Use /results list or /summary RESULT_ID. No network scan was executed."
+            except (ValueError,OSError):return "No saved scan is available yet. Run a scan first, then ask me to analyze the results. No network scan was executed."
         from redvector_ollama_cli import requests_active_versions,requests_combined_discovery_service
         self.version_task=requests_active_versions(text)
         assessment,chosen,clarification=assessment_context(text,self.policy,allow_versions=True)
@@ -714,10 +714,10 @@ class Agent:
                     if scans:
                         answer="The actual MCP "+scans[-1].get("tool","nmap_scan")+" returned a result for "+str(scans[-1].get("target",chosen))+". Review MCP RESULT for source-backed findings. "+("Versions require identifying probe evidence." if self.version_task else "Service labels are port-name mappings, not verified versions.")
                     else:
-                        answer="No authorized Nmap scan was confirmed. Use /tools nmap to inspect availability or clarify the target and ports."
+                        answer="No authorized Nmap scan was confirmed. Ask to show available tools to check availability, or clarify the target and ports."
                 elif not answer:
                     answer=("Review the actual MCP RESULT above; Ollama returned no final text." if any(item.get("source")=="mcp" for item in outcomes)
-                            else "Ollama returned no final response. Please clarify the task or retry; /status can check the real MCP connection.")
+                            else "Ollama returned no final response. Please clarify the task or retry; ask me to check system status to verify the MCP connection.")
                 if not any(item.get("source")=="mcp" for item in outcomes):
                     answer="No MCP operation was executed for this task.\n"+answer
                 # Retain raw model text only; UI attribution is never fed back.
@@ -741,7 +741,7 @@ class Agent:
                 if self.terminal and name=="discover_tools":
                     # Internal discovery stays quiet: show only a concise count, not the full
                     # eligibility table (that remains available via the explicit /tools command).
-                    self.terminal.message("info","Selected "+str(len(data.get("tools",[])))+" task-specific tool(s) internally. Use /tools to list eligibility.")
+                    self.terminal.message("info","Selected "+str(len(data.get("tools",[])))+" task-specific tool(s) internally. Ask to show available tools to list eligibility.")
                 if self.last_result_id:
                     from redvector_ollama_views import evidence_page
                     output=json.dumps(evidence_page(self.results.load()["findings"]),ensure_ascii=True)
@@ -777,10 +777,13 @@ async def interactive(api,model,wizard):
     async with bridge() as (session,catalog):
         term=wizard.term
         term.message("success",f"Connected: {model} -> MCP -> RedVector backend | {len(catalog)} discovered tools")
-        term.box("INTERACTIVE SESSION",["/scope: display scope; /scope TARGET [TARGET...]: replace authorized targets",
-            "/status: real read-only health call","/tools QUERY: discover registered tools",
-            "/back: return to startup menu and switch models","Default scope: none. Diagnostics only.",
-            "Type /help to view all commands"])
+        term.box("REDVECTOR INTERACTIVE SESSION",[
+            "Talk to RedVector in plain English — no commands to memorize.",
+            "Authorize a target you own or may test: \"Authorize <your target> as my lab target.\"",
+            "Assess: \"Scan my authorized target and identify running services.\"",
+            "Review: \"Analyze the latest results.\"  \"Show the raw evidence.\"  \"Export the report as JSON.\"",
+            "Ask: \"Show my authorized targets.\"  \"Check system status.\"  \"Show available tools.\"  \"What can RedVector do?\"",
+            "Navigate: \"Return to the main menu.\"   Default scope: none until you authorize a target."])
         policy=Policy()
         def approve(operation):
             approval_panel(term,operation)
@@ -792,8 +795,47 @@ async def interactive(api,model,wizard):
         agent=Agent(api,model,session,catalog,policy,approve,lambda out:term.write("MCP RESULT: "+plain(out)),terminal=term)
         while True:
             text=wizard.command()
+            # Slash commands remain as unadvertised backward-compatible aliases; natural language is
+            # the primary interface and is routed deterministically to the same validated handlers.
             action=await handle_command(text,agent,wizard)
+            if action is None:
+                action=await nl_dispatch(text,agent,wizard)
             if action=="exit":return
             if action=="handled":continue
             try:term.write("ASSISTANT: "+plain(await agent.turn(text)))
             except SetupError as exc:term.message("error",str(exc))
+
+async def nl_dispatch(text,agent,wizard):
+    """Route a plain-English operator instruction to the same validated handlers the internal slash
+    aliases use (authorization, scope, status, tools, saved-result analysis/raw/export, navigation),
+    so no command syntax is required. Returns 'handled'/'exit' when it acted, or None to let the
+    agent's deterministic turn() handle a scan/discovery/analysis task."""
+    from redvector_nl_router import classify,HELP_TEXT
+    term=wizard.term
+    intent,payload=classify(text)
+    if intent=="task":return None
+    if intent=="help":term.write(HELP_TEXT);return "handled"
+    if intent=="back":return "exit"
+    if intent=="authorize_needs_target":
+        term.message("info","No target has been authorized yet. Tell me which system you own or have permission to assess.")
+        return "handled"
+    if intent=="authorize":
+        return await handle_command("/scope "+" ".join(payload or []),agent,wizard)
+    if intent=="deauthorize":
+        return await handle_command("/scope --clear",agent,wizard)
+    if intent=="show_scope":
+        return await handle_command("/scope",agent,wizard)
+    if intent=="status":
+        return await handle_command("/status",agent,wizard)
+    if intent=="tools":
+        query=re.sub(r"(?i)^\s*(?:please\s+)?(?:show|list|display|what|which)\b\s*","",payload or "").strip() or "security"
+        return await handle_command("/tools "+query,agent,wizard)
+    if intent=="analyze":
+        return await handle_command("/summary",agent,wizard)
+    if intent=="results":
+        return await handle_command(("/results "+payload).strip() if isinstance(payload,str) else "/results",agent,wizard)
+    if intent=="raw":
+        return await handle_command(("/raw "+payload).strip() if payload else "/raw",agent,wizard)
+    if intent=="export":
+        return await handle_command(("/export "+payload).strip() if payload else "/export",agent,wizard)
+    return None

@@ -77,7 +77,7 @@ async def handle_command(text,agent,wizard):
                 term.write(plain(json.dumps(record["wire"],ensure_ascii=True)))
             else:term.message("success","Exported private evidence: "+str(agent.results.export(ident)))
         except (ValueError,OSError,KeyError,TypeError):
-            term.message("error","Saved-result command failed. Use /results list, a valid result ID and positive page number. No network scan was executed.")
+            term.message("error","That saved-result request could not be completed. Ask to show your saved results, or analyze a valid result. No network scan was executed.")
     elif route=="status":
         if argument:term.message("error","Usage: /status")
         else:
@@ -166,7 +166,7 @@ def assessment_context(text,policy,allow_versions=False):
         return True,None,"Please specify what you want to scan.\nExample: Scan my authorized target for open TCP ports and running services.\nNo MCP operation was executed."
     scope=policy.snapshot()
     if not scope:
-        return True,None,"No authorized target is configured.\n\nUse /scope TARGET to configure an authorized target.\nNo scan was executed."
+        return True,None,"No target has been authorized yet. Tell me which system you own or have permission to assess. No scan was executed."
     scope_lower={entry.lower() for entry in scope}
     # Single pass over the request: only destination-SHAPED tokens (IP/CIDR/bracketed IPv6/
     # dotted host) or tokens already in scope are considered targets. Ordinary words, bare port
@@ -185,7 +185,7 @@ def assessment_context(text,policy,allow_versions=False):
         try:
             explicit.append(authorized_operand(token,policy))
         except (PolicyError,ValueError):
-            return True,None,"The requested target is outside the operator-authorized scope. Use /scope TARGET or select an explicitly authorized host. No scan was executed."
+            return True,None,"The requested target is outside the operator-authorized scope. Tell me which system you own or have permission to assess, or name an already-authorized host. No scan was executed."
     # A host NAMED directly as the scan operand must be authorized even when it is a single
     # label; function/domain words in that position are ignored, so only a real named host here
     # can be rejected.
@@ -193,7 +193,7 @@ def assessment_context(text,policy,allow_versions=False):
         try:
             explicit.append(authorized_operand(operand,policy))
         except (PolicyError,ValueError):
-            return True,None,"The requested target is outside the operator-authorized scope. Use /scope TARGET or select an explicitly authorized host. No scan was executed."
+            return True,None,"The requested target is outside the operator-authorized scope. Tell me which system you own or have permission to assess, or name an already-authorized host. No scan was executed."
     choices=list(dict.fromkeys(explicit))
     if len(choices)>1:return True,None,"Multiple targets were requested. Select one authorized host for this operation. No scan was executed."
     if not choices:

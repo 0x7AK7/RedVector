@@ -24,14 +24,27 @@ NMAP_PROFILE = "--redvector-profile=service-version-v1"
 PROFILE = "service-version-v1"
 DISCOVERY_PROFILE = "--redvector-profile=tcp-discovery-v1"
 DISCOVERY = "tcp-discovery-v1"
+NSE_VULN_PROFILE = "--redvector-profile=nse-vuln-v1"
+NSE_VULN = "nse-vuln-v1"
 _LOCK = threading.Lock()
 _LIMIT = 1024 * 1024
 _DEADLINE = 45
 _DISCOVERY_DEADLINE = 300
 _DISCOVERY_MAX_RATE = "2000"  # bounded single-host connect rate; completes full-range within the client call budget
 _DISCOVERY_HOST_TIMEOUT = "280s"
+_NSE_DEADLINE = 300
+_NSE_HOST_TIMEOUT = "280s"
+_NSE_MAX_RATE = "500"
 MAX_PORTS = 128
 MAX_DISCOVERY_PORTS = 65535
+MAX_NSE_PORTS = 128
+# The set of SAFE, non-intrusive vuln-category NSE scripts MUST be curated from the live
+# `nmap --script-help` output on the real Kali runtime and recorded here only after review
+# (category must be 'vuln'/'safe'; never 'exploit', 'brute', 'dos' or 'intrusive'). It is
+# intentionally EMPTY until that curation: an empty allowlist keeps nse-vuln-v1 DISABLED
+# (capabilities() reports Unsupported and run_nse_vuln refuses), so no unverified or intrusive
+# script can ever run in production. Do not invent or populate this without real-Kali verification.
+_NSE_VULN_SCRIPTS = ()
 # No default/fallback probes, SSL upgrade, RPC match, proxy request or redirect.
 _PROBES = r"""Exclude T:9100-9107
 Probe TCP NULL q||
@@ -177,6 +190,17 @@ def capabilities():
         detail = str(exc) if isinstance(exc,ProfileError) else "Native scanner runtime unavailable or verification failed"
         state = "Missing Dependency" if "Missing" in detail else "Unsupported"
         states[PROFILE]={"state":state, "detail":detail}
+    # NSE vuln stage: disabled until its safe-script allowlist is curated from real Kali. While the
+    # allowlist is empty it is reported Unsupported and never becomes Ready, so it cannot run.
+    if not _NSE_VULN_SCRIPTS:
+        states[NSE_VULN]={"state":"Unsupported","detail":"NSE vuln script allowlist not yet curated from live nmap --script-help; nse-vuln-v1 disabled"}
+    else:
+        try:
+            _runtime()
+            states[NSE_VULN]={"state":"Ready","detail":"Native attested nmap -sV --script over a reviewed safe vuln NSE allowlist; at most 128 ports; bounded; XML parsed"}
+        except (ProfileError, OSError, subprocess.SubprocessError) as exc:
+            detail = str(exc) if isinstance(exc,ProfileError) else "Native scanner runtime unavailable or verification failed"
+            states[NSE_VULN]={"state":"Missing Dependency" if "Missing" in detail else "Unsupported","detail":detail}
     return states
 
 def _validate(tool, params):
@@ -239,10 +263,14 @@ def parse_xml(raw):
             service=port.find("service")
             fields=service.attrib if service is not None else {}
             identified=fields.get("method")=="probed" and bool(fields.get("product"))
+            # CPE evidence (nmap emits <cpe> under <service> for -sV matches); carried only when the
+            # service was actually probed, so it feeds accurate CPE-based CVE correlation, never a guess.
+            cpe=[c.text for c in (service.findall("cpe") if service is not None else []) if c.text] if identified else []
             entry={"port":port.get("portid"),"protocol":port.get("protocol"),"state":"open",
                    "service":fields.get("name","unknown"),
                    "product":fields.get("product","") if identified else "",
                    "version":fields.get("version","") if identified else "",
+                   "cpe":cpe,
                    "confidence":"identified" if identified else "inconclusive",
                    "method":fields.get("method",""),"scanner_confidence":fields.get("conf","")}
             result["open_ports"].append(entry)
@@ -472,3 +500,135 @@ def run_discovery(tool,params):
         detail=str(exc) if isinstance(exc,ProfileError) else "Native scanner runtime unavailable or verification failed"
         return {"success":False,"error":detail,"profile":DISCOVERY,
                 "execution_time":time.monotonic()-started}
+
+_CVE_RE=re.compile(r"CVE-[0-9]{4}-[0-9]{4,7}",re.I)
+
+def parse_nse_xml(raw):
+    """Parse native Nmap NSE script output (-oX) into structured vulnerability evidence. Each entry
+    carries the script id, the host/port it ran against, the script's own output, its declared
+    state (e.g. VULNERABLE) and any CVE ids it references. A VULNERABLE state is the SCRIPT's own
+    assessment and is surfaced as evidence requiring validation, never as confirmed exploitability."""
+    sanitized=re.sub(r"<!DOCTYPE\s+nmaprun\s*>","",raw,flags=re.I)
+    if len(raw.encode("utf-8"))>_LIMIT or "<!ENTITY" in raw.upper() or "<!DOCTYPE" in sanitized.upper():
+        raise ProfileError("Invalid or oversized scanner XML")
+    try:
+        root=ET.fromstring(raw)
+    except ET.ParseError as exc:
+        raise ProfileError("Invalid scanner XML") from exc
+    if root.tag!="nmaprun":
+        raise ProfileError("Unexpected scanner output")
+    result={"target":"","hosts":[],"scripts":[],"profile":NSE_VULN,
+            "note":"NSE script evidence; a VULNERABLE state is the script's own assessment and requires validation"}
+    def entry(script,port,proto):
+        output=script.get("output","") or ""
+        state=""
+        for table in script.iter("table"):
+            for elem in table.findall("elem"):
+                if elem.get("key")=="state" and elem.text:
+                    state=elem.text.strip();break
+            if state:break
+        if not state and re.search(r"(?i)\bVULNERABLE\b",output):
+            state="VULNERABLE (reported in output)"
+        table_keys=" ".join(t.get("key","") or "" for t in script.iter("table"))
+        return {"port":port,"protocol":proto,"script_id":script.get("id",""),
+                "output":output[:4000],"state":state,
+                "cve_ids":sorted({m.upper() for m in _CVE_RE.findall(output+" "+table_keys)})}
+    for host in root.findall("host"):
+        address=host.find("address")
+        if address is not None:
+            try:result["target"]=str(ipaddress.ip_address(address.get("addr","")))
+            except ValueError:raise ProfileError("Scanner returned an invalid numeric destination") from None
+            result["hosts"].append(result["target"])
+        for script in host.findall("./hostscript/script"):
+            result["scripts"].append(entry(script,"","host"))
+        for port in host.findall("./ports/port"):
+            proto=port.get("protocol","tcp");pid=port.get("portid","")
+            for script in port.findall("script"):
+                result["scripts"].append(entry(script,pid,proto))
+    finished=root.find("./runstats/finished")
+    result["scan_complete"]=(finished is not None and finished.get("exit")=="success"
+                             and not any(h.get("timedout")=="true" for h in root.findall("host")))
+    return result
+
+def _validate_nse(tool,params):
+    if tool!="nmap_scan" or not isinstance(params,dict):
+        raise ProfileError("Unsupported reviewed tool")
+    if set(params)!={"target","ports","scan_type","additional_args","use_recovery"}:
+        raise ProfileError("Reviewed profile requires exact arguments")
+    if params["scan_type"]!=NSE_VULN_PROFILE or params["use_recovery"] is not False:
+        raise ProfileError("Only the fixed nse-vuln profile with recovery disabled is permitted")
+    if params.get("additional_args","") not in ("",):
+        raise ProfileError("The reviewed NSE vuln profile accepts no free-form arguments")
+    target=params["target"]
+    if not isinstance(target,str) or "%" in target:
+        raise ProfileError("A numeric single host is required")
+    try:
+        address=ipaddress.ip_address(target)
+    except ValueError:
+        raise ProfileError("A numeric single host is required") from None
+    if address.is_multicast or address.is_unspecified or str(address)!=target:
+        raise ProfileError("A canonical unicast numeric host is required")
+    ports=params["ports"]
+    if not isinstance(ports,str) or not ports or len(ports)>2048:
+        raise ProfileError("Explicit bounded TCP ports are required")
+    selected=set()
+    for group in ports.split(","):
+        if not re.fullmatch(r"[0-9]{1,5}(?:-[0-9]{1,5})?",group):
+            raise ProfileError("Only TCP port numbers and ascending ranges are permitted")
+        values=[int(x) for x in group.split("-")]
+        if min(values)<1 or max(values)>65535 or values[0]>values[-1]:
+            raise ProfileError("Invalid TCP port bounds")
+        selected.update(range(values[0],values[-1]+1))
+    if not selected or len(selected)>MAX_NSE_PORTS:
+        raise ProfileError("The NSE vuln profile permits at most 128 explicit TCP ports; discover ports first")
+    return target,",".join(map(str,sorted(selected))),len(selected),address.version
+
+def run_nse_vuln(tool,params):
+    """Reviewed native Nmap NSE vulnerability stage over a FIXED, reviewed allowlist of safe,
+    non-intrusive vuln-category scripts. DISABLED until that allowlist is curated from real Kali
+    (_NSE_VULN_SCRIPTS); while empty it refuses with an accurate Unsupported status and runs
+    nothing, so no unverified or intrusive script can execute. When curated, it runs the native
+    attested nmap ELF with only the allowlisted script names from the administrator-owned system
+    datadir (each script file integrity-checked), bounded, and parses the real XML evidence."""
+    started=time.monotonic()
+    try:
+        target,ports,count,version=_validate_nse(tool,params)
+    except ProfileError as exc:
+        return {"success":False,"profile":NSE_VULN,"error":str(exc),"execution_time":time.monotonic()-started}
+    if not _NSE_VULN_SCRIPTS:
+        return {"success":False,"profile":NSE_VULN,
+                "error":"Unsupported: NSE vuln script allowlist is not yet curated from live nmap --script-help; the nse-vuln-v1 profile is disabled",
+                "execution_time":time.monotonic()-started}
+    try:
+        if not _LOCK.acquire(blocking=False):
+            raise ProfileError("Reviewed scanner concurrency limit reached")
+        try:
+            executable,root,files,snapshots=_runtime()   # nselib-backed runtime (shared helper)
+            before=_trusted(executable)
+            scriptdir=root/"scripts"
+            names=[]
+            for script in _NSE_VULN_SCRIPTS:
+                path=scriptdir/(script+".nse")
+                _trusted(path)                            # administrator-owned, unmodified script file
+                names.append(script)
+            command=[str(executable),"-sV","-sT","--unprivileged","-n","-Pn","--disable-arp-ping",
+                     "--max-retries","1","--max-rate",_NSE_MAX_RATE,"--host-timeout",_NSE_HOST_TIMEOUT,
+                     "--script-timeout","60s","--datadir",str(root),"--script",",".join(names),
+                     "-p",ports,"-oX","-","--no-stylesheet"]
+            if version==6:command.append("-6")
+            command.append(target)
+            code,stdout,stderr=_execute(command,root,timeout=_NSE_DEADLINE)
+            if _trusted(executable)!=before:
+                raise ProfileError("Scanner runtime integrity changed")
+            parsed=parse_nse_xml(stdout)
+            if any(x!=target for x in parsed["hosts"]):
+                raise ProfileError("Scanner returned an unexpected destination")
+            return {"success":bool(parsed["scan_complete"]) and not code,"stdout":stdout,"stderr":stderr,
+                    "parsed":parsed,"execution_time":time.monotonic()-started,"profile":NSE_VULN,
+                    "reviewed_profile":{"ports":ports,"ports_count":count,"scripts":list(names),
+                       "engine":"native nmap -sV --script (reviewed safe vuln NSE allowlist)","runtime_sha256":before}}
+        finally:
+            _LOCK.release()
+    except (ProfileError,OSError,subprocess.SubprocessError) as exc:
+        detail=str(exc) if isinstance(exc,ProfileError) else "Native scanner runtime unavailable or verification failed"
+        return {"success":False,"error":detail,"profile":NSE_VULN,"execution_time":time.monotonic()-started}

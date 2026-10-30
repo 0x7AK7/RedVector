@@ -784,6 +784,7 @@ class Agent:
         await self.refresh_profiles()
         status=self.policy.profile_status
         def ready(name):return status.get(name,{}).get("state")=="Ready"
+        import redvector_tool_manager as _tm;tool_status=_tm.discover_tools()
         if not ready("tcp-discovery-v1"):
             return "Target is authorized. Native TCP discovery is unavailable: "+str(status.get("tcp-discovery-v1",{}).get("detail","Reviewed discovery profile required."))+" No scan was executed."
         identify=ready("service-version-v1")
@@ -828,7 +829,7 @@ class Agent:
                 extra.append({"engine":"native searchsploit (offline Exploit-DB)","binary":"not run","native_executed":False,"status":"skipped: no identified product","duration":""})
             elif not ready("searchsploit-v1"):
                 extra.append({"engine":"native searchsploit (offline Exploit-DB)","binary":"not run","native_executed":False,
-                              "status":"unavailable: "+str(status.get("searchsploit-v1",{}).get("detail","not Ready"))[:80],"duration":""})
+                              "status":_tm.unavailability_reason("searchsploit-v1",tool_status),"duration":""})
             else:
                 for product in sorted(products)[:5]:
                     svc=products[product][0];version=re.sub(r"[^A-Za-z0-9._-]","",str(svc.get("version") or ""))
@@ -880,10 +881,32 @@ class Agent:
                 if port.isdigit() and ("http" in name or port in ("80","443","8000","8008","8080","8443","8888")):
                     web.append(("https" if ("ssl" in name or "https" in name or port in ("443","8443")) else "http",port))
             from redvector_reviewed_assessment import HTTP_PROFILE,NUCLEI_PROFILE
+            from redvector_reviewed_nikto import PROFILE as NIKTO_PROFILE
             host=("["+canonical+"]") if ":" in canonical else canonical
+            _nikto_ran=False
             for scheme,port in web[:6]:
                 url=scheme+"://"+host+":"+port+"/"
-                if ready(HTTP_PROFILE):
+                if ready(NIKTO_PROFILE):
+                    # Native Nikto: call the reviewed adapter directly (bypasses MCP passive collector)
+                    from redvector_reviewed_nikto import run_nikto,NIKTO_MARKER
+                    nikto_out=run_nikto({"target":url,"additional_args":NIKTO_MARKER})
+                    try:
+                        rec=self.results.save("nikto_scan",url,{"target":url,"additional_args":NIKTO_MARKER},
+                                              nikto_out,nikto_out,float(nikto_out.get("execution_time",0) or 0),
+                                              authorization=self._authorization_context("nikto_scan"))
+                        self.last_task["evidence"].append(rec["id"])
+                    except Exception:pass
+                    native=nikto_out.get("execution_mode")=="A";_nikto_ran=True
+                    extra.append({"engine":"native Nikto (reviewed non-destructive tuning)",
+                                  "binary":nikto_out.get("binary") or "not recorded","native_executed":native,
+                                  "status":"ok" if native else str(nikto_out.get("error","failed"))[:80],
+                                  "duration":nikto_out.get("execution_time","")})
+                    for item in (nikto_out.get("parsed",{}).get("findings",[]) or []) if native else []:
+                        findings.append(ev.evidence(target=canonical,port=port,service="http",
+                            title="Nikto: "+str(item.get("message",""))[:120],tool="nikto",source="nikto (native)",
+                            classification="Scanner-Detected Vulnerability",
+                            applicability="observed",confidence="observed",evidence_ref="nikto:"+port))
+                elif ready(HTTP_PROFILE):
                     data=await self.execute("nikto_scan",{"target":url},{"nikto_scan"})
                     if self.last_result_id:self.last_task["evidence"].append(self.last_result_id)
                     value=(payloads(data) or [{}])[0] if not data.get("isError") else {}
@@ -909,10 +932,10 @@ class Agent:
                             applicability="observed",confidence="observed",evidence_ref="nuclei:"+port))
             if web and not ready(NUCLEI_PROFILE):
                 extra.append({"engine":"native Nuclei","binary":"not run","native_executed":False,
-                              "status":"unavailable: "+str(status.get(NUCLEI_PROFILE,{}).get("detail","no verified build registered"))[:80],"duration":""})
-            if web:
-                extra.append({"engine":"native Nikto","binary":"not run","native_executed":False,"status":"not enabled: pending native Kali verification","duration":""})
-            extra.append({"engine":"Nmap NSE vulnerability scripts","binary":"not run","native_executed":False,"status":"not run: script allowlist not yet reviewed","duration":""})
+                              "status":_tm.unavailability_reason(NUCLEI_PROFILE,tool_status),"duration":""})
+            if web and not _nikto_ran:
+                extra.append({"engine":"native Nikto","binary":"not run","native_executed":False,"status":_tm.unavailability_reason("nikto-native-v1",tool_status),"duration":""})
+            extra.append({"engine":"Nmap NSE vulnerability scripts","binary":"not run","native_executed":False,"status":_tm.unavailability_reason("nse-vuln-v1",tool_status),"duration":""})
         finally:
             self.quiet=False
             self.policy.end_task()

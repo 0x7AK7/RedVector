@@ -141,12 +141,67 @@ def description_applicability(product, version, cpes, description):
 
 _CVE_ID = re.compile(r"CVE-[0-9]{4}-[0-9]{4,7}", re.I)
 
+# Known alternate title conventions used by Searchsploit / ExploitDB for common products
+_EXPLOIT_TITLE_ALIASES = {
+    "apache httpd":       ("apache httpd", "apache http server"),
+    "apache http server": ("apache httpd", "apache http server"),
+    "microsoft iis":      ("microsoft iis", "internet information services", "iis httpd"),
+    "samba smbd":         ("samba smbd", "samba"),
+    "postfix smtpd":      ("postfix smtpd", "postfix"),
+    "dovecot imapd":      ("dovecot imapd", "dovecot"),
+    "exim smtpd":         ("exim smtpd", "exim"),
+    "bind dns":           ("bind dns", "isc bind", "named"),
+    "mysql":              ("mysql",),
+    "postgresql":         ("postgresql",),
+    "nginx":              ("nginx",),
+    "vsftpd":             ("vsftpd",),
+    "proftpd":            ("proftpd",),
+    "pure-ftpd":          ("pure-ftpd",),
+    "openssh":            ("openssh",),
+    "openssl":            ("openssl",),
+}
+
+# Single-token words that are vendor names only — without a version match in the title they
+# produce false positives across unrelated products from the same vendor family.
+_VENDOR_ONLY_WORDS = frozenset((
+    "apache", "microsoft", "oracle", "ibm", "cisco", "nginx",
+    "mysql", "php", "iis", "samba", "postfix", "sendmail",
+))
+
 
 def exploit_reference_applicability(product, version, title):
-    """Applicability of an offline exploit-database reference (e.g. Searchsploit) to a service. The
-    exact product must appear in the reference title; 'applicable' when the version also appears.
-    A reference is never proof that the host is vulnerable."""
-    return description_applicability(product, version, [], title)
+    """Applicability of an offline exploit-database reference (e.g. Searchsploit) to a service.
+
+    The product (or a known Searchsploit title alias) must appear in the reference title.
+    When the only matching name is a single generic vendor word, a version match is also required
+    to avoid false positives across unrelated products from the same vendor.
+
+    Returns 'applicable' when product AND version appear, 'candidate' when product appears without
+    a confirmed version, 'not_applicable' when the reference does not match this service.
+    A reference is never proof that the host is vulnerable.
+    """
+    text = (title or "").lower()
+    product_l = (product or "").strip().lower()
+    if not product_l or not text:
+        return "not_applicable"
+
+    aliases = set(_EXPLOIT_TITLE_ALIASES.get(product_l, (product_l,)))
+    aliases = {a for a in aliases if a and len(a) >= 3}
+
+    matched_name = next((a for a in sorted(aliases, key=len, reverse=True) if a in text), None)
+    if matched_name is None:
+        return "not_applicable"
+
+    version_l = (version or "").strip().lower()
+    if version_l and version_l in text:
+        return "applicable"
+
+    # A single-word vendor-only match without version confirmation is too broad for Searchsploit;
+    # e.g. "apache" alone matches Apache Log4j, Struts, Cassandra — none of which is Apache httpd.
+    if matched_name in _VENDOR_ONLY_WORDS:
+        return "not_applicable"
+
+    return "candidate"
 
 
 def cve_ids(text):

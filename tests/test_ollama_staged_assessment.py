@@ -124,7 +124,7 @@ class StagedAssessment(unittest.IsolatedAsyncioTestCase):
         answer = await agent.staged_discovery_service(TARGET)
         out = stream.getvalue()
         assert "REDVECTOR AI" in out and "SECURITY ASSESSMENT" in out
-        assert "SERVICES" in out and "EXECUTION EVIDENCE" in out
+        assert "DISCOVERED SERVICES" in out and "NATIVE TOOL EXECUTION" in out and "DISCOVERY" in out
         assert "ssh" in out and "nginx 1.18" in out
         assert "nmap" in out                                                    # native engine evidence (may be width-truncated)
         assert "result.findings[" not in out and ".classification" not in out   # no flattened dump
@@ -145,14 +145,18 @@ class StagedAssessment(unittest.IsolatedAsyncioTestCase):
         self.assertIn("STAGED ASSESSMENT COMPLETED", answer)
 
     async def test_turn_discovery_only_is_not_staged_as_version(self):
-        # A discovery-only request must NOT be reclassified: it goes through the normal model
-        # loop (not the staged discovery+service path).
+        # A full-range discovery-only request runs deterministic full-range discovery (never left to
+        # the model, never downgraded) and is NOT reclassified as version detection: no -sV stage.
         disc = _discovery([(22, "open", "ssh")])
         agent, api, session = self._agent([_result(disc)])
         agent.refresh_profiles = AsyncMock(return_value=None)
-        api.async_chat = AsyncMock(return_value={"role": "assistant", "content": "done", "tool_calls": []})
-        await agent.turn("Scan all TCP ports on " + TARGET)
-        self.assertGreaterEqual(api.async_chat.await_count, 1)  # used the model loop, not staging
+        answer = await agent.turn("Scan all TCP ports on " + TARGET)
+        self.assertEqual(api.async_chat.await_count, 0)                   # deterministic, no model loop
+        self.assertEqual(session.call_tool.await_count, 1)                # discovery only
+        call = session.call_tool.await_args_list[0].kwargs["arguments"]
+        self.assertEqual(call["ports"], "1-65535")                        # full range, not downgraded
+        self.assertEqual(call["scan_type"], "--redvector-profile=tcp-discovery-v1")
+        self.assertIn("not requested (discovery only)", answer)
 
     async def test_chained_low_impact_stages_do_not_reprompt(self):
         # Inc E: an authorized scope + explicit task runs discovery AND each service-version stage
@@ -170,8 +174,19 @@ class StagedAssessment(unittest.IsolatedAsyncioTestCase):
                       results=ResultsStore(Path(self.temp.name) / "ev2"), terminal=None)
         agent.automatic_task = True
         await agent.staged_discovery_service(TARGET)
-        assert approvals == []                                   # no redundant APPROVE prompts
-        assert policy.last_automatic is True
+        # full-range task: exactly ONE plain-English task confirmation, reused by every stage
+        assert len(approvals) == 1 and approvals[0]["tool"] == "detection task"
+        assert session.call_tool.await_count == 2                # discovery + service batch, no re-prompt
+        assert policy.task is None                               # authorization ends with the task
+
+    async def test_bounded_task_runs_without_any_prompt(self):
+        disc = _discovery([(22, "open", "ssh")])
+        svc = _service([(22, "ssh", "OpenSSH 8.9")])
+        agent, api, session = self._agent([_result(disc), _result(svc)])
+        approvals = []
+        agent.approve = lambda operation: approvals.append(operation) or True
+        await agent.staged_discovery_service(TARGET, ports="1-1000", kind="explicit")
+        assert approvals == [] and session.call_tool.await_count == 2
 
     async def test_no_open_ports_skips_service_stage(self):
         disc = _discovery([(22, "closed", "ssh"), (80, "filtered", "http")])

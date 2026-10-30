@@ -17,18 +17,42 @@ class Automatic(unittest.TestCase):
         policy=self.policy();approve=Mock(return_value=False)
         with self.assertRaises(PolicyError):policy.authorize("clear_cache",{},approve)
         approve.assert_called_once()
-    def test_full_range_discovery_preauthorized_under_scope(self):
-        # Inc E: reviewed full-range TCP-connect discovery under an explicit authorized scope and an
-        # explicit task runs WITHOUT a redundant prompt; it stays the attested discovery profile.
+    def test_full_range_discovery_needs_task_authorization_not_scope_alone(self):
         p=self.policy();p.profile_status={"tcp-discovery-v1":{"state":"Ready"}}
-        approve=Mock(side_effect=AssertionError("low-impact discovery must not prompt"))
-        out=p.authorize("nmap_scan",{"target":"192.0.2.8","ports":"1-65535"},approve)
-        self.assertTrue(p.last_automatic)
-        self.assertEqual(out["scan_type"],"--redvector-profile=tcp-discovery-v1")
-        # not an explicit task (allow_automatic False) -> still prompts
+        # scope alone does not authorize full-range discovery: it prompts
         calls=[]
-        p.authorize("nmap_scan",{"target":"192.0.2.8","ports":"1-65535"},lambda op:calls.append(op) or True,allow_automatic=False)
+        p.authorize("nmap_scan",{"target":"192.0.2.8","ports":"1-65535"},lambda op:calls.append(op) or True)
         self.assertEqual(len(calls),1)
+        # a full-range task asks ONCE, then its discovery stage runs without a repeated prompt
+        confirmations=[]
+        p.begin_task("192.0.2.8",65535,{"discovery"},lambda op:confirmations.append(op) or True,"full-range detection task")
+        self.assertEqual(len(confirmations),1)
+        out=p.authorize("nmap_scan",{"target":"192.0.2.8","ports":"1-65535"},Mock(side_effect=AssertionError("must not re-prompt")))
+        self.assertTrue(p.last_automatic and p.last_task_id)
+        self.assertEqual(out["scan_type"],"--redvector-profile=tcp-discovery-v1")
+        # the task ends with the task
+        p.end_task()
+        calls2=[]
+        p.authorize("nmap_scan",{"target":"192.0.2.8","ports":"1-65535"},lambda op:calls2.append(op) or True)
+        self.assertEqual(len(calls2),1)
+    def test_declined_task_runs_nothing(self):
+        p=self.policy()
+        with self.assertRaises(PolicyError):p.begin_task("192.0.2.8",65535,{"discovery"},lambda op:False,"full-range task")
+        self.assertIsNone(p.task)
+    def test_task_never_covers_other_target_stage_or_scope_change(self):
+        p=Policy(["192.0.2.8","192.0.2.9"],clock=lambda:100);p.profile_status={"tcp-discovery-v1":{"state":"Ready"},"service-version-v1":{"state":"Ready"}}
+        p.begin_task("192.0.2.8",1000,{"discovery"},lambda op:True,"bounded task")
+        calls=[]
+        p.authorize("nmap_scan",{"target":"192.0.2.9","ports":"1-1000","scan_type":"--redvector-profile=tcp-discovery-v1"},lambda op:calls.append(op) or True)
+        self.assertEqual(len(calls),1)                                  # no cross-target reuse
+        p.authorize("nmap_scan",{"target":"192.0.2.8","ports":"80","scan_type":"-sV"},lambda op:calls.append(op) or True)
+        self.assertEqual(len(calls),2)                                  # service-version not in this task's stages
+        p.authorize("nmap_scan",{"target":"192.0.2.8","ports":"1-5000","scan_type":"--redvector-profile=tcp-discovery-v1"},lambda op:calls.append(op) or True)
+        self.assertEqual(len(calls),3)                                  # beyond the task's port bound
+        p.replace_scope(["192.0.2.8"])
+        p.authorize("nmap_scan",{"target":"192.0.2.8","ports":"1-1000","scan_type":"--redvector-profile=tcp-discovery-v1"},lambda op:calls.append(op) or True)
+        self.assertEqual(len(calls),4)                                  # scope change invalidates the task
+        with self.assertRaises(PolicyError):p.begin_task("192.0.2.8",10,{"exploitation"},lambda op:True,"x")   # never exploitation
     def test_scope_and_malformed_destinations_cannot_be_automated(self):
         for policy,args in [(Policy(),{"target":"192.0.2.8"}),(self.policy(),{"target":"192.0.2.9"}),
                             (self.policy(),{"target":"192.0.2.8","additional_args":"--script default"}),

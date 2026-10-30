@@ -19,7 +19,8 @@ def test_required_intent_map():
     assert nl.classify("Show available security tools.")[0] == "tools"             # catalog
     assert nl.classify("Which tools actually ran?")[0] == "provenance"             # last-run provenance
     assert nl.classify("Show the discovered ports.")[0] == "ports"                 # saved scan results
-    assert nl.classify("Show the original evidence.")[0] == "raw"                  # archived MCP evidence
+    assert nl.classify("Show the original evidence.")[0] == "evidence"             # readable archived-evidence overview
+    assert nl.classify("Show the raw JSON payload.")[0] == "raw"                   # explicit unmodified payload
     assert nl.classify("Analyze the latest results.")[0] == "analyze"              # no rescan
     assert nl.classify("Export my report.")[0] == "export"
 

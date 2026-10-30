@@ -90,7 +90,9 @@ async def _session(tmp_path):
         assert "service-version execution unavailable" in restricted.lower()
         assert "scope" not in restricted.lower()
         await handle_command("/help scope",agent,wizard)
-        answer=await agent.turn("Scan "+LAB+" for open TCP ports and identify services running on them.")
+        # Service identification now always runs discovery-first (never on model-chosen ports); a plain
+        # discovery request keeps exercising scope persistence through the model loop.
+        answer=await agent.turn("Scan "+LAB+" for open TCP ports.")
         assert "COMPLETED" in answer
         assert agent.policy is trusted and policy.snapshot()==(LAB,)
         ticks[0]+=31

@@ -34,17 +34,17 @@ def test_hostname_is_pinned_and_host_authority_preserved():
     assert result["url"]=="http://192.0.2.15:8080/"
     assert result["headers"]=={"Host":"lab.example:8080"}
 
-def test_advanced_nmap_low_impact_detection_not_reprompted_under_scope():
+def test_advanced_nmap_service_detection_needs_task_authorization():
     p=policy();calls=[]
-    # Inc E: explicit authorized scope + explicit task -> reviewed service-version detection runs
-    # without a redundant APPROVE prompt; the reviewed executor and bounds are unchanged.
+    # scope alone does not authorize service-version detection: it prompts
     result=p.authorize("nmap_advanced_scan",{"target":"192.0.2.15","ports":"1-128","scan_type":"-sT -sV"},lambda op:calls.append(op) or True)
-    assert result["version_detection"] is True and result["timing"]=="T2"
-    assert calls==[] and p.last_automatic is True
-    # not an explicit task -> still prompts
+    assert result["version_detection"] is True and result["timing"]=="T2" and len(calls)==1
+    # within a bounded detection task covering service-version, the same bounded call is not re-prompted
+    p.begin_task("192.0.2.15",128,{"discovery","service-version"},lambda op:(_ for _ in ()).throw(AssertionError("bounded task must not prompt")),"bounded task")
     calls2=[]
-    p.authorize("nmap_advanced_scan",{"target":"192.0.2.15","ports":"80","scan_type":"-sT -sV"},lambda op:calls2.append(op) or True,allow_automatic=False)
-    assert len(calls2)==1
+    p.authorize("nmap_advanced_scan",{"target":"192.0.2.15","ports":"80","scan_type":"-sT -sV"},lambda op:calls2.append(op) or True)
+    assert calls2==[] and p.last_task_id
+    p.end_task()
     # out-of-profile flags are still refused outright
     with pytest.raises(PolicyError):p.authorize("nmap_advanced_scan",{"target":"192.0.2.15","ports":"80","os_detection":True},lambda _:True)
 

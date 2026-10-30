@@ -1,22 +1,26 @@
 """Professional, severity-aware security-assessment report — the default compact operator view.
 
-Renders on the existing Panel/Terminal architecture (no new dependency). It shows only a useful
-summary plus aligned tables; it NEVER dumps flattened internal keys. Colors reflect evidence
-confidence / validation status, not only a CVSS label. Raw evidence stays complete and unchanged in
-archival storage; detailed findings, raw evidence, full tool output and JSON export are reached by
-natural-language request, not shown here by default.
-
-build_report(result) normalizes an assessment/scan result into the report structure; render_report
-draws it. Missing sections render as explicit "none" lines — never fabricated.
+Renders on the existing Panel/Terminal architecture (no new dependency) in a fixed layout:
+SECURITY ASSESSMENT (target, profile, coverage, status, duration), DISCOVERY (ports requested /
+completed / open), NATIVE TOOL EXECUTION (engine, actual binary, status, duration), DISCOVERED
+SERVICES, VULNERABILITIES and NEXT STEPS. It NEVER dumps flattened internal keys or raw JSON. Colors
+follow the finding class / evidence confidence, not only a CVSS label; provider CVSS severity is shown
+separately from validation status. Raw evidence stays complete and unchanged in archival storage and
+is reached only by explicit request. Missing sections render as explicit "none" lines — never
+fabricated.
 """
 from redvector_ollama_panels import Panel
+from redvector_cve_correlation import CLASSIFICATION_ORDER as CLASS_ORDER
 
-# classification (evidence confidence/validation) -> color kind; distinct from provider CVSS severity.
-_CLASS_KIND = {"Confirmed": "critical", "Strongly supported": "high",
-               "Candidate CVE (requires validation)": "medium", "Informational": "info",
-               "Unsupported/untested": "meta"}
-_SEV_KIND = {"critical": "critical", "high": "high", "medium": "medium", "low": "low",
-             "informational": "info", "info": "info", "none": "meta", "unknown": "meta"}
+# Finding class -> color kind (evidence strength, not provider severity).
+_CLASS_KIND = {"Demonstrated Impact": "critical", "Validated Vulnerability": "critical",
+               "Scanner-Detected Vulnerability": "high", "Candidate CVE": "medium",
+               "Observed Exposure": "info", "Informational": "meta",
+               # legacy labels (kept readable for older saved evidence)
+               "Confirmed": "critical", "Strongly supported": "high",
+               "Candidate CVE (requires validation)": "medium", "Unsupported/untested": "meta"}
+_NATIVE_TRUE = ("true", "yes", "1")
+_OK = ("ok", "success", "completed", "complete")
 
 
 def _status_kind(status):
@@ -24,103 +28,130 @@ def _status_kind(status):
     return "success" if s == "complete" else "error" if s == "failed" else "warning"
 
 
+def _duration(value):
+    return (format(value, ".2f") + " s") if isinstance(value, (int, float)) and value else "-"
+
+
+def _coverage_text(cov):
+    requested, completed = int(cov.get("requested") or 0), int(cov.get("completed") or 0)
+    if not requested:
+        return "not recorded"
+    text = format(completed, ",") + " of " + format(requested, ",") + " requested TCP ports completed"
+    if requested < 65535:
+        text += " (not all 65,535 ports)"
+    state = cov.get("state")
+    return text + (" — " + str(state) if state and state != "complete" else "")
+
+
+def normalize_class(classification, cve=""):
+    """Map legacy labels from older saved evidence onto the current finding classes; never upgrades
+    evidence strength (a legacy 'Strongly supported' CVE stays a candidate, not a vulnerability)."""
+    c = str(classification or "")
+    if c in CLASS_ORDER:
+        return c
+    if c == "Confirmed":
+        return "Validated Vulnerability"
+    if c in ("Candidate CVE (requires validation)",) or (c == "Strongly supported" and cve):
+        return "Candidate CVE"
+    if c == "Strongly supported":
+        return "Observed Exposure"
+    return "Informational"
+
+
 def build_report(result):
-    """Normalize a run_assessment-style dict (or a staged result) into the report structure.
-    Recognized keys: target, status, execution_time/duration, open_ports, services[], findings[]
-    (evidence records), execution/audit_trail[]. Everything missing defaults safely."""
+    """Normalize a staged task result or a run_assessment-style dict into the report structure."""
     result = result or {}
+    coverage = dict(result.get("coverage") or {})
+    open_ports = result.get("open_ports", []) or []
+    if not coverage and open_ports:
+        coverage = {"requested": 0, "completed": 0, "open": len(open_ports), "state": "not recorded"}
+    coverage.setdefault("open", len(open_ports))
     services = []
     for svc in result.get("services", []) or []:
-        if not isinstance(svc, dict):
-            continue
-        services.append({"port": str(svc.get("port", "")), "protocol": svc.get("protocol", "tcp"),
-                         "service": svc.get("service", "unknown"), "product": svc.get("product", ""),
-                         "version": svc.get("version", ""),
-                         "confidence": svc.get("confidence", "inconclusive")})
+        if isinstance(svc, dict):
+            services.append({"port": str(svc.get("port", "")), "service": svc.get("service", "unknown"),
+                             "product": svc.get("product", ""), "version": svc.get("version", ""),
+                             "confidence": svc.get("confidence", "inconclusive")})
     findings = []
     for f in result.get("findings", []) or []:
         if not isinstance(f, dict):
             continue
-        classification = f.get("classification", "Informational")
-        findings.append({"severity": str(f.get("cvss_severity", f.get("provider_severity", "")) or ""),
-                         "title": f.get("title", "") or f.get("cve", "") or f.get("service", ""),
-                         "host": f.get("host", f.get("target", "")), "port": str(f.get("port", "") or ""),
-                         "cve": f.get("cve", ""), "classification": classification,
-                         "validation": f.get("validation", f.get("applicability", "")),
-                         "source": f.get("source", f.get("tool", "")),
-                         "cvss": f.get("cvss", "")})
+        findings.append({"severity": str(f.get("cvss_severity") or f.get("provider_severity") or "") or "-",
+                         "finding": f.get("title") or f.get("cve") or f.get("service") or "-",
+                         "cve": f.get("cve") or "-", "classification": normalize_class(f.get("classification"), f.get("cve")),
+                         "validation": f.get("validation") or f.get("applicability") or f.get("classification", ""),
+                         "source": f.get("source") or f.get("tool") or "-", "port": str(f.get("port", "") or "")})
     execution = []
     for row in (result.get("execution") or result.get("audit_trail") or []):
-        if not isinstance(row, dict):
-            continue
-        execution.append({"engine": row.get("engine", row.get("tool", "")),
-                          "native": row.get("native_executed", row.get("native", "")),
-                          "status": row.get("status", ""), "duration": row.get("duration", ""),
-                          "evidence": row.get("evidence", row.get("evidence_ref", ""))})
-    confirmed = sum(1 for f in findings if f["classification"] == "Confirmed")
-    candidates = sum(1 for f in findings if f["classification"] == "Candidate CVE (requires validation)")
-    informational = sum(1 for f in findings if f["classification"] == "Informational")
-    native_ok = sum(1 for e in execution if str(e["native"]).lower() in ("true", "yes", "1") and str(e["status"]).lower() in ("ok", "success", "completed", "complete"))
-    return {"target": result.get("target", "unspecified"),
-            "status": result.get("status") or ("Complete" if result.get("success") else "Partial"),
-            "duration": result.get("execution_time", result.get("duration", 0)) or 0,
-            "open_ports": result.get("open_ports", []) or [],
-            "services": services, "findings": findings, "execution": execution,
-            "summary": {"open_ports": len(result.get("open_ports", []) or []),
-                        "services": len(services), "confirmed": confirmed, "candidates": candidates,
-                        "informational": informational, "native_tools": native_ok},
+        if isinstance(row, dict):
+            execution.append({"engine": row.get("engine", row.get("tool", "")),
+                              "binary": row.get("binary") or ("not executed (internal engine)" if str(row.get("native_executed", "")).lower() not in _NATIVE_TRUE else "not recorded"),
+                              "native": str(row.get("native_executed", row.get("native", ""))).lower() in _NATIVE_TRUE,
+                              "status": row.get("status", ""), "duration": row.get("duration", "")})
+    counts = {name: sum(1 for f in findings if f["classification"] == name) for name in CLASS_ORDER}
+    status = result.get("status") or ("Complete" if result.get("success") else "Partial")
+    return {"target": result.get("target", "unspecified"), "profile": result.get("profile_label") or result.get("profile") or "detection",
+            "status": status, "duration": result.get("execution_time", result.get("duration", 0)) or 0,
+            "coverage": coverage, "services": services, "findings": findings, "execution": execution,
+            "counts": counts, "native_tools": sum(1 for e in execution if e["native"] and str(e["status"]).lower() in _OK),
+            "unavailable": [e["engine"] for e in execution if str(e["status"]).lower() not in _OK],
             "next_steps": result.get("next_steps", [])}
 
 
 def render_report(term, report, width=None):
     """Draw the default compact SECURITY ASSESSMENT view. Width-aware, NO_COLOR/non-TTY safe."""
     panel = Panel(term, width)
+    cov = report["coverage"]
     panel.section("REDVECTOR AI — SECURITY ASSESSMENT")
-    panel.fields([("Target", str(report["target"])), ("Status", str(report["status"])),
-                  ("Execution time", (format(report["duration"], ".2f") + " s") if isinstance(report["duration"], (int, float)) else str(report["duration"]))])
+    panel.fields([("Target", str(report["target"])), ("Profile", str(report["profile"])),
+                  ("Coverage", _coverage_text(cov)), ("Status", str(report["status"])),
+                  ("Duration", _duration(report["duration"]))])
     panel.line("Status: " + str(report["status"]), _status_kind(report["status"]))
-    s = report["summary"]
-    panel.section("SUMMARY")
-    panel.fields([("Open TCP ports", str(s["open_ports"])), ("Identified services", str(s["services"])),
-                  ("Confirmed vulnerabilities", str(s["confirmed"])),
-                  ("Unvalidated CVE candidates", str(s["candidates"])),
-                  ("Informational observations", str(s["informational"])),
-                  ("Native tools successfully executed", str(s["native_tools"]))])
-    panel.section("SERVICES")
+    panel.section("DISCOVERY")
+    panel.fields([("Ports requested", format(int(cov.get("requested") or 0), ",")),
+                  ("Ports completed", format(int(cov.get("completed") or 0), ",")),
+                  ("Open ports", str(cov.get("open", 0)))])
+    panel.section("NATIVE TOOL EXECUTION")
+    if report["execution"]:
+        panel.grid(["ENGINE", "ACTUAL BINARY", "STATUS", "DURATION"],
+                   [[e["engine"], e["binary"], e["status"], _duration(e["duration"])] for e in report["execution"]],
+                   ["success" if str(e["status"]).lower() in _OK else "warning" for e in report["execution"]])
+    else:
+        panel.line("No engine execution recorded.", "meta")
+    panel.section("DISCOVERED SERVICES")
     if report["services"]:
-        panel.grid(["PORT", "PROTOCOL", "SERVICE", "PRODUCT", "VERSION", "CONFIDENCE"],
-                   [[r["port"], r["protocol"], r["service"], r["product"], r["version"], r["confidence"]] for r in report["services"]])
+        panel.grid(["PORT", "SERVICE", "PRODUCT", "VERSION", "CONFIDENCE"],
+                   [[s["port"], s["service"], s["product"] or "-", s["version"] or "-", s["confidence"]] for s in report["services"]])
     else:
         panel.line("No services identified.", "meta")
-    panel.section("SECURITY FINDINGS")
-    if report["findings"]:
-        rows, kinds = [], []
-        for f in report["findings"]:
-            rows.append([f["severity"] or "-", f["title"], f["host"], f["cve"] or "-", f["validation"] or f["classification"], f["source"] or "-"])
-            kinds.append(_CLASS_KIND.get(f["classification"], "info"))
-        panel.grid(["SEVERITY", "TITLE", "HOST", "CVE", "VALIDATION", "SOURCE"], rows, kinds)
-        panel.line("Provider CVSS severity is shown separately from evidence confidence and validation status.", "meta")
+    panel.section("VULNERABILITIES")
+    c = report["counts"]
+    panel.line("Validated " + str(c["Validated Vulnerability"]) + " | Scanner-detected " + str(c["Scanner-Detected Vulnerability"]) +
+               " | Candidate CVEs " + str(c["Candidate CVE"]) + " | Observed exposures " + str(c["Observed Exposure"]), "info")
+    vulns = [f for f in report["findings"] if f["classification"] not in ("Observed Exposure", "Informational")]
+    if vulns:
+        panel.grid(["SEVERITY", "FINDING", "CVE", "VALIDATION", "EVIDENCE SOURCE"],
+                   [[f["severity"], f["finding"], f["cve"], f["validation"], f["source"]] for f in vulns],
+                   [_CLASS_KIND.get(f["classification"], "info") for f in vulns])
+        panel.line("Provider CVSS severity is shown separately from validation status; candidates are not confirmed.", "meta")
     else:
-        panel.line("No confirmed vulnerabilities; service identification is not a vulnerability.", "meta")
-    panel.section("EXECUTION EVIDENCE")
-    if report["execution"]:
-        panel.grid(["ENGINE", "NATIVE EXECUTED?", "STATUS", "DURATION", "EVIDENCE"],
-                   [[e["engine"], str(e["native"]), e["status"], (format(e["duration"], ".2f") + " s") if isinstance(e["duration"], (int, float)) and e["duration"] else str(e["duration"] or "-"), str(e["evidence"] or "-")] for e in report["execution"]])
-    else:
-        panel.line("No native engine execution recorded.", "meta")
+        panel.line("No vulnerabilities validated or detected by the engines that ran. This is not proof the target "
+                   "is free of vulnerabilities" + (" — detection coverage is incomplete." if report["unavailable"] or
+                   str(report["status"]).lower() != "complete" else "."), "meta")
     panel.section("NEXT STEPS")
-    steps = report["next_steps"] or _default_next_steps(report)
-    for step in steps[:5]:
+    for step in (report["next_steps"] or _default_next_steps(report))[:5]:
         panel.line("- " + str(step))
-    panel.line("Ask to show detailed findings, the original evidence, or to export the report as JSON.", "meta")
+    panel.line("Ask for detailed findings, the evidence overview, the raw JSON payload, or a JSON export.", "meta")
 
 
 def _default_next_steps(report):
     steps = []
-    if report["summary"]["candidates"]:
+    if report["unavailable"]:
+        steps.append("Coverage is incomplete: " + ", ".join(sorted(set(report["unavailable"])))[:200] + " did not run successfully.")
+    if report["counts"]["Candidate CVE"]:
         steps.append("Validate candidate CVEs against the exact product and version before acting; they are not confirmed.")
-    if report["summary"]["services"]:
+    if int(report["coverage"].get("requested") or 0) and int(report["coverage"].get("requested")) < 65535:
+        steps.append("Request all 65535 TCP ports for full discovery coverage.")
+    if report["services"]:
         steps.append("Review exposed services and restrict or patch those not required.")
-    if str(report["status"]).lower() == "partial":
-        steps.append("Re-run the unavailable stages once their native engines are verified; coverage is incomplete.")
     return steps or ["No evidence-based action required from this assessment."]

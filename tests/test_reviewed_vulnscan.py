@@ -32,16 +32,17 @@ def test_staged_assessment_ranks_and_audits(monkeypatch):
     assert out["success"] and out["target"]=="192.168.5.130"
     assert out["open_ports"]==["22","80"]
     classes=[f["classification"] for f in out["findings"]]
-    # taxonomy ordering: Strongly supported (OpenSSH -sV) before Candidate CVE before Informational
+    # taxonomy ordering: Candidate CVE before Observed Exposure (OpenSSH -sV, headers) before Informational
     assert classes==sorted(classes,key=v._ORDER.index)
-    assert any(f.get("product")=="OpenSSH" and f["classification"]=="Strongly supported" for f in out["findings"])
-    assert any(f["classification"]=="Candidate CVE (requires validation)" and f.get("cve")=="CVE-2016-0777" for f in out["findings"])
+    assert any(f.get("product")=="OpenSSH" and f["classification"]=="Observed Exposure" for f in out["findings"])
+    assert any(f["classification"]=="Candidate CVE" and f.get("cve")=="CVE-2016-0777" for f in out["findings"])
     # accuracy: an unrelated Apache-ecosystem CVE is NOT correlated to OpenSSH (product mismatch dropped)
     assert not any(f.get("cve")=="CVE-2017-5638" for f in out["findings"])
     # provider CVSS severity is carried separately from the evidence classification/validation
     candidate=next(f for f in out["findings"] if f.get("cve")=="CVE-2016-0777")
-    assert candidate["cvss_severity"]=="HIGH" and candidate["classification"]=="Candidate CVE (requires validation)"
-    assert any(f["classification"]=="Informational" and f.get("title","").startswith("Missing X-Frame") for f in out["findings"])
+    assert candidate["cvss_severity"]=="HIGH" and candidate["classification"]=="Candidate CVE"
+    assert candidate["validation"]=="product match only; not validated" and candidate["source"]=="nvd"
+    assert any(f["classification"]=="Observed Exposure" and f.get("title","").startswith("Missing X-Frame") for f in out["findings"])
     stages={a["stage"]:a["status"] for a in out["audit_trail"]}
     assert stages.get("discovery")=="ok" and stages.get("service-version")=="ok"
     assert stages.get("nuclei-passive")=="unavailable"  # honest: verified binary absent, not faked

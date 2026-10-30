@@ -261,6 +261,32 @@ def requests_service_identification(text):
     view=re.sub(r"(?i)\b(?:do\s+not|don't|never|without)\s+(?:also\s+)?(?:try\s+to\s+)?(?:identify|determine|detect|enumerate|fingerprint|find|discover|check)\b"," ",text)
     return bool(re.search(r"(?i)\b(?:identify|determine|detect|enumerate|fingerprint|discover|check|find)\b[^.?!]*\bservices?\b",view))
 
+_PORT_SPEC = re.compile(r"(?i)\bports?\s+((?:[0-9]{1,5}(?:\s*-\s*[0-9]{1,5})?)(?:\s*,\s*[0-9]{1,5}(?:\s*-\s*[0-9]{1,5})?)*)")
+BOUNDED_DISCOVERY_RANGE = "1-10000"
+
+def port_count(spec):
+    """Number of distinct ports in a validated '22,80,1000-1002' style spec (0 when invalid)."""
+    seen=set()
+    for group in str(spec or "").split(","):
+        if not re.fullmatch(r"[0-9]{1,5}(?:-[0-9]{1,5})?",group):return 0
+        bounds=[int(n) for n in group.split("-")]
+        if not all(1<=n<=65535 for n in bounds) or bounds[0]>bounds[-1]:return 0
+        seen.update(range(bounds[0],bounds[-1]+1))
+    return len(seen)
+
+def discovery_range(text):
+    """Port range for the DISCOVERY stage of a detection task. An explicit full-range request ->
+    1-65535; an explicit port list/range -> exactly that; unspecified -> the reviewed bounded default
+    1-10000 (coverage is disclosed as such, never presented as full). The 128-port limit belongs only
+    to service-version batches, never to discovery. Returns (spec, kind) with kind in
+    {"full","explicit","bounded-default"}."""
+    if requests_full_range(text):return "1-65535","full"
+    match=_PORT_SPEC.search(text or "")
+    if match:
+        spec=re.sub(r"\s+","",match.group(1))
+        if port_count(spec):return spec,"explicit"
+    return BOUNDED_DISCOVERY_RANGE,"bounded-default"
+
 def requests_combined_discovery_service(text):
     """Area 9: a single request asking for FULL-RANGE discovery AND service/version
     identification together -> run the staged workflow (full discovery, then service-ID on the

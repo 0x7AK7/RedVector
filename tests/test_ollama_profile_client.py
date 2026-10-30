@@ -79,18 +79,24 @@ def test_advanced_no_version_task_is_refused_before_mcp():
     assert result["isError"] and "Explicitly request service versions" in result["error"]
     session.call_tool.assert_not_called()
 
-def test_completed_advanced_scan_is_attributed_to_its_real_name():
-    catalog={"nmap_advanced_scan":SimpleNamespace(name="nmap_advanced_scan",description="",inputSchema={"type":"object","properties":{"target":{"type":"string"}}})}
-    api=Mock();api.async_chat=AsyncMock(side_effect=[{"content":"","tool_calls":[{"function":{"name":"nmap_advanced_scan","arguments":{"target":"192.0.2.15"}}}]},{"content":"done"}])
+def test_service_version_request_runs_discovery_first_never_direct_version():
+    # A request for service versions (even naming nmap_advanced_scan and explicit ports) is a staged
+    # task: native discovery on the requested ports FIRST; version detection never runs directly and
+    # is never chosen by the model.
+    catalog={"nmap_scan":SimpleNamespace(name="nmap_scan",description="",inputSchema={"type":"object","properties":{"target":{"type":"string"},"ports":{"type":"string"},"scan_type":{"type":"string"}}})}
+    api=Mock();api.async_chat=AsyncMock(side_effect=AssertionError("version detection must not reach the model"))
+    calls=[]
     class BoundaryAgent(Agent):
         async def refresh_profiles(self,data=None):
-            self.policy.profile_status={"service-version-v1":{"state":"Ready"}}
+            self.policy.profile_status={"service-version-v1":{"state":"Ready"},"tcp-discovery-v1":{"state":"Ready"}}
         async def execute(self,name,args,exposed):
-            self.last_invocation=(name,args)
+            calls.append((name,dict(args),self.version_task));self.last_result_id=None
             return {"source":"mcp","isError":False}
     agent=BoundaryAgent(api,"boundary-double",Mock(),catalog,Policy(["192.0.2.15"]),lambda _:True,lambda _:None)
-    answer=asyncio.run(agent.turn("Scan 192.0.2.15 using nmap_advanced_scan for service versions, ports 80."))
-    assert "actual MCP nmap_advanced_scan" in answer and "No authorized Nmap scan" not in answer
+    asyncio.run(agent.turn("Scan 192.0.2.15 using nmap_advanced_scan for service versions, ports 80."))
+    assert calls and calls[0][1]["scan_type"]=="--redvector-profile=tcp-discovery-v1" and calls[0][1]["ports"]=="80"
+    assert calls[0][2] is False                                   # discovery stage is not a version stage
+    assert not any(c[2] for c in calls)                            # no version stage without discovery evidence
 
 def test_advanced_start_panel_uses_actual_tool_name(tmp_path):
     import io
@@ -102,6 +108,22 @@ def test_advanced_start_panel_uses_actual_tool_name(tmp_path):
     stream=io.StringIO();policy=Policy(["192.0.2.15"]);policy.profile_status={"service-version-v1":{"state":"Ready"}}
     agent=Agent(Mock(),"boundary-double",session,{tool.name:tool},policy,lambda _:True,lambda _:None,results=ResultsStore(tmp_path/"results"),terminal=Terminal(stream))
     agent.version_task=True;agent.assessment_target="192.0.2.15";agent.runtime_verified=True
+    agent.discovered_open={"192.0.2.15":{80}}          # port 80 was observed open by discovery this session
     result=asyncio.run(agent.execute(tool.name,{"target":"192.0.2.15","ports":"80","scan_type":"-sT -sV"},{tool.name}))
     assert not result["isError"],result
     assert "Tool: nmap_advanced_scan" in stream.getvalue() and "Tool: nmap_scan" not in stream.getvalue()
+
+def test_version_scan_on_undiscovered_ports_is_refused(tmp_path):
+    # The invented-range failure: a service-version call on ports discovery never observed (e.g.
+    # 1-128) is refused before any MCP call, whoever supplied the range.
+    from redvector_ollama_results import ResultsStore
+    tool=SimpleNamespace(name="nmap_scan",description="",inputSchema={"type":"object","properties":{"target":{"type":"string"},"ports":{"type":"string"},"scan_type":{"type":"string"}},"required":["target"]})
+    session=SimpleNamespace(call_tool=AsyncMock())
+    policy=Policy(["192.0.2.15"]);policy.profile_status={"service-version-v1":{"state":"Ready"}}
+    agent=Agent(Mock(),"boundary-double",session,{tool.name:tool},policy,lambda _:True,lambda _:None,results=ResultsStore(tmp_path/"results"))
+    agent.version_task=True;agent.assessment_target="192.0.2.15"
+    agent.discovered_open={"192.0.2.15":{22,80}}
+    for ports in ("1-128","22,80,443"):
+        result=asyncio.run(agent.execute("nmap_scan",{"target":"192.0.2.15","ports":ports,"scan_type":"-sV"},{"nmap_scan"}))
+        assert result["isError"] and "discover ports first" in result["error"]
+    session.call_tool.assert_not_called()

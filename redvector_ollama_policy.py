@@ -124,6 +124,7 @@ class Policy:
         self.auto_discovery=auto_discovery is True
         self.clock=clock or time.monotonic
         self.auto_count=0;self.last_auto=float("-inf");self.last_automatic=False
+        self.task=None;self.last_task_id=None
         self.profile_status={};self.version_intensity=1;self.report_provider=None;self.artifact_provider=None;self.observed_processes={}
         self._resolver = resolver if resolver is not None else _system_resolver
         self._state = ((), {}, 0)
@@ -397,6 +398,11 @@ class Policy:
         version = ipaddress.ip_address(value).version
         if version == 6 and isinstance(scan, str) and scan.startswith("-6 "):
             scan = scan[3:]
+        # An explicit request for the reviewed discovery profile (used by the staged detection task)
+        # is validated as plain TCP-connect discovery over its exact, operator-derived range.
+        discovery_requested = scan == "--redvector-profile=tcp-discovery-v1"
+        if discovery_requested:
+            scan = "-sT"
         version_profile=scan in ("-sV","-sT -sV")
         if scan!="-sT" and not version_profile:
             raise PolicyError("Restricted Nmap operation: only reviewed TCP discovery/service profiles are supported; OS, UDP and arbitrary NSE remain restricted.")
@@ -424,25 +430,67 @@ class Policy:
             from redvector_reviewed_profiles import NMAP_PROFILE
             return {"target":value,"additional_args":"--version-intensity "+str(self.version_intensity),
                     "scan_type":NMAP_PROFILE,"ports":ports,"use_recovery":False}
-        if ports=="1-65535":
-            # Explicit full-range discovery uses the attested reviewed discovery profile
-            # (real native nmap -sT, XML parsed), never a silent fallback to the 128 service profile.
-            # Smaller/partial scans keep their existing bounded-discovery approval path unchanged.
+        if ports=="1-65535" or discovery_requested:
+            # Full-range discovery, or an explicit staged-discovery request over a validated range, uses
+            # the attested reviewed discovery profile (real native nmap -sT, XML parsed) — never a silent
+            # fallback to the 128-port service profile. Other plain scans keep their existing bounded path.
             from redvector_reviewed_profiles import DISCOVERY_PROFILE
+            if not ports:raise PolicyError("Discovery requires an explicit TCP port range.")
             capability=self.profile_status.get("tcp-discovery-v1",{})
             if capability.get("state")!="Ready":
-                raise PolicyError("Reviewed full-range TCP discovery profile unavailable. "+str(capability.get("detail","Updated verified backend and native runtime required.")))
+                raise PolicyError("Reviewed TCP discovery profile unavailable. "+str(capability.get("detail","Updated verified backend and native runtime required.")))
             return {"target":value,"additional_args":"","scan_type":DISCOVERY_PROFILE,"ports":ports,"use_recovery":False}
         return {"target":value, "additional_args":FIXED_NMAP_ARGS, "scan_type":("-6 " if version == 6 else "") + scan,
                 "ports":ports, "use_recovery":False}
+
+    # ---- task-scoped authorization ---------------------------------------------------------------
+    # A validated scope alone does NOT authorize operations. An explicit natural-language detection
+    # task creates ONE authorization record bound to its target, operation class (detection), the
+    # stages it contains, its port bound and an expiry; its constituent bounded stages reuse it
+    # without repeated prompts. Tasks above the bounded range (full-range discovery) or using the
+    # public advisory provider require one plain-English task confirmation. A record never covers a
+    # different target, never outlives its task and is never elevated to exploitation.
+    TASK_BOUNDED_PORTS = 10000
+    TASK_TTL = 3600
+
+    def begin_task(self, target, ports_requested, stages, approve, description):
+        canonical = self.destination(target)              # scope-validated; raises outside scope
+        stages = frozenset(stages)
+        if not stages <= {"discovery", "service-version", "advisory", "web-detection", "offline-correlation"}:
+            raise PolicyError("A detection task may contain only detection stages.")
+        confirm = int(ports_requested) > self.TASK_BOUNDED_PORTS or "advisory" in stages
+        if confirm and not approve({"tool": "detection task", "target": canonical, "reason": description}):
+            raise PolicyError("Operator declined this task. No scan was executed.")
+        import uuid
+        self.task = {"id": uuid.uuid4().hex[:12], "target": canonical, "class": "detection", "stages": stages,
+                     "max_ports": int(ports_requested), "expires": self.clock() + self.TASK_TTL,
+                     "revision": self.revision, "confirmed": bool(confirm)}
+        return dict(self.task)
+
+    def end_task(self):
+        self.task = None
+
+    def _task_covers(self, stage, target=None, ports=0):
+        task = getattr(self, "task", None)
+        if not task or task["revision"] != self.revision or self.clock() > task["expires"]:
+            return False
+        if stage not in task["stages"]:
+            return False
+        if target is not None and target != task["target"]:
+            return False
+        return int(ports) <= task["max_ports"]
 
     def authorize(self, name, args, approve, allow_automatic=True):
         revision = self.revision
         original = copy.deepcopy(args)
         result = self._prepare(name, original)
         self.last_automatic=False
+        self.last_task_id=None
         if name in ADVISORY_TOOLS:
-            if not approve({"tool":name,"arguments":copy.deepcopy(result),"provider":"NVD","query":({"hours":24,"severity_filter":"CRITICAL","keywords":""} if name=="vulnerability_intelligence_dashboard" else {"hours":result.get("hours",24),"severity_filter":result.get("severity_filter","HIGH,CRITICAL"),"keywords":result.get("keywords","")}),"reason":"Explicit public-provider query approval required. Anonymous NVD publication window only; keywords are filtered locally. Data does not establish target applicability."}):
+            if self._task_covers("advisory"):
+                # covered by the operator's confirmed assessment task (provider queries listed there)
+                self.last_automatic=True;self.last_task_id=self.task["id"]
+            elif not approve({"tool":name,"arguments":copy.deepcopy(result),"provider":"NVD","query":({"hours":24,"severity_filter":"CRITICAL","keywords":""} if name=="vulnerability_intelligence_dashboard" else {"hours":result.get("hours",24),"severity_filter":result.get("severity_filter","HIGH,CRITICAL"),"keywords":result.get("keywords","")}),"reason":"Explicit public-provider query approval required. Anonymous NVD publication window only; keywords are filtered locally. Data does not establish target applicability."}):
                 raise PolicyError("Operator declined the public advisory query.")
             if self.revision!=revision or self._prepare(name,original)!=result:
                 raise PolicyError("Authorization state changed during advisory approval.")
@@ -461,14 +509,13 @@ class Policy:
             discovery_profile=name in NMAP_TOOLS and result.get("scan_type","")=="--redvector-profile=tcp-discovery-v1"
             automatic=(allow_automatic is True and name=="nmap_scan" and not version_profile and not discovery_profile and self.auto_discovery and count<=1000
                        and self.auto_count<5 and self.clock()-self.last_auto>=30)
-            # Reviewed LOW-IMPACT DETECTION (bounded native TCP-connect discovery and the <=128-port
-            # service-version profile, both fixed-profile and validated in _prepare) are pre-authorized
-            # by an explicit operator scope on an explicit scan task: they run without a repeated
-            # identical APPROVE, so an orchestrated discovery->service-id workflow is not interrupted
-            # per stage. Bounds, target validation and native integrity still apply; genuinely
-            # higher-impact operations (plain scans over 1,000 ports, state-changing tools, the staged
-            # assessment orchestrator, and anything exploitation-class) still require explicit approval.
-            pre_authorized=(allow_automatic is True and bool(self.snapshot()) and name in NMAP_TOOLS and (version_profile or discovery_profile))
+            # Reviewed detection stages (native TCP-connect discovery and the <=128-port service-version
+            # profile, both validated in _prepare) run without a repeated prompt ONLY when the active
+            # task authorization covers this exact stage, target and port bound. Scope alone is not
+            # enough; higher-impact operations (plain scans over 1,000 ports, state-changing tools, the
+            # backend orchestrator, anything exploitation-class) still require explicit approval.
+            stage="discovery" if discovery_profile else "service-version" if version_profile else None
+            pre_authorized=(stage is not None and self._task_covers(stage,result.get("target"),count))
             if not automatic and not pre_authorized:
                 reasons=[]
                 if name in ASSESSMENT_TOOLS:reasons.append("Staged reviewed assessment (chains multiple reviewed scanners against the authorized target) requires one operator approval")
@@ -492,7 +539,7 @@ class Policy:
                 result["additional_args"]=AUTO_NMAP_ARGS
                 self.auto_count+=1;self.last_auto=self.clock();self.last_automatic=True
             elif pre_authorized:
-                # Reviewed low-impact detection authorized by the explicit scope; profile marker and
-                # bounds are unchanged, and the authorization is still recorded for the audit trail.
-                self.last_automatic=True
+                # Covered by the operator's task authorization; profile marker and bounds unchanged,
+                # and the task id is recorded for the audit trail.
+                self.last_automatic=True;self.last_task_id=self.task["id"]
         return result

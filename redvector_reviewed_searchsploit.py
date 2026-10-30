@@ -247,7 +247,7 @@ def run_searchsploit(params):
                 parsed = parse_json(stdout)
                 return {"success": True, "execution_mode": "A", "execution_mode_detail": "native binary executed",
                         "profile": PROFILE, "engine": "native searchsploit --json (offline local Exploit-DB)",
-                        "runtime_sha256": before, "return_code": code,
+                        "runtime_sha256": before, "binary": str(executable), "return_code": code,
                         "query": spec["cve"] or spec["query"],
                         "parsed": parsed, "results_count": len(parsed.get("results", [])),
                         "shellcode_count": len(parsed.get("shellcode", [])),

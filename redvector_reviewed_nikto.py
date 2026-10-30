@@ -220,7 +220,7 @@ def run_nikto(params):
                 parsed = parse_json(raw)
                 return {"success": True, "execution_mode": "A", "execution_mode_detail": "native binary executed",
                         "profile": PROFILE, "engine": "native nikto (reviewed non-destructive tuning)",
-                        "runtime_sha256": before, "return_code": code,
+                        "runtime_sha256": before, "binary": str(executable), "return_code": code,
                         "target": spec["host"] + ":" + spec["port"], "ssl": spec["ssl"],
                         "parsed": parsed, "findings_count": len(parsed.get("findings", [])),
                         "stderr": stderr[:4096], "execution_time": time.monotonic() - started}

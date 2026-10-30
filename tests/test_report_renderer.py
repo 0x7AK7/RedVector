@@ -21,7 +21,7 @@ _RESULT = {
     ],
     "findings": [
         {"cve": "CVE-2021-23017", "title": "nginx resolver off-by-one", "host": "198.51.100.10", "port": "80",
-         "classification": "Candidate CVE (requires validation)", "provider_severity": "HIGH", "cvss": "7.7",
+         "classification": "Candidate CVE", "provider_severity": "HIGH", "cvss": "7.7",
          "validation": "candidate", "source": "nvd"},
     ],
     "execution": [
@@ -34,11 +34,20 @@ _RESULT = {
 
 def test_build_report_counts_are_evidence_based_not_inflated():
     report = rr.build_report(_RESULT)
-    s = report["summary"]
-    assert s["open_ports"] == 3 and s["services"] == 2
-    assert s["confirmed"] == 0                      # a candidate is never counted confirmed
-    assert s["candidates"] == 1
-    assert s["native_tools"] == 2                   # nikto did not execute -> not counted
+    c = report["counts"]
+    assert report["coverage"]["open"] == 3 and len(report["services"]) == 2
+    assert c["Validated Vulnerability"] == 0 and c["Demonstrated Impact"] == 0   # a candidate is never confirmed
+    assert c["Scanner-Detected Vulnerability"] == 0
+    assert c["Candidate CVE"] == 1
+    assert report["native_tools"] == 2                       # nikto did not execute -> not counted
+    assert report["unavailable"] == ["native nikto"]         # the failed stage is reported, not hidden
+
+
+def test_legacy_labels_never_upgrade_evidence():
+    assert rr.normalize_class("Candidate CVE (requires validation)", "CVE-1") == "Candidate CVE"
+    assert rr.normalize_class("Strongly supported", "CVE-1") == "Candidate CVE"    # version match is still a candidate
+    assert rr.normalize_class("Strongly supported", "") == "Observed Exposure"
+    assert rr.normalize_class("Unsupported/untested") == "Informational"
 
 
 def test_render_is_compact_with_no_flattened_internal_keys():
@@ -46,11 +55,14 @@ def test_render_is_compact_with_no_flattened_internal_keys():
     rr.render_report(term, rr.build_report(_RESULT), width=100)
     out = term.stream.getvalue()
     assert "REDVECTOR AI — SECURITY ASSESSMENT" in out
-    for heading in ("SUMMARY", "SERVICES", "SECURITY FINDINGS", "EXECUTION EVIDENCE", "NEXT STEPS"):
+    for heading in ("DISCOVERY", "NATIVE TOOL EXECUTION", "DISCOVERED SERVICES", "VULNERABILITIES", "NEXT STEPS"):
         assert heading in out
+    for label in ("Profile", "Coverage", "Ports requested", "Ports completed", "Open ports", "ACTUAL BINARY"):
+        assert label in out
     assert "result.findings[" not in out and "audit_trail[" not in out and ".classification" not in out
+    assert "{" not in out                                    # no raw JSON
     assert "nginx" in out and "CVE-2021-23017" in out
-    assert "native nikto" in out and "False" in out        # honest native-executed? column
+    assert "native nikto" in out and "not executed (internal engine)" in out   # honest engine identity
 
 
 def test_findings_colored_by_confidence_not_only_cvss(monkeypatch):
@@ -75,8 +87,11 @@ def test_status_partial_when_not_success():
 def test_no_findings_states_not_a_vulnerability():
     term = Terminal(io.StringIO())
     rr.render_report(term, rr.build_report(dict(_RESULT, findings=[])), width=100)
-    out = term.stream.getvalue()
-    assert "No confirmed vulnerabilities" in out and "service identification is not a vulnerability" in out
+    out = " ".join(term.stream.getvalue().split())          # sentences may wrap across lines
+    assert "No vulnerabilities validated or detected" in out
+    assert "not proof the target is free of vulnerabilities" in out
+    assert "detection coverage is incomplete" in out         # nikto did not run -> incompleteness stated
+    assert "Validated 0" in out and "Candidate CVEs 0" in out
 
 
 @pytest.mark.parametrize("width", [40, 60, 80, 120])

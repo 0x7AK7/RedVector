@@ -45,19 +45,20 @@ def test_reviewed_service_version_requires_verified_capability_then_runs_under_s
         policy.authorize("nmap_scan",{"target":HOST,"scan_type":"-sT -sV","ports":"80"},lambda _:True)
     policy.profile_status={"service-version-v1":{"state":"Ready"}}
     policy.version_intensity=2;calls=[]
-    # Inc E: reviewed low-impact service-version detection under an explicit authorized scope and an
-    # explicit task runs WITHOUT a redundant APPROVE prompt; bounds/profile are still enforced.
+    # Without a task authorization the reviewed service-version profile prompts (scope alone is not
+    # enough); inside a bounded detection task it runs without a repeated prompt.
     actual=policy.authorize("nmap_scan",{"target":HOST,"scan_type":"-sT -sV","ports":"80"},
         lambda operation:calls.append(operation) or True)
     assert actual["scan_type"]==NMAP_PROFILE
     assert actual["additional_args"]=="--version-intensity 2"
     assert actual["use_recovery"] is False
-    assert calls==[] and policy.last_automatic is True and policy.auto_count==0
-    # Not an explicit task (allow_automatic False) -> still prompts.
+    assert len(calls)==1 and "service-version detection" in calls[0]["reason"].lower()
+    policy.begin_task(HOST,1000,{"discovery","service-version"},lambda operation:True,"bounded task")
     calls2=[]
     policy.authorize("nmap_scan",{"target":HOST,"scan_type":"-sT -sV","ports":"80"},
-        lambda operation:calls2.append(operation) or True,allow_automatic=False)
-    assert len(calls2)==1 and "service-version detection" in calls2[0]["reason"].lower()
+        lambda operation:calls2.append(operation) or True)
+    assert calls2==[] and policy.last_automatic is True and policy.auto_count==0
+    policy.end_task()
 
 def test_reviewed_service_version_without_scope_still_prompts():
     policy=Policy()                      # no authorized scope

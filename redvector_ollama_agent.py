@@ -106,6 +106,25 @@ def check_schema(schema):
 _APPROVE_WORDS=frozenset({"approve","approved","a","yes","y"})
 _DENY_WORDS=frozenset({"deny","denied","d","no","n","cancel","c"})
 
+def _port_set(spec):
+    """Set of integer ports in a '22,80,1000-1002' spec; empty on any invalid group."""
+    ports=set()
+    for group in str(spec or "").split(","):
+        if not re.fullmatch(r"[0-9]{1,5}(?:-[0-9]{1,5})?",group):return set()
+        bounds=[int(n) for n in group.split("-")]
+        if not all(1<=n<=65535 for n in bounds) or bounds[0]>bounds[-1]:return set()
+        ports.update(range(bounds[0],bounds[-1]+1))
+    return ports
+
+def _discovery_label(kind,ports):
+    """Honest description of the discovery coverage for a task (never presents bounded as full)."""
+    from redvector_ollama_cli import port_count
+    if kind=="full":return "full-range TCP discovery (1-65535), not truncated"
+    if kind=="bounded-default":
+        return ("bounded TCP discovery of ports "+ports+" ("+format(port_count(ports),",")+" of 65,535 ports; "
+                "ask for all 65535 ports for full coverage)")
+    return "TCP discovery on the requested ports "+ports+" ("+format(port_count(ports),",")+" ports)"
+
 def _resolve_approval(ask,notify=None,attempts=3):
     """Operator approval decision loop. Case-insensitive, whitespace-tolerant. Empty or
     unrecognized input is NOT a decision: it re-prompts (bounded) instead of being treated as a
@@ -271,6 +290,9 @@ class Agent:
         self.policy.artifact_provider=lambda:self.artifact
         self.assessment_target=None
         self.version_task=False;self.runtime={};self.runtime_verified=False
+        # Open ports actually observed by native discovery, per canonical target, for this session
+        # (the only ports service-version detection may target), and the latest task's provenance.
+        self.discovered_open={};self.last_task=None;self.quiet=False
         from redvector_ollama_reporting import report_arguments
         self.policy.report_provider=lambda name:report_arguments(self.results,name)
         self.last_invocation=None
@@ -362,21 +384,22 @@ class Agent:
 
     def _authorization_context(self,name):
         approval=("Operator-selected read-only artifact snapshot" if name in ARTIFACT_TOOLS else "Not required: reviewed root-response read" if name in HTTP_READ_TOOLS else "Not required: reviewed passive HTTP assessment" if name in HTTP_ASSESS_TOOLS else "Not required: reviewed bounded TCP discovery" if name in TCP_SCAN_TOOLS else "Not required: reviewed offline Exploit-DB lookup" if name in SEARCHSPLOIT_TOOLS else "Not required: read-only diagnostic" if name in RUNTIME_TOOLS or name in ("server_health","get_cache_stats","get_telemetry","error_handling_statistics")
+                  else ("Task authorization "+str(getattr(self.policy,"last_task_id",""))) if getattr(self.policy,"last_task_id",None)
                   else "Reviewed bounded discovery" if self.policy.last_automatic else "Approved exact operation")
         return {"artifact_sha256":self.artifact["sha256"] if name in ARTIFACT_TOOLS and self.artifact else None,"scope":list(self.policy.snapshot()),"dns_pins":self.policy.dns_snapshot(),
-                "scope_revision":self.policy.revision,"approval":approval}
+                "scope_revision":self.policy.revision,"approval":approval,"task":getattr(self.policy,"last_task_id",None)}
 
     def _save_scan(self,data,wire,started):
         record=self.results.save(self.last_invocation[0],self.last_invocation[1]["target"],self.last_invocation[1],
                                  data,wire,time.monotonic()-started,authorization=self._authorization_context("nmap_scan"))
         self.last_result_id=record["id"]
-        if self.terminal:
+        if self.terminal and not self.quiet:
             try:render_result(self.terminal,record)
             except Exception as exc:
                 record_error("Scan presentation",exc)
                 self.terminal.message("error","Scan evidence preserved; formatted display failed. Ask to show the raw evidence or export the report.")
             if not record["persisted"]:self.terminal.message("error",record["storage_warning"])
-        else:self.render(json.dumps(data,ensure_ascii=True))
+        elif not self.terminal and not self.quiet:self.render(json.dumps(data,ensure_ascii=True))
         return record
 
     def _save_operation(self,name,data,wire,started):
@@ -384,7 +407,7 @@ class Agent:
         target=self.artifact["name"] if name in ARTIFACT_TOOLS and self.artifact else args.get("target") or args.get("url") or (args.get("request_spec") or {}).get("url")
         record=self.results.save(name,target,args,data,wire,time.monotonic()-started,authorization=self._authorization_context(name))
         self.last_result_id=record["id"]
-        if self.terminal:
+        if self.terminal and not self.quiet:
             try:render_result(self.terminal,record)
             except Exception as exc:
                 record_error("Tool presentation",exc)
@@ -442,6 +465,14 @@ class Agent:
                 if requests_active_versions(args.get("scan_type","")) and not self.version_task:
                     raise PolicyError("Active version detection was not selected by the operator.")
                 if self.version_task:
+                    # Discovery-before-service invariant: service-version detection may only target ports
+                    # that native discovery observed OPEN on this host in this session. An invented or
+                    # hardcoded range (e.g. 1-128) is refused, whoever supplied it.
+                    from redvector_ollama_cli import port_count
+                    requested=_port_set(args.get("ports",""))
+                    known=self.discovered_open.get(self.policy.destination(args["target"]),set())
+                    if not requested or not port_count(args.get("ports","")) or not requested<=known:
+                        raise PolicyError("Service-version detection runs only on ports that discovery found open on this target in this session; discover ports first. No scan was executed.")
                     args=dict(args,scan_type="-sT -sV")
                 self._scan_busy=True;claimed=True
             if (name in HTTP_READ_TOOLS or name in HTTP_ASSESS_TOOLS or name in TCP_SCAN_TOOLS or name in ARTIFACT_TOOLS or name in RUNTIME_TOOLS or name in ADVISORY_TOOLS or name in ASSESSMENT_TOOLS or name in SEARCHSPLOIT_TOOLS or name=="nmap_advanced_scan") and not self.runtime_verified:await self.refresh_profiles()
@@ -459,7 +490,7 @@ class Agent:
                 progress=asyncio.create_task(self._progress(started,approved["target"],name))
             if not scan:
                 self.results.ensure()
-                if self.terminal:operation_message(self.terminal,["REDVECTOR AI / TOOL EXECUTION","Tool: "+name,"Status: Running"])
+                if self.terminal and not self.quiet:operation_message(self.terminal,["REDVECTOR AI / TOOL EXECUTION","Tool: "+name,"Status: Running"])
             rpc_started=True
             result=await asyncio.wait_for(self.session.call_tool(name,arguments=approved),timeout=90)
             data=result_data(result)
@@ -553,53 +584,97 @@ class Agent:
         lines.append("Evidence saved as "+str(record["id"])+". Ask me to analyze the results, show the raw evidence, or export the report.")
         return "\n".join(lines)
 
-    async def staged_discovery_service(self,target):
-        """Area 9: full-range TCP discovery (1-65535, never truncated), then service/version
-        identification on the discovered OPEN ports only, chunked to <=128 ports per call. Each
-        stage runs through the normal policy authorization at its own impact level and every
-        stage's evidence is preserved. No AI analysis is started automatically."""
-        from redvector_ollama_results import payloads
+    async def staged_discovery_service(self,target,ports="1-65535",kind="full",identify=True):
+        """Detection task: native TCP discovery over the requested range (full 1-65535, an explicit
+        operator range, or the reviewed bounded default), then — only if requested — service/version
+        identification confined to the ports discovery actually observed OPEN, in <=128-port batches.
+        The 128-port bound applies to service batches, never to discovery. Coverage (requested /
+        completed / open, partial or failed) is recorded and never overstated; every stage's evidence is
+        preserved; no AI analysis is started automatically."""
+        from redvector_ollama_cli import port_count
         self.assessment_target=target
-        # Stage A: attested full-range discovery; active service-version detection stays OFF so
-        # the request is never silently reclassified into a 128-port version scan.
+        canonical=self.policy.destination(target)
+        coverage={"requested":port_count(ports),"completed":0,"open":0,"state":"not-started","kind":kind,"range":ports}
+        self.last_task={"target":target,"evidence":[],"coverage":coverage}
+        # ONE task authorization covers every bounded stage of this task (bound to this target, its
+        # port range and expiry). Full-range tasks ask the operator once, in plain English.
+        stages={"discovery"}|({"service-version"} if identify else set())
+        description=("Detection task on "+canonical+": "+_discovery_label(kind,ports)+" with native Nmap TCP connect discovery"
+                     +(", then service/version identification only on discovered open ports in batches of at most 128" if identify else "")
+                     +". Detection only: no exploitation, intrusive scripts or credential attacks.")
+        try:
+            task=self.policy.begin_task(target,coverage["requested"],stages,self.approve,description)
+        except PolicyError as exc:
+            return str(exc)
+        self.last_task["authorization"]=task["id"]
+        try:
+            return await self._run_staged(target,canonical,ports,kind,identify,coverage)
+        finally:
+            self.policy.end_task()
+
+    async def _run_staged(self,target,canonical,ports,kind,identify,coverage):
+        from redvector_ollama_results import payloads
+        # Stage A: reviewed native discovery profile over the exact requested range. Active
+        # service-version detection stays OFF so discovery is never reclassified into a version scan.
         self.version_task=False
-        if self.terminal:self.terminal.message("info","Stage 1/2: full-range TCP discovery (1-65535), not truncated.")
-        disc=await self.execute("nmap_scan",{"target":target,"ports":"1-65535"},{"nmap_scan"})
+        if self.terminal:self.terminal.message("info","Stage 1/"+("2" if identify else "1")+": "+_discovery_label(kind,ports)+".")
+        disc=await self.execute("nmap_scan",{"target":target,"ports":ports,"scan_type":"--redvector-profile=tcp-discovery-v1"},{"nmap_scan"})
         disc_id=self.last_result_id
+        if disc_id:self.last_task["evidence"].append(disc_id)
         if disc.get("isError") or not disc_id:
+            coverage["state"]="failed" if not disc_id else "partial"
             return self._staged_summary(target,disc_id,[],"discovery-incomplete")
         actual=payloads(disc)
         parsed=(actual[0].get("parsed") if actual and isinstance(actual[0],dict) else {}) or {}
-        open_ports=[str(entry.get("port")) for entry in parsed.get("ports",[])
-                    if isinstance(entry,dict) and entry.get("state")=="open" and entry.get("port") is not None]
+        open_ports=sorted({int(entry.get("port")) for entry in parsed.get("ports",[])
+                           if isinstance(entry,dict) and entry.get("state")=="open" and str(entry.get("port","")).isdigit()})
+        coverage.update(completed=coverage["requested"],open=len(open_ports),state="complete")
+        self.discovered_open.setdefault(canonical,set()).update(open_ports)
         if not open_ports:
             return self._staged_summary(target,disc_id,[],"no-open-ports")
-        # Stage B: service/version identification confined to the discovered open ports, chunked
-        # to respect the reviewed service-version profile's 128-port bound (never truncated: all
-        # discovered open ports are covered across sequential bounded calls).
+        if not identify:
+            return self._staged_summary(target,disc_id,[],"discovery-only")
+        # Stage B: service/version identification confined to the discovered open ports, in batches
+        # of at most 128 — all discovered open ports are covered across sequential bounded calls.
         self.version_task=True
-        service_ids=[]
+        service_ids=[];stage="complete"
         if self.terminal:self.terminal.message("info","Stage 2/2: service identification on "+str(len(open_ports))+" discovered open port(s).")
-        for index in range(0,len(open_ports),128):
-            svc=await self.execute("nmap_scan",{"target":target,"scan_type":"-sV","ports":",".join(open_ports[index:index+128])},{"nmap_scan"})
-            if self.last_result_id:service_ids.append(self.last_result_id)
-            if svc.get("isError"):break
-        return self._staged_summary(target,disc_id,service_ids,"complete")
+        try:
+            for index in range(0,len(open_ports),128):
+                batch=",".join(str(p) for p in open_ports[index:index+128])
+                svc=await self.execute("nmap_scan",{"target":target,"scan_type":"-sV","ports":batch},{"nmap_scan"})
+                if self.last_result_id:
+                    service_ids.append(self.last_result_id);self.last_task["evidence"].append(self.last_result_id)
+                if svc.get("isError"):
+                    stage="service-incomplete";break
+        finally:
+            self.version_task=False
+        return self._staged_summary(target,disc_id,service_ids,stage)
 
     def _staged_summary(self,target,disc_id,service_ids,stage):
         """Concise, model-free summary of the staged discovery+service workflow. Taxonomy
         dimensions (CVSS severity, classification, candidate vs confirmed) stay separate and
         every stage's evidence id is surfaced for /summary, /results, /raw and /export."""
-        header="STAGED ASSESSMENT COMPLETED" if stage=="complete" else "STAGED ASSESSMENT — "+stage.replace("-"," ").upper()
+        coverage=(self.last_task or {}).get("coverage") or {"requested":65535,"kind":"full","range":"1-65535","completed":0,"state":"unknown"}
+        header=("STAGED ASSESSMENT COMPLETED" if stage=="complete" else "DISCOVERY COMPLETED" if stage=="discovery-only"
+                else "STAGED ASSESSMENT — "+stage.replace("-"," ").upper())
         lines=[header,"Source: actual MCP/backend execution (no AI analysis run automatically).","Target: "+str(target)]
+        label={"full":"full-range discovery (1-65535, not truncated)",
+               "bounded-default":"bounded discovery (ports "+str(coverage.get("range"))+", not full coverage)",
+               "explicit":"discovery on requested ports "+str(coverage.get("range"))}.get(coverage.get("kind"),"discovery")
         if disc_id:
             disc=self.results.load(disc_id)["findings"]
-            lines.append("Stage 1 — full-range discovery (1-65535, not truncated): status "+str(disc.get("status","UNKNOWN"))+
+            lines.append("Stage 1 — "+label+": status "+str(disc.get("status","UNKNOWN"))+
                          "; open TCP ports "+str(disc.get("open_count",0))+"; evidence "+str(disc_id)+".")
         else:
-            lines.append("Stage 1 — full-range discovery did not complete; no evidence was saved.")
+            lines.append("Stage 1 — "+label+" did not complete; no evidence was saved.")
+        lines.append("Coverage: "+format(int(coverage.get("completed") or 0),",")+" of "+format(int(coverage.get("requested") or 0),",")+
+                     " requested TCP ports completed ("+str(coverage.get("state","unknown"))+")"+
+                     ("; this is not all 65,535 TCP ports." if int(coverage.get("requested") or 0)<65535 else "."))
         if stage=="no-open-ports":
             lines.append("Stage 2 — service identification skipped: no open ports were discovered.")
+        elif stage=="discovery-only":
+            lines.append("Stage 2 — service identification not requested (discovery only).")
         elif service_ids:
             services=versioned=candidate=confirmed=0
             for sid in service_ids:
@@ -623,7 +698,7 @@ class Agent:
         tail=service_ids[-1] if service_ids else disc_id
         if tail:lines.append("Ask me to analyze the results, show the raw evidence, or export the report.")
         text="\n".join(lines)
-        if self.terminal:
+        if self.terminal and not self.quiet:
             # Operator sees the compact professional SECURITY ASSESSMENT report; the concise text
             # below is only a pointer. Non-terminal callers (tests, piping) get the full text.
             try:
@@ -641,17 +716,30 @@ class Agent:
         the staged discovery+service workflow performs service identification, not vulnerability
         detection, so SECURITY FINDINGS stays empty here."""
         open_ports=[];services=[];execution=[]
+        def stage_row(record,default_engine):
+            finding=record["findings"];ident_=_engine_identity(record)
+            binary=ident_["binary"]+((" ("+ident_["version"]+")") if ident_["version"] else "") if ident_["binary"] else "not recorded"
+            return {"engine":ident_["engine"] or default_engine,"binary":binary,"native_executed":True,
+                    "status":"ok" if finding.get("status")=="COMPLETED" else str(finding.get("status","")).lower(),
+                    "duration":finding.get("duration",""),"evidence":record.get("id","")}
         if disc_id:
-            disc=self.results.load(disc_id)["findings"]
+            record=self.results.load(disc_id);disc=record["findings"]
             open_ports=[str(r.get("port")) for r in (disc.get("ports") or []) if isinstance(r,dict) and r.get("state")=="open"]
-            execution.append({"engine":"native nmap -sT discovery","native_executed":True,
-                              "status":"ok" if disc.get("status")=="COMPLETED" else str(disc.get("status","")).lower(),
-                              "duration":disc.get("duration",""),"evidence":disc_id})
+            execution.append(stage_row(record,"native nmap -sT discovery"))
+        from redvector_ollama_results import payloads
         for sid in service_ids:
-            finding=self.results.load(sid)["findings"]
-            execution.append({"engine":"native nmap -sV service-version","native_executed":True,
-                              "status":"ok" if finding.get("status")=="COMPLETED" else str(finding.get("status","")).lower(),
-                              "duration":finding.get("duration",""),"evidence":sid})
+            record=self.results.load(sid);finding=record["findings"]
+            execution.append(stage_row(record,"native nmap -sV service-version"))
+            values=payloads(record.get("mcp") or {})
+            parsed=values[0].get("parsed") if values and isinstance(values[0],dict) and isinstance(values[0].get("parsed"),dict) else {}
+            if parsed.get("services"):
+                # native parser output keeps product, version and probe confidence separate
+                for svc in parsed["services"]:
+                    if isinstance(svc,dict):
+                        services.append({"port":svc.get("port"),"protocol":svc.get("protocol","tcp"),"service":svc.get("service","unknown"),
+                                         "product":svc.get("product",""),"version":svc.get("version",""),"cpe":svc.get("cpe",[]),
+                                         "confidence":svc.get("confidence","inconclusive")})
+                continue
             for row in finding.get("ports",[]) or []:
                 if not isinstance(row,dict) or row.get("state")!="open":continue
                 version=str(row.get("version","")).strip()
@@ -659,9 +747,194 @@ class Agent:
                 services.append({"port":row.get("port"),"protocol":row.get("protocol","tcp"),
                                  "service":row.get("service","unknown"),"product":"","version":version if identified else "",
                                  "confidence":"identified" if identified else "inconclusive"})
-        status="Complete" if stage=="complete" and disc_id else "Partial"
-        return {"target":target,"status":status,"open_ports":open_ports,"services":services,
-                "findings":[],"execution":execution}
+        coverage=dict((self.last_task or {}).get("coverage") or {})
+        status=("Complete" if stage in ("complete","discovery-only","no-open-ports") and disc_id and coverage.get("state")=="complete"
+                else "Failed" if not disc_id else "Partial")
+        profile=("Native Nmap discovery + service identification" if service_ids or stage=="service-incomplete"
+                 else "Native Nmap TCP discovery")
+        return {"target":target,"status":status,"profile_label":profile,"coverage":coverage,"open_ports":open_ports,
+                "services":services,"findings":[],"execution":execution,
+                "duration":sum(e["duration"] for e in execution if isinstance(e["duration"],(int,float)))}
+
+    def _assess_target(self,text):
+        """The assessment target: an explicitly named in-scope target, else the single authorized one.
+        Never infers a new target; ambiguity is returned as a question (None, message)."""
+        scope=list(self.policy.snapshot())
+        if not scope:
+            return None,"No target has been authorized yet. Tell me which system you own or have permission to assess, e.g. \"Authorize <address> as my lab target.\" No scan was executed."
+        named=[token for token in re.findall(r"[A-Za-z0-9_.:\[\]-]+",text) if token.strip("[]") in scope]
+        named=list(dict.fromkeys(token.strip("[]") for token in named))
+        if len(named)==1:return named[0],None
+        if not named and len(scope)==1:return scope[0],None
+        return None,"Several targets are authorized ("+", ".join(scope)+"). Tell me which one to assess. No scan was executed."
+
+    async def assess(self,text):
+        """Evidence-based vulnerability-detection task under ONE task authorization: native discovery
+        (bounded or full range) -> native service identification on discovered open ports -> offline
+        native Searchsploit references and NVD candidates correlated to the exact product/version -> web
+        detection with the engines that are actually Ready (the passive collector is labeled as such;
+        native Nikto and NSE stay disabled until verified on native Kali). Nothing is fabricated: exploit
+        references and CVE correlations are candidates, never proof; incomplete coverage is Partial."""
+        from redvector_ollama_cli import discovery_range,port_count
+        from redvector_ollama_results import payloads
+        import redvector_cve_correlation as corr
+        import redvector_evidence as ev
+        target,question=self._assess_target(text)
+        if question:return question
+        await self.refresh_profiles()
+        status=self.policy.profile_status
+        def ready(name):return status.get(name,{}).get("state")=="Ready"
+        if not ready("tcp-discovery-v1"):
+            return "Target is authorized. Native TCP discovery is unavailable: "+str(status.get("tcp-discovery-v1",{}).get("detail","Reviewed discovery profile required."))+" No scan was executed."
+        identify=ready("service-version-v1")
+        ports,kind=discovery_range(text)
+        canonical=self.policy.destination(target)
+        self.assessment_target=target;self.policy.version_intensity=1
+        coverage={"requested":port_count(ports),"completed":0,"open":0,"state":"not-started","kind":kind,"range":ports}
+        self.last_task={"target":target,"evidence":[],"coverage":coverage}
+        stages={"discovery","offline-correlation","web-detection"}|({"service-version"} if identify else set())
+        advisory=ready("nvd-advisory-v1")
+        if advisory:stages.add("advisory")
+        description=("Vulnerability-detection task on "+canonical+": "+_discovery_label(kind,ports)+" with native Nmap"
+                     +(", service/version identification on discovered open ports (batches of at most 128)" if identify else "")
+                     +", offline Searchsploit references"+(", public NVD advisory queries by product name" if advisory else "")
+                     +" and non-intrusive web checks. Detection only: no exploitation, intrusive scripts or credential attacks.")
+        try:
+            task=self.policy.begin_task(target,coverage["requested"],stages,self.approve,description)
+        except PolicyError as exc:
+            return str(exc)
+        self.last_task["authorization"]=task["id"]
+        started=time.monotonic();self.quiet=True
+        findings=[];extra=[];disc_id=None;service_ids=[]
+        try:
+            await self._run_staged(target,canonical,ports,kind,identify,coverage)
+            ids=list(self.last_task["evidence"])
+            disc_id=ids[0] if ids else None;service_ids=ids[1:]
+            base=self._staged_report(target,disc_id,service_ids,"complete" if coverage.get("state")=="complete" else "discovery-incomplete")
+            services=base["services"]
+            for svc in services:
+                if svc.get("confidence")=="identified":
+                    findings.append(ev.evidence(target=canonical,port=str(svc.get("port","")),service=svc.get("service",""),
+                        product=svc.get("product",""),version=svc.get("version",""),title=" ".join(x for x in (svc.get("service",""),svc.get("product",""),svc.get("version","")) if x)+" exposed",
+                        tool="nmap -sV",source="nmap -sV (native)",classification="Observed Exposure",applicability="observed",
+                        confidence="identified",evidence_ref="nmap-sV:"+str(svc.get("port",""))))
+            products={}
+            for svc in services:
+                product=re.sub(r"[^A-Za-z0-9 ._+/:-]","",str(svc.get("product") or "")).strip()
+                if product and svc.get("confidence")=="identified":products.setdefault(product,[]).append(svc)
+            # Offline native Searchsploit: exploit references matched to the exact product (and version
+            # when it appears). A reference is a lead for validation — never proof the host is vulnerable.
+            if not products:
+                extra.append({"engine":"native searchsploit (offline Exploit-DB)","binary":"not run","native_executed":False,"status":"skipped: no identified product","duration":""})
+            elif not ready("searchsploit-v1"):
+                extra.append({"engine":"native searchsploit (offline Exploit-DB)","binary":"not run","native_executed":False,
+                              "status":"unavailable: "+str(status.get("searchsploit-v1",{}).get("detail","not Ready"))[:80],"duration":""})
+            else:
+                for product in sorted(products)[:5]:
+                    svc=products[product][0];version=re.sub(r"[^A-Za-z0-9._-]","",str(svc.get("version") or ""))
+                    data=await self.execute("searchsploit_lookup",{"query":(product+" "+version).strip()},{"searchsploit_lookup"})
+                    if self.last_result_id:self.last_task["evidence"].append(self.last_result_id)
+                    value=(payloads(data) or [{}])[0] if not data.get("isError") else {}
+                    native=value.get("execution_mode")=="A"
+                    extra.append({"engine":"native searchsploit (offline Exploit-DB)","binary":value.get("binary") or "not recorded",
+                                  "native_executed":native,"status":"ok" if native else "failed: "+str(data.get("error") or value.get("error") or "not executed")[:80],
+                                  "duration":value.get("execution_time","")})
+                    for row in ((value.get("parsed") or {}).get("results") or [])[:25] if native else []:
+                        title=str(row.get("title",""))
+                        applic=corr.exploit_reference_applicability(product,svc.get("version",""),title)
+                        if applic=="not_applicable":continue
+                        cves=corr.cve_ids(title)
+                        findings.append(ev.evidence(target=canonical,port=str(svc.get("port","")),service=svc.get("service",""),
+                            product=product,version=svc.get("version",""),cve=cves[0] if cves else "",title="Exploit-DB reference: "+title[:120],
+                            tool="searchsploit",source="searchsploit (native)",classification="Candidate CVE",
+                            validation="exploit reference only — not proof ("+corr.validation_label(applic)+")",
+                            applicability=applic,confidence=applic,evidence_ref="EDB-"+str(row.get("edb_id","")),
+                            references=["EDB-"+str(row.get("edb_id",""))] if row.get("edb_id") else [],
+                            remediation="Validate that the referenced issue applies to this exact build before acting."))
+            # Public NVD provider (covered by the confirmed task), correlated to the exact product/version.
+            if products and advisory:
+                for product in sorted(products)[:3]:
+                    data=await self.execute("monitor_cve_feeds",{"hours":168,"severity_filter":"HIGH,CRITICAL","keywords":product.lower()[:80]},{"monitor_cve_feeds"})
+                    if self.last_result_id:self.last_task["evidence"].append(self.last_result_id)
+                    value=(payloads(data) or [{}])[0] if not data.get("isError") else {}
+                    ok=bool(value) and not data.get("isError")
+                    extra.append({"engine":"NVD CVE API 2.0 (public provider)","binary":"not executed (provider API)","native_executed":False,
+                                  "status":"ok" if ok else "failed: "+str(data.get("error","provider query failed"))[:80],"duration":""})
+                    for svc in products[product] if ok else []:
+                        for row in (value.get("advisories") or [])[:10]:
+                            applic=corr.description_applicability(product,svc.get("version",""),svc.get("cpe",[]),row.get("description",""))
+                            if applic=="not_applicable":continue
+                            findings.append(ev.evidence(target=canonical,port=str(svc.get("port","")),service=svc.get("service",""),
+                                product=product,version=svc.get("version",""),cve=row.get("id"),title=row.get("id"),
+                                cvss=row.get("provider_cvss_score"),cvss_severity=row.get("provider_severity"),cvss_source="NVD",
+                                tool="nvd",source="nvd",classification="Candidate CVE",validation=corr.validation_label(applic),
+                                applicability=applic,confidence=applic,evidence_ref=row.get("reference",""),
+                                references=[row.get("reference")] if row.get("reference") else []))
+            elif products:
+                extra.append({"engine":"NVD CVE API 2.0 (public provider)","binary":"not executed (provider API)","native_executed":False,
+                              "status":"unavailable: "+str(status.get("nvd-advisory-v1",{}).get("detail","not Ready"))[:80],"duration":""})
+            # Web detection on discovered HTTP(S) services, with honest engine identity.
+            web=[]
+            for svc in services:
+                name=str(svc.get("service","")).lower();port=str(svc.get("port",""))
+                if port.isdigit() and ("http" in name or port in ("80","443","8000","8008","8080","8443","8888")):
+                    web.append(("https" if ("ssl" in name or "https" in name or port in ("443","8443")) else "http",port))
+            from redvector_reviewed_assessment import HTTP_PROFILE,NUCLEI_PROFILE
+            host=("["+canonical+"]") if ":" in canonical else canonical
+            for scheme,port in web[:6]:
+                url=scheme+"://"+host+":"+port+"/"
+                if ready(HTTP_PROFILE):
+                    data=await self.execute("nikto_scan",{"target":url},{"nikto_scan"})
+                    if self.last_result_id:self.last_task["evidence"].append(self.last_result_id)
+                    value=(payloads(data) or [{}])[0] if not data.get("isError") else {}
+                    extra.append({"engine":"RedVector passive HTTP collector (NOT native Nikto)","binary":"not executed (internal engine)","native_executed":False,
+                                  "status":"ok" if value else "failed","duration":""})
+                    for item in value.get("findings",[]) or []:
+                        findings.append(ev.evidence(target=canonical,port=port,service="http",title=item.get("title"),
+                            tool="passive-http",source="passive HTTP collector (not native Nikto)",classification="Observed Exposure",
+                            applicability="observed",confidence="observed",evidence_ref="passive-http:"+port))
+                if ready(NUCLEI_PROFILE):
+                    data=await self.execute("nuclei_scan",{"target":url},{"nuclei_scan"})
+                    if self.last_result_id:self.last_task["evidence"].append(self.last_result_id)
+                    value=(payloads(data) or [{}])[0] if not data.get("isError") else {}
+                    scanner=value.get("scanner") if isinstance(value.get("scanner"),dict) else {}
+                    identity=("nuclei "+str(scanner.get("version",""))+" (sha256 "+str(scanner.get("sha256",""))[:12]+"...)") if scanner.get("sha256") else "not recorded"
+                    extra.append({"engine":"native Nuclei (reviewed offline header profile)","binary":value.get("binary") or identity,
+                                  "native_executed":bool(value),"status":"ok" if value else "failed","duration":value.get("execution_time","")})
+                    for item in value.get("findings",[]) or []:
+                        severity=str(item.get("severity") or "").lower()
+                        findings.append(ev.evidence(target=canonical,port=port,service="http",title=item.get("title"),
+                            cvss_severity=severity if severity not in ("","info") else "",tool="nuclei",source="nuclei (native)",
+                            classification="Scanner-Detected Vulnerability" if severity in ("low","medium","high","critical") else "Observed Exposure",
+                            applicability="observed",confidence="observed",evidence_ref="nuclei:"+port))
+            if web and not ready(NUCLEI_PROFILE):
+                extra.append({"engine":"native Nuclei","binary":"not run","native_executed":False,
+                              "status":"unavailable: "+str(status.get(NUCLEI_PROFILE,{}).get("detail","no verified build registered"))[:80],"duration":""})
+            if web:
+                extra.append({"engine":"native Nikto","binary":"not run","native_executed":False,"status":"not enabled: pending native Kali verification","duration":""})
+            extra.append({"engine":"Nmap NSE vulnerability scripts","binary":"not run","native_executed":False,"status":"not run: script allowlist not yet reviewed","duration":""})
+        finally:
+            self.quiet=False
+            self.policy.end_task()
+        merged=ev.merge(findings)
+        incomplete=coverage.get("state")!="complete" or any(not str(row["status"]).startswith(("ok","skipped")) for row in extra)
+        report=dict(base,findings=merged,execution=base["execution"]+extra,
+                    status="Failed" if not disc_id else ("Partial" if incomplete else "Complete"),
+                    profile_label="Evidence-based vulnerability detection (native Kali engines that are verified and Ready)",
+                    duration=time.monotonic()-started)
+        self.last_task["report"]=report
+        summary=ev.summarize(merged)
+        text=("VULNERABILITY DETECTION "+report["status"].upper()+"\nTarget: "+str(target)+
+              "\nScanner-detected "+str(summary.get("scanner_detected",0))+" | Candidate CVEs "+str(summary.get("candidate_cves",0))+
+              " | Validated "+str(summary.get("confirmed",0))+"\nCandidates and exploit references require validation; they are not confirmed vulnerabilities.")
+        if self.terminal:
+            try:
+                from redvector_report import build_report,render_report
+                render_report(self.terminal,build_report(report))
+                return "Vulnerability detection "+report["status"].lower()+". Ask which native tools actually executed, show the original evidence, or export the report as JSON."
+            except Exception as exc:
+                record_error("Assessment report",exc)
+        return text
 
     async def turn(self,text):
         if not isinstance(text,str) or len(text)>8000:raise AgentError("Task text is limited to 8000 characters.")
@@ -671,34 +944,33 @@ class Agent:
         if saved_analysis_request(text):
             try:return await self.summarize_saved()
             except (ValueError,OSError):return "No saved scan is available yet. Run a scan first, then ask me to analyze the results. No network scan was executed."
-        from redvector_ollama_cli import requests_active_versions,requests_combined_discovery_service
-        self.version_task=requests_active_versions(text)
+        from redvector_ollama_cli import requests_service_identification,requests_full_range,discovery_range
+        # Service/version detection is never delegated to the model loop: it only runs inside the
+        # deterministic staged task, on ports native discovery actually observed open.
+        self.version_task=False
+        service_request=requests_service_identification(text)
+        full_request=requests_full_range(text)
         assessment,chosen,clarification=assessment_context(text,self.policy,allow_versions=True)
         self.assessment_target=chosen if assessment else None
         self.automatic_task=assessment and bool(chosen) and automatic_context(text,chosen)
         if clarification:return clarification
-        if assessment and chosen and requests_combined_discovery_service(text):
-            # Area 9: a combined full-range discovery + service-identification request runs as a
-            # staged workflow (full discovery, then service-ID on discovered open ports), never a
-            # single truncated 128-port version scan. Discovery readiness is required to start.
+        if assessment and chosen and (service_request or full_request):
+            # Discovery first (full / explicit / bounded-default range), then service-version only on
+            # discovered open ports in <=128-port batches. Discovery readiness is required to start.
             await self.refresh_profiles()
+            if service_request:
+                capability=self.policy.profile_status.get("service-version-v1",{})
+                if capability.get("state")!="Ready":
+                    return "Target is authorized. Service-version execution unavailable: "+str(capability.get("detail","Reviewed backend profile required."))+" No scan was executed."
             discovery=self.policy.profile_status.get("tcp-discovery-v1",{})
             if discovery.get("state")!="Ready":
-                return "Target is authorized. Staged full-range discovery unavailable: "+str(discovery.get("detail","Reviewed discovery profile required."))+" No scan was executed."
+                return "Target is authorized. Native TCP discovery is unavailable: "+str(discovery.get("detail","Reviewed discovery profile required."))+" No scan was executed."
             intensity=re.search(r"(?i)version[- ]intensity\s+([0-9]+)",text)
             self.policy.version_intensity=int(intensity.group(1)) if intensity else 1
             if not 0<=self.policy.version_intensity<=2:
                 return "Reviewed version intensity must be 0, 1 or 2. No scan was executed."
-            return await self.staged_discovery_service(chosen)
-        if assessment and self.version_task:
-            await self.refresh_profiles()
-            capability=self.policy.profile_status.get("service-version-v1",{})
-            if capability.get("state")!="Ready":
-                return "Target is authorized. Service-version execution unavailable: "+capability.get("detail","Reviewed backend profile required.")+" No scan was executed."
-            intensity=re.search(r"(?i)version[- ]intensity\s+([0-9]+)",text)
-            self.policy.version_intensity=int(intensity.group(1)) if intensity else 1
-            if not 0<=self.policy.version_intensity<=2:
-                return "Reviewed version intensity must be 0, 1 or 2. No scan was executed."
+            ports,kind=discovery_range(text)
+            return await self.staged_discovery_service(chosen,ports=ports,kind=kind,identify=service_request)
         explicit_disabled=[name for name in self.catalog if name not in REVIEWED and
                            re.search(r"(?<![A-Za-z0-9_])"+re.escape(name)+r"(?![A-Za-z0-9_])",text)]
         if explicit_disabled:
@@ -716,10 +988,9 @@ class Agent:
                  "selected_assessment_target":chosen}
         instruction=SYSTEM+"\nTrusted application authorization state (model cannot change it): "+json.dumps(context)
         instruction+="\nFor an authorized TCP scan use nmap_scan and its selected target. Never enable scripts or recovery. Never repeat UI attribution labels."
-        if self.version_task:
-            instruction+=" Use the selected service-version profile with 1..128 explicit TCP ports from the operator request. If ports are missing, ask for them; never guess. Product/version evidence comes only from actual probe matches."
-        else:
-            instruction+=" Port-name service labels are not verified versions."
+        # Service-version detection is never selected by the model (it runs only in the staged task on
+        # discovered ports), so the model is told only that port-name labels are not verified versions.
+        instruction+=" Port-name service labels are not verified versions. Never request service-version detection or invent port ranges."
         messages=[{"role":"system","content":instruction}]+self.history[-12:]+[{"role":"user","content":text}]
         outcomes=[]
         for _ in range(8):
@@ -867,11 +1138,29 @@ async def nl_dispatch(text,agent,wizard):
         except Exception:pass
         term.message("success","Recorded your request for a separately-scoped lab exploitation workflow for future review. Nothing was executed; exploitation requires a separately approved execution capability.")
         return "handled"
+    from redvector_nl_router import has_task,task_part
     if intent=="authorize_needs_target":
+        # "Authorize my lab target and scan ..." with no address: proceed only when exactly one target
+        # is already in the validated scope; otherwise ask. Never infer a new target.
+        scope=agent.policy.snapshot()
+        if has_task(text) and len(scope)==1:
+            return await nl_dispatch(task_part(text),agent,wizard)
+        if scope and not has_task(text):
+            term.message("info","Already authorized: "+", ".join(scope)+". Tell me what to assess.")
+            return "handled"
         term.message("info","No target has been authorized yet. Tell me which system you own or have permission to assess.")
         return "handled"
     if intent=="authorize":
-        return await handle_command("/scope "+" ".join(payload or []),agent,wizard)
+        result=await handle_command("/scope "+" ".join(payload or []),agent,wizard)
+        from redvector_ollama_cli import authorized_operand
+        try:
+            for value in payload or []:authorized_operand(value,agent.policy)
+        except (PolicyError,ValueError):
+            return result                      # authorization failed: never continue to a task
+        if has_task(text):
+            # Composite "Authorize X ... and <task>": continue with the task on the now-validated scope.
+            return await nl_dispatch(task_part(text),agent,wizard)
+        return result
     if intent=="deauthorize":
         return await handle_command("/scope --clear",agent,wizard)
     if intent=="show_scope":
@@ -885,11 +1174,21 @@ async def nl_dispatch(text,agent,wizard):
         return await handle_command("/summary",agent,wizard)
     if intent=="provenance":
         _render_provenance(term,agent);return "handled"
+    if intent=="evidence":
+        # Readable evidence overview first; the unmodified payload only on an explicit raw request.
+        _render_evidence(term,agent,payload);return "handled"
+    if intent=="assess":
+        assess=getattr(agent,"assess",None)
+        if assess is None:return None
+        answer=await assess(text)
+        if answer:term.write("ASSISTANT: "+plain(answer))
+        return "handled"
     if intent=="ports":
         return await handle_command("/results",agent,wizard)
     if intent=="results":
         return await handle_command(("/results "+payload).strip() if isinstance(payload,str) else "/results",agent,wizard)
     if intent=="raw":
+        # Explicit request for the unmodified payload (the only path that prints raw JSON).
         return await handle_command(("/raw "+payload).strip() if payload else "/raw",agent,wizard)
     if intent=="export":
         return await handle_command(("/export "+payload).strip() if payload else "/export",agent,wizard)
@@ -902,11 +1201,70 @@ _INTERNAL_ENGINE={"httpx_probe":"RedVector passive HTTP collector (not native)",
                   "wafw00f_scan":"RedVector passive HTTP collector (not native)","jaeles_vulnerability_scan":"RedVector passive HTTP collector (not native)",
                   "masscan_high_speed":"RedVector bounded TCP connect engine (not native)","rustscan_fast_scan":"RedVector bounded TCP connect engine (not native)"}
 
-def _render_provenance(term,agent):
-    """Show which tool actually ran for the latest saved scan — honest native-vs-internal label,
-    execution status, discovered open ports and identified service versions — WITHOUT rescanning.
-    Reads archived evidence only; never a tool catalog."""
+def _engine_identity(record):
+    """Actual engine identity recorded in the saved native evidence (binary path, observed version,
+    integrity digest). Empty fields mean the adapter did not record them — never guessed."""
+    from redvector_ollama_results import payloads
+    try:
+        values=payloads(record.get("mcp") or {})
+    except Exception:
+        values=[]
+    payload=values[0] if values and isinstance(values[0],dict) else {}
+    profile=payload.get("reviewed_profile") if isinstance(payload.get("reviewed_profile"),dict) else {}
+    return {"engine":str(profile.get("engine") or payload.get("engine") or ""),
+            "binary":str(profile.get("binary") or payload.get("binary") or ""),
+            "version":str(profile.get("version") or payload.get("version") or ""),
+            "sha256":str(profile.get("runtime_sha256") or payload.get("runtime_sha256") or "")}
+
+def _render_evidence(term,agent,ident=None):
+    """Readable overview of one archived evidence record — tool, actual engine/binary, status, timing,
+    counts and size — WITHOUT printing the raw payload or rescanning. The unmodified payload is shown
+    only on an explicit raw-payload request."""
     from redvector_ollama_panels import Panel
+    try:
+        record=agent.results.load(ident)
+    except (ValueError,OSError,KeyError):
+        term.message("info","No saved evidence matches that request yet. Run an assessment first.")
+        return
+    finding=record.get("findings",{});tool=finding.get("tool","unknown");ident_=_engine_identity(record)
+    native=_NATIVE_ENGINE.get(tool)
+    panel=Panel(term)
+    panel.section("EVIDENCE OVERVIEW")
+    panel.fields([("Evidence ID",record.get("id","")),("Tool interface",tool),
+                  ("Engine",ident_["engine"] or native or _INTERNAL_ENGINE.get(tool) or "reviewed internal engine"),
+                  ("Native binary executed?","yes" if native else "no"),
+                  ("Actual binary",ident_["binary"] or "not recorded"),("Observed version",ident_["version"] or "not recorded"),
+                  ("Binary SHA256",(ident_["sha256"][:16]+"...") if ident_["sha256"] else "not recorded"),
+                  ("Target",str(finding.get("target") or "n/a")),("Execution status",str(finding.get("status","UNKNOWN"))),
+                  ("Duration",(format(finding.get("duration",0),".2f")+" s") if isinstance(finding.get("duration"),(int,float)) else "n/a"),
+                  ("Open ports",str(finding.get("open_count","n/a"))),
+                  ("Stored payload",str(len(json.dumps(record.get("wire") or record.get("mcp") or {},ensure_ascii=True)))+" bytes, unmodified")])
+    panel.line("Ask for the raw JSON payload to see the unmodified evidence. No new scan was launched.","meta")
+
+def _render_provenance(term,agent):
+    """Show which engines actually ran for the latest task (every stage), with honest native-vs-
+    internal labels, actual binary, status and duration — WITHOUT rescanning. Reads archived evidence
+    only; never the tool catalog."""
+    from redvector_ollama_panels import Panel
+    task=getattr(agent,"last_task",None)
+    if task and task.get("evidence"):
+        panel=Panel(term);panel.section("NATIVE TOOL EXECUTION PROVENANCE")
+        rows=[]
+        for eid in task["evidence"]:
+            try:record=agent.results.load(eid)
+            except (ValueError,OSError,KeyError):continue
+            finding=record.get("findings",{});tool=finding.get("tool","unknown");ident_=_engine_identity(record)
+            native=_NATIVE_ENGINE.get(tool)
+            rows.append([ident_["engine"] or native or _INTERNAL_ENGINE.get(tool,tool),"yes" if native else "no",
+                         ident_["binary"] or "not recorded",str(finding.get("status","UNKNOWN")),
+                         (format(finding.get("duration",0),".1f")+" s") if isinstance(finding.get("duration"),(int,float)) else "-",eid[:12]])
+        panel.grid(["ENGINE","NATIVE?","ACTUAL BINARY","STATUS","DURATION","EVIDENCE"],rows)
+        coverage=task.get("coverage") or {}
+        if coverage:
+            panel.line("Coverage: "+str(coverage.get("completed",0))+" of "+str(coverage.get("requested",0))+
+                       " requested TCP ports completed ("+str(coverage.get("state","unknown"))+").","info")
+        panel.line("This is archived execution evidence; no new scan was launched.","meta")
+        return
     try:
         record=agent.results.load()
     except (ValueError,OSError,KeyError):

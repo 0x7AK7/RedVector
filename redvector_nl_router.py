@@ -22,7 +22,9 @@ HELP_TEXT = (
     "- Authorize a target you own or may test: \"Authorize <your target> as my lab target.\"\n"
     "- Assess: \"Scan my authorized target and identify running services.\"\n"
     "- Discover + versions: \"Discover open TCP ports and identify service versions.\"\n"
-    "- Review evidence: \"Analyze the latest results.\" / \"Show the raw evidence.\" / \"Export the report as JSON.\"\n"
+    "- Find vulnerabilities: \"Find critical and high vulnerability candidates on my authorized target.\"\n"
+    "- Review evidence: \"Analyze the latest results.\" / \"Show the original evidence.\" / \"Which native tools actually executed?\"\n"
+    "- Raw data / export: \"Show the raw JSON payload.\" / \"Export the report as JSON.\"\n"
     "- Check state: \"Show my authorized targets.\" / \"Check system status.\" / \"Show available tools.\"\n"
     "- Navigate: \"Return to the main menu.\"\n"
     "Authorization is explicit and session-local; merely mentioning an address never authorizes it, "
@@ -41,7 +43,11 @@ _STATUS = re.compile(r"(?i)\bsystem\s+status\b|\bstatus\s+of\s+(?:the\s+)?(?:sys
 # only catches catalog queries ("available tools", "what tools can scan web apps").
 _TOOLS = re.compile(r"(?i)\b(?:show|list|display|what|which)\b(?:\s+\w+){0,6}?\s+(?:security\s+)?(?:tools?|scanners?|engines?|capabilit(?:y|ies))\b|\bavailable\s+(?:security\s+)?tools?\b|\btool\s+catalog\b")
 # Which tools ACTUALLY RAN / native execution evidence -> last-run provenance (NOT the tool catalog).
-_PROVENANCE = re.compile(r"(?i)\bwhich\s+(?:tools?|engines?|scanners?)\s+(?:actually\s+)?(?:ran|executed|were\s+(?:run|executed))\b|\bwhat\s+(?:tools?|engines?)\s+(?:actually\s+)?(?:ran|executed)\b|\b(?:native\s+)?(?:tool|engine)\s+execution\s+evidence\b|\bnative\s+tool\s+execution\b|\bexecution\s+(?:status|provenance)\b|\bwhich\s+(?:ones?\s+)?actually\s+(?:ran|executed)\b")
+_PROVENANCE = re.compile(r"(?i)\b(?:which|what)\s+(?:\w+\s+){0,2}?(?:tools?|engines?|scanners?|binar(?:y|ies))\s+(?:\w+\s+){0,2}?(?:ran|run|executed|were\s+(?:run|executed)|did\s+(?:run|execute))\b|\b(?:native\s+)?(?:tool|engine)\s+execution\s+evidence\b|\bnative\s+tool\s+execution\b|\bexecution\s+(?:status|provenance)\b|\bwhich\s+(?:ones?\s+)?actually\s+(?:ran|executed)\b")
+# Explicit request for the unmodified payload (the only path that prints raw JSON).
+_RAW_PAYLOAD = re.compile(r"(?i)\braw\s+(?:json|payload|wire|mcp)\b|\bfull\s+(?:json|payload)\b|\boriginal\s+(?:json|payload)\b|\bunmodified\s+(?:json|payload|evidence)\b")
+# Vulnerability-assessment task (detection only; exploitation is matched earlier and refused).
+_ASSESS = re.compile(r"(?i)\b(?:find|identify|detect|discover|assess|look\s+for|check\s+for|scan\s+for|search\s+for|enumerate)\b(?:\s+\w+){0,6}?\s+vulnerabilit(?:y|ies)\b|\bvulnerability\s+(?:assessment|scan|candidates?)\b")
 _PORTS = re.compile(r"(?i)\b(?:show|list|display|view|what(?:'s| are| were)?)\b(?:\s+\w+){0,4}?\s+(?:discovered\s+|open\s+)?(?:tcp\s+)?ports?\b")
 _NOSCAN = re.compile(r"(?i)\b(?:do\s+not|don't|never|without)\s+(?:launch(?:ing)?|run(?:ning)?|start(?:ing)?|perform(?:ing)?|re-?run(?:ning)?)\s+(?:another\s+|a\s+new\s+|again\s+)?scan\b|\bno\s+(?:new\s+|another\s+)scan\b|\bwithout\s+scanning\b")
 _HELP = re.compile(r"(?i)\bwhat\s+can\s+(?:redvector|you)\s+do\b|\bhow\s+do\s+i\s+use\b|\bwhat\s+can\s+i\s+(?:say|ask|do)\b|^\s*help\s*$|\bshow\s+(?:me\s+)?help\b")
@@ -112,8 +118,10 @@ def classify(text):
     # produces the tool-eligibility catalog, and an explicit "do not scan" never routes to a scan.
     if _PROVENANCE.search(view):
         return "provenance", None
+    if _RAW_PAYLOAD.search(view):
+        return "raw", _ident(view)          # explicit request: the unmodified payload
     if _RAW.search(view):
-        return "raw", _ident(view)
+        return "evidence", _ident(view)     # readable evidence overview, never a raw JSON dump
     if _PORTS.search(view):
         return "ports", None
     if _RESULTS.search(view):
@@ -134,9 +142,30 @@ def classify(text):
         return "exploitation_request", None
     if _EXPLOIT.search(view):
         return "exploitation", None
+    # Detection-only vulnerability assessment (exploitation was refused above). With an explicit
+    # no-scan instruction it analyzes the existing evidence instead of launching anything.
+    if _ASSESS.search(view):
+        return ("analyze", None) if _NOSCAN.search(view) else ("assess", None)
     return "task", None
 
 
 def no_scan(text):
     """True when the operator explicitly forbids launching a new scan in this instruction."""
     return bool(isinstance(text, str) and _NOSCAN.search(text))
+
+
+_TASK_OBJECT = re.compile(r"(?i)\bscan\b|\bnmap\b|\b(?:discover|enumerate|identify|detect|fingerprint|find|probe|check)\b(?:\s+\w+){0,6}?\s+(?:ports?|services?|versions?|vulnerabilit\w*|hosts?)\b")
+
+
+def task_part(text):
+    """The instruction with its authorization clause removed, so the remaining task can be routed
+    (e.g. "Authorize X as my lab target and find vulnerabilities" -> an assessment task)."""
+    return _AUTHORIZE.sub(" ", text) if isinstance(text, str) else ""
+
+
+def has_task(text):
+    """True when an instruction also asks for a concrete detection task (scan / discover / identify
+    services / find vulnerabilities), so a composite "authorize X ... and scan ..." continues to the
+    task after authorization. A pure authorization statement ("I have permission to assess X") is not
+    a task."""
+    return bool(isinstance(text, str) and _TASK_OBJECT.search(text) and not _NOSCAN.search(text))

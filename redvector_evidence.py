@@ -16,7 +16,7 @@ from redvector_cve_correlation import CLASSIFICATION_ORDER
 FIELDS = ("target", "service", "port", "protocol", "product", "version", "cve", "cvss",
           "cvss_severity", "cvss_source", "tool", "tool_version", "verification_method",
           "execution_status", "evidence_ref", "confidence", "applicability", "classification",
-          "title", "references", "remediation")
+          "validation", "source", "title", "references", "remediation")
 
 
 def evidence(**values):
@@ -94,6 +94,7 @@ def summarize(records):
     for record in records:
         counts[record.get("classification", "Informational")] = counts.get(record.get("classification", "Informational"), 0) + 1
     return {"classification_counts": counts,
-            "confirmed": counts.get("Confirmed", 0),
-            "candidate_cves": counts.get("Candidate CVE (requires validation)", 0),
+            "confirmed": counts.get("Validated Vulnerability", 0) + counts.get("Demonstrated Impact", 0),
+            "scanner_detected": counts.get("Scanner-Detected Vulnerability", 0),
+            "candidate_cves": counts.get("Candidate CVE", 0),
             "total": len(records)}

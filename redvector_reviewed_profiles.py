@@ -334,6 +334,16 @@ def _execute(command, directory, timeout=_DEADLINE):
             process.kill();process.wait(timeout=5)
         process.stdout.close();process.stderr.close()
 
+def _observed_version(executable,directory):
+    """Actual version reported by the attested native binary (runtime observation, never a
+    requirement). Returns '' when it cannot be read."""
+    try:
+        code,out,err=_execute([str(executable),"--version"],directory,timeout=10)
+    except (ProfileError,OSError,subprocess.SubprocessError):
+        return ""
+    match=re.search(r"Nmap version ([0-9][0-9A-Za-z.\-]*)",out+err)
+    return match.group(1) if match else ""
+
 def _verify_scripts(executable,directory):
     code,out,err=_execute([str(executable),"--datadir",str(directory),"--script-help","version"],directory,timeout=5)
     tail="rv-profile-sentinel\nCategories: version\nhttps://nmap.org/nsedoc/scripts/rv-profile-sentinel.html\n  RedVector profile sentinel. Never runs."
@@ -377,6 +387,8 @@ def run_profile(tool, params):
                         "execution_time":time.monotonic()-started,"profile":PROFILE,
                         "reviewed_profile":{"ports":ports,"intensity":int(intensity),
                            "probes":["NULL","RVHttp"],"nse":"Sentinel only; portrule always false",
+                           "engine":"native nmap -sV reviewed service-version profile",
+                           "binary":str(executable),"version":_observed_version(executable,directory),
                            "runtime_sha256":snapshots[executable]}}
         finally:
             _LOCK.release()
@@ -493,6 +505,8 @@ def run_discovery(tool,params):
                         "execution_time":time.monotonic()-started,"profile":DISCOVERY,
                         "reviewed_profile":{"ports_requested":ports,"ports_count":count,
                            "engine":"native nmap -sT connect discovery","runtime_sha256":before,
+                           "binary":str(executable),"version":_observed_version(executable,directory),
+                           "coverage":{"requested":count,"completed":count,"scan_complete":True},
                            "note":"Bounded native Nmap TCP connect discovery; no version probes, NSE, UDP or OS detection in this stage"}}
         finally:
             _LOCK.release()

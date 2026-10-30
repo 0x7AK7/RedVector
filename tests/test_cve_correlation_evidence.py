@@ -55,7 +55,8 @@ def test_applicability_exact_version_is_applicable():
     advisory = {"cpe": ["cpe:/a:igor_sysoev:nginx:1.18.0"]}
     applic, _ = corr.applicability(service, advisory)
     assert applic == "applicable"
-    assert corr.classify(applic, "cve-correlation") == "Strongly supported"
+    assert corr.classify(applic, "cve-correlation") == "Candidate CVE"           # version match is still not validated
+    assert corr.validation_label(applic) == "version-matched; not validated"
 
 
 def test_applicability_product_match_version_unknown_is_candidate():
@@ -63,7 +64,8 @@ def test_applicability_product_match_version_unknown_is_candidate():
     advisory = {"product": "nginx", "versions": ["1.20.0"]}
     applic, _ = corr.applicability(service, advisory)
     assert applic == "candidate"
-    assert corr.classify(applic, "cve-correlation") == "Candidate CVE (requires validation)"
+    assert corr.classify(applic, "cve-correlation") == "Candidate CVE"
+    assert corr.validation_label(applic) == "product match only; not validated"
 
 
 def test_applicability_version_not_in_set_is_candidate_not_hidden():
@@ -87,7 +89,7 @@ def test_correlate_keeps_high_severity_candidate_and_drops_mismatch():
     ]
     out = corr.correlate(service, advisories)
     assert [o["cve"] for o in out] == ["CVE-2021-23017"]            # apache dropped, nginx kept
-    assert out[0]["classification"] == "Candidate CVE (requires validation)"
+    assert out[0]["classification"] == "Candidate CVE"
     assert out[0]["provider_severity"] == "CRITICAL"               # high severity still visible
 
 
@@ -102,15 +104,15 @@ def test_evidence_has_all_section7_fields():
 
 def test_same_cve_same_host_port_merges_keeping_strongest_and_max_cvss():
     nse = ev.evidence(target="127.0.0.1", port="443", protocol="tcp", cve="CVE-2014-3566",
-                      tool="nmap-nse", classification="Strongly supported", cvss="4.3",
+                      tool="nmap-nse", classification="Scanner-Detected Vulnerability", cvss="4.3",
                       cvss_source="nse", references=["https://nvd/CVE-2014-3566"], verification_method="nse ssl-poodle")
     nvd = ev.evidence(target="127.0.0.1", port="443", protocol="tcp", cve="CVE-2014-3566",
-                      tool="nvd", classification="Candidate CVE (requires validation)", cvss="6.8",
+                      tool="nvd", classification="Candidate CVE", cvss="6.8",
                       cvss_source="nvd", references=["https://cve.org/CVE-2014-3566"], verification_method="nvd keyword")
     merged = ev.merge([nvd, nse])
     assert len(merged) == 1
     rec = merged[0]
-    assert rec["classification"] == "Strongly supported"           # strongest wins
+    assert rec["classification"] == "Scanner-Detected Vulnerability"   # strongest wins
     assert rec["cvss"] == "6.8" and rec["cvss_source"] == "nvd"     # highest CVSS kept
     assert set(rec["tools"]) == {"nmap-nse", "nvd"}                 # contributing tools unioned
     assert len(rec["references"]) == 2                              # references unioned
@@ -134,10 +136,10 @@ def test_findings_without_cve_dedup_by_tool_signature():
 
 def test_summarize_does_not_inflate_confirmed():
     recs = ev.merge([
-        ev.evidence(target="t", port="443", cve="CVE-A", classification="Strongly supported", tool="nse"),
-        ev.evidence(target="t", port="443", cve="CVE-B", classification="Candidate CVE (requires validation)", tool="nvd"),
+        ev.evidence(target="t", port="443", cve="CVE-A", classification="Scanner-Detected Vulnerability", tool="nse"),
+        ev.evidence(target="t", port="443", cve="CVE-B", classification="Candidate CVE", tool="nvd"),
         ev.evidence(target="t", port="80", tool="nikto", evidence_ref="hdr", classification="Informational"),
     ])
     summary = ev.summarize(recs)
     assert summary["confirmed"] == 0                               # nothing exploit-confirmed
-    assert summary["candidate_cves"] == 1 and summary["total"] == 3
+    assert summary["candidate_cves"] == 1 and summary["scanner_detected"] == 1 and summary["total"] == 3

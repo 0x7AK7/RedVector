@@ -52,8 +52,12 @@ def test_analyze_latest_results():
         assert nl.classify(text)[0] == "analyze", text
 
 
-def test_raw_evidence_request():
+def test_evidence_overview_vs_explicit_raw_payload():
+    # "original/raw evidence" -> readable overview (never an automatic JSON dump)
     for text in ("Show the original Nmap evidence.", "Display the raw evidence."):
+        assert nl.classify(text)[0] == "evidence", text
+    # only an explicit request for the unmodified payload prints raw JSON
+    for text in ("Show the raw JSON payload.", "Give me the full JSON.", "Show the original payload."):
         assert nl.classify(text)[0] == "raw", text
 
 

@@ -32,28 +32,15 @@ def _numeric_host(value):
 
 
 def _nvd_applies(product, version, cpes, description):
-    """Applicability of an NVD advisory to a service, from the advisory's own text and the service's
-    exact product/version/CPE. The exact product (or its CPE product) must appear — a broad vendor
-    word like 'Apache' alone is not enough. 'applicable' only when the version also appears; product
-    present but version absent -> 'candidate'; product absent -> 'not_applicable' (dropped). Never
-    'confirmed'."""
-    description = (description or "").lower()
-    names = set()
-    product_l = (product or "").strip().lower()
-    if product_l:
-        names.add(product_l)
-    for cpe in cpes or []:
-        parsed = corr.parse_cpe(cpe)
-        if parsed and parsed["product"]:
-            names.add(parsed["product"])
-            names.add(parsed["product"].replace("_", " "))
-    names = {n for n in names if n and len(n) >= 3}
-    if not names or not any(n in description for n in names):
-        return "not_applicable"
-    version_l = (version or "").strip().lower()
-    if version_l and version_l in description:
-        return "applicable"
-    return "candidate"
+    """Applicability of an NVD advisory to a service (shared, exact-product/version logic)."""
+    return corr.description_applicability(product, version, cpes, description)
+
+
+def _scanner_class(severity):
+    """A verified native scanner detection is Scanner-Detected only at low..critical; an
+    informational template result is an observed exposure, not a vulnerability."""
+    return ("Scanner-Detected Vulnerability" if str(severity or "").lower() in ("low", "medium", "high", "critical")
+            else "Observed Exposure")
 
 
 def run_assessment(params):
@@ -108,7 +95,7 @@ def run_assessment(params):
                 target=target, host=target, port=str(service.get("port", "")), protocol=service.get("protocol", "tcp"),
                 service=service.get("service", ""), product=service.get("product", ""), version=service.get("version", ""),
                 tool="nmap -sV", source="nmap -sV", verification_method="nmap -sV method=" + str(service.get("method", "")),
-                classification="Strongly supported" if identified else "Informational",
+                classification="Observed Exposure" if identified else "Informational",
                 applicability="observed", confidence=service.get("confidence", "inconclusive"),
                 evidence_ref="nmap-sV:" + str(service.get("port", "")), execution_status="completed",
                 remediation="Confirm the exact product/version and restrict or patch exposed services."))
@@ -125,7 +112,7 @@ def run_assessment(params):
                 unavailable = True
             for item in (passive.get("findings", []) if ok else []):
                 findings.append(ev.evidence(target=target, host=target, port=str(port), protocol="tcp", service="http",
-                    title=item.get("title"), source="passive-http", tool="passive-http", classification="Informational",
+                    title=item.get("title"), source="passive-http", tool="passive-http", classification="Observed Exposure",
                     applicability="observed", confidence="observed", evidence_ref="passive-http:" + str(port),
                     remediation="Set the missing/weak security header or correct the server configuration."))
             nuclei = http.run_nuclei({"target": url, "severity": "", "tags": "",
@@ -138,7 +125,7 @@ def run_assessment(params):
                 unavailable = True
             for item in (nuclei.get("findings", []) if nok else []):
                 findings.append(ev.evidence(target=target, host=target, port=str(port), protocol="tcp", service="http",
-                    title=item.get("title"), source="nuclei", tool="nuclei", classification="Informational",
+                    title=item.get("title"), source="nuclei", tool="nuclei", classification=_scanner_class(item.get("severity")),
                     applicability="observed", confidence="observed", evidence_ref="nuclei:" + str(port),
                     remediation="Address the missing response-header configuration."))
 
@@ -170,7 +157,7 @@ def run_assessment(params):
                         product=product, version=version, cve=row.get("id"),
                         cvss=row.get("provider_cvss_score"), cvss_severity=row.get("provider_severity"), cvss_source="NVD",
                         source="nvd", tool="nvd", title=row.get("id"),
-                        classification="Strongly supported" if applic == "applicable" else "Candidate CVE (requires validation)",
+                        classification="Candidate CVE", validation=corr.validation_label(applic),
                         applicability=applic, confidence=applic,
                         evidence_ref=row.get("reference", ""), references=[row.get("reference")] if row.get("reference") else [],
                         remediation="Validate the CVE applies to the exact product and version before acting."))

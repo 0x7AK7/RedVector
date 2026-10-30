@@ -75,6 +75,15 @@ def render_result(term,record,width=None):
     if value.get("kind")!="generic":
         Panel(term,width).section("VERIFIED TOOL RESULTS")
         return render_scan(term,value,record["id"],width)
+    from redvector_ollama_results import payloads
+    values=payloads(record.get("mcp") or {})
+    payload=values[0] if values and isinstance(values[0],dict) else {}
+    if value.get("tool")=="ai_vulnerability_assessment" and payload:
+        # The staged assessment always renders as the professional report — never a key dump.
+        from redvector_report import build_report,render_report
+        render_report(term,build_report(payload),width)
+        Panel(term,width).line("Evidence ID: "+record["id"],"meta")
+        return
     panel=Panel(term,width)
     panel.section("VERIFIED TOOL RESULTS / "+value["category"].upper())
     panel.fields([("Source",value.get("source","Not supplied")),("Tool",value["tool"]),("Target",value.get("target") or "Not supplied (diagnostic or source-specific)"),
@@ -88,7 +97,23 @@ def render_result(term,record,width=None):
         panel.line("Source-confirmed validation: "+str(value["confirmed"]))
         panel.line("Other findings remain potential, informational or unverified as reported.","warning")
     panel.section("SOURCE EVIDENCE")
-    panel.fields(value["fields"])
+    # Compact by default: top-level facts only and a findings table — never the flattened key dump.
+    # The complete, unmodified payload remains in storage and is shown only on explicit request.
+    top=[(key,text) for key,text in value["fields"] if key.count(".")==1 and "[" not in key][:20]
+    panel.fields(top)
+    rows=payload.get("findings") if isinstance(payload.get("findings"),list) else []
+    rows=[row for row in rows if isinstance(row,dict)]
+    if not rows:
+        # records without the raw payload attached: rebuild the findings table from normalized facts
+        found={}
+        for key,text in value["fields"]:
+            match=re.search(r"\.findings\[(\d+)\]\.(title|severity)$",key)
+            if match:found.setdefault(int(match.group(1)),{})[match.group(2)]=text
+        rows=[found[i] for i in sorted(found)]
+    if rows:
+        panel.grid(["SEVERITY","FINDING"],[[str(row.get("severity","-")),str(row.get("title") or row.get("id") or row.get("message") or "-")] for row in rows])
+    hidden=len(value["fields"])-len(top)
+    if hidden>0:panel.line(str(hidden)+" further structured fields are stored; ask for the raw JSON payload to see them.","meta")
     if not value["fields"]:panel.line("No structured facts or text were returned.","warning")
     if value["errors"]!="None reported":panel.line(value["errors"],"error")
     for warning in value["warnings"]:panel.line(warning,"warning")
@@ -105,8 +130,14 @@ def render_tools(term,matches,width=None):
     if not matches:panel.line("No registered tools match this query.","warning")
 
 def approval_panel(term,operation):
-    panel=Panel(term);panel.section("ADDITIONAL OPERATOR APPROVAL REQUIRED",kind="warning")
-    panel.fields([("Tool",operation.get("tool","Unknown"))])
-    from redvector_ollama_views import flatten
-    panel.fields(flatten(operation,"operation"))
+    # Compact: what will run, where, and why approval is needed — never a flattened argument dump.
+    panel=Panel(term);panel.section("OPERATOR AUTHORIZATION REQUIRED",kind="warning")
+    args=operation.get("arguments") if isinstance(operation.get("arguments"),dict) else {}
+    rows=[("Operation",str(operation.get("tool","Unknown")))]
+    target=operation.get("target") or args.get("target") or args.get("url")
+    if target:rows.append(("Target",str(target)))
+    if args.get("ports"):rows.append(("Ports",str(args["ports"])))
+    if operation.get("provider"):rows.append(("Provider",str(operation["provider"])))
+    panel.fields(rows)
+    if operation.get("reason"):panel.line(str(operation["reason"]),"warning")
     panel.line("Enter APPROVE to authorize this exact operation. Enter DENY to cancel.","warning")

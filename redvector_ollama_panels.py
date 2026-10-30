@@ -59,9 +59,10 @@ class Panel:
             emit(fmt(headers));emit("-"*min(self.width,sum(widths)+3*(ncol-1)))
             for idx,row in enumerate(cells):emit(fmt(row),kind_for(idx))
         else:
+            # narrow terminals: stacked labeled cards that WRAP (never truncate) so no value is lost
             for idx,row in enumerate(cells):
-                for i in range(ncol):emit(headers[i]+": "+(row[i] if i<len(row) else ""),kind_for(idx) if i==0 else None)
-                emit("-"*(self.width-2))
+                for i in range(ncol):self.line(headers[i]+": "+(row[i] if i<len(row) else ""),kind_for(idx) if i==0 else None)
+                self.line("-"*max(1,self.width-2))
 
 def status_kind(state):
     return "success" if state=="COMPLETED" else "error" if state in ("FAILED","BLOCKED") else "warning"

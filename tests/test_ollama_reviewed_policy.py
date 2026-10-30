@@ -39,19 +39,33 @@ def test_larger_scan_and_unselected_discovery_need_exact_reasons():
                 lambda op:calls.append(op) or False,allow_automatic=automatic)
         assert word in calls[0]["reason"]
 
-def test_reviewed_service_version_requires_verified_capability_and_exact_approval():
+def test_reviewed_service_version_requires_verified_capability_then_runs_under_scope():
     policy=Policy([HOST])
     with pytest.raises(PolicyError,match="profile"):
         policy.authorize("nmap_scan",{"target":HOST,"scan_type":"-sT -sV","ports":"80"},lambda _:True)
     policy.profile_status={"service-version-v1":{"state":"Ready"}}
     policy.version_intensity=2;calls=[]
+    # Inc E: reviewed low-impact service-version detection under an explicit authorized scope and an
+    # explicit task runs WITHOUT a redundant APPROVE prompt; bounds/profile are still enforced.
     actual=policy.authorize("nmap_scan",{"target":HOST,"scan_type":"-sT -sV","ports":"80"},
         lambda operation:calls.append(operation) or True)
     assert actual["scan_type"]==NMAP_PROFILE
     assert actual["additional_args"]=="--version-intensity 2"
     assert actual["use_recovery"] is False
-    assert "active service" in calls[0]["reason"].lower()
-    assert not policy.last_automatic and policy.auto_count==0
+    assert calls==[] and policy.last_automatic is True and policy.auto_count==0
+    # Not an explicit task (allow_automatic False) -> still prompts.
+    calls2=[]
+    policy.authorize("nmap_scan",{"target":HOST,"scan_type":"-sT -sV","ports":"80"},
+        lambda operation:calls2.append(operation) or True,allow_automatic=False)
+    assert len(calls2)==1 and "service-version detection" in calls2[0]["reason"].lower()
+
+def test_reviewed_service_version_without_scope_still_prompts():
+    policy=Policy()                      # no authorized scope
+    policy.profile_status={"service-version-v1":{"state":"Ready"}};policy.version_intensity=1;calls=[]
+    # _destination requires scope; with no scope the reviewed path refuses before any approval,
+    # so the low-impact pre-authorization never applies without an explicit operator scope.
+    with pytest.raises(PolicyError):
+        policy.authorize("nmap_scan",{"target":HOST,"scan_type":"-sT -sV","ports":"80"},lambda operation:calls.append(operation) or True)
 
 @pytest.mark.parametrize("args",[
     {"scan_type":"-sT -sV","ports":"1-129"},

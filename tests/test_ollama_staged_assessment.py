@@ -115,6 +115,21 @@ class StagedAssessment(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(chunk_a) + len(chunk_b), 200)  # every discovered open port covered
         self.assertIn("2 scan(s), <=128 ports each", answer)
 
+    async def test_terminal_renders_professional_report(self):
+        disc = _discovery([(22, "open", "ssh"), (80, "open", "http")])
+        svc = _service([(22, "ssh", "OpenSSH 8.9"), (80, "http", "nginx 1.18")])
+        agent, api, session = self._agent([_result(disc), _result(svc)])
+        stream = io.StringIO()
+        agent.terminal = Terminal(stream)
+        answer = await agent.staged_discovery_service(TARGET)
+        out = stream.getvalue()
+        assert "REDVECTOR AI" in out and "SECURITY ASSESSMENT" in out
+        assert "SERVICES" in out and "EXECUTION EVIDENCE" in out
+        assert "ssh" in out and "nginx 1.18" in out
+        assert "nmap" in out                                                    # native engine evidence (may be width-truncated)
+        assert "result.findings[" not in out and ".classification" not in out   # no flattened dump
+        assert "export the report as JSON" in answer                            # concise pointer returned
+
     async def test_turn_routes_combined_request_to_staged_workflow(self):
         # End-to-end routing: a natural-language combined request reaches the staged workflow
         # (two scans) rather than the single truncated version scan, with no model tool loop.
@@ -138,6 +153,25 @@ class StagedAssessment(unittest.IsolatedAsyncioTestCase):
         api.async_chat = AsyncMock(return_value={"role": "assistant", "content": "done", "tool_calls": []})
         await agent.turn("Scan all TCP ports on " + TARGET)
         self.assertGreaterEqual(api.async_chat.await_count, 1)  # used the model loop, not staging
+
+    async def test_chained_low_impact_stages_do_not_reprompt(self):
+        # Inc E: an authorized scope + explicit task runs discovery AND each service-version stage
+        # without a redundant approval, so the orchestrated workflow is not interrupted per stage.
+        disc = _discovery([(22, "open", "ssh"), (80, "open", "http")])
+        svc = _service([(22, "ssh", "OpenSSH 8.9"), (80, "http", "nginx 1.18")])
+        api = Mock(); api.async_chat = AsyncMock()
+        session = Mock(); session.call_tool = AsyncMock(side_effect=[_result(disc), _result(svc)])
+        policy = Policy([TARGET]); policy.version_intensity = 1
+        policy.profile_status = {"tcp-discovery-v1": {"state": "Ready", "detail": "fixture"},
+                                 "service-version-v1": {"state": "Ready", "detail": "fixture"}}
+        approvals = []
+        agent = Agent(api, "fixture-model", session, {"nmap_scan": tool("nmap_scan")}, policy,
+                      lambda operation: approvals.append(operation) or True, lambda _t: None,
+                      results=ResultsStore(Path(self.temp.name) / "ev2"), terminal=None)
+        agent.automatic_task = True
+        await agent.staged_discovery_service(TARGET)
+        assert approvals == []                                   # no redundant APPROVE prompts
+        assert policy.last_automatic is True
 
     async def test_no_open_ports_skips_service_stage(self):
         disc = _discovery([(22, "closed", "ssh"), (80, "filtered", "http")])

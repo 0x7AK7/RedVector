@@ -10,9 +10,13 @@ verbatim from the contributing evidence, never upgraded by merging.
 from redvector_cve_correlation import CLASSIFICATION_ORDER
 
 # §7 evidence fields; every record carries all of them (empty when a source does not provide one).
+# cvss_severity is the PROVIDER severity label, kept deliberately separate from `confidence`,
+# `applicability` and `classification` (evidence confidence / validation status) so a high-CVSS
+# candidate is never presented as an established risk.
 FIELDS = ("target", "service", "port", "protocol", "product", "version", "cve", "cvss",
-          "cvss_source", "tool", "tool_version", "verification_method", "execution_status",
-          "evidence_ref", "confidence", "applicability", "classification", "references", "remediation")
+          "cvss_severity", "cvss_source", "tool", "tool_version", "verification_method",
+          "execution_status", "evidence_ref", "confidence", "applicability", "classification",
+          "title", "references", "remediation")
 
 
 def evidence(**values):

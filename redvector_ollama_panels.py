@@ -4,7 +4,9 @@ import textwrap
 from redvector_ollama_setup import plain
 
 def safe(value):
-    return plain(value).encode("ascii","backslashreplace").decode("ascii")
+    # plain() already strips control characters and ANSI escapes while keeping printable Unicode
+    # (e.g. an em dash renders as "—", never a literal "—"); do not re-escape to ASCII.
+    return plain(value)
 
 class Panel:
     def __init__(self,term,width=None):
@@ -34,6 +36,32 @@ class Panel:
         self.section(" | ".join(headers))
         for row in rows:
             self.fields(zip(headers,map(str,row)))
+    def grid(self,headers,rows,kinds=None):
+        """Aligned, width-aware table with an optional per-row color kind. Wide terminals get fixed
+        columns (truncated to fit, never wrapped so alignment holds); narrow terminals fall back to
+        stacked labeled cards. Cells are sanitized; no raw ANSI survives into redirected output."""
+        headers=[safe(h) for h in headers];ncol=len(headers)
+        cells=[[safe(str(c)) for c in row] for row in rows]
+        kinds=list(kinds or [])
+        def kind_for(i):return kinds[i] if i<len(kinds) else None
+        def emit(text,kind=None):
+            text=text[:self.width]
+            if kind and self.term.color:self.term.message(kind,text)
+            else:self.term.write(safe(text))
+        if ncol and self.width>=64:
+            widths=[len(headers[i]) for i in range(ncol)]
+            for row in cells:
+                for i in range(ncol):widths[i]=max(widths[i],len(row[i]) if i<len(row) else 0)
+            avail=self.width-3*(ncol-1)
+            if sum(widths)>avail:
+                scale=avail/float(sum(widths));widths=[max(4,int(w*scale)) for w in widths]
+            def fmt(cols):return " | ".join((cols[i] if i<len(cols) else "")[:widths[i]].ljust(widths[i]) for i in range(ncol))
+            emit(fmt(headers));emit("-"*min(self.width,sum(widths)+3*(ncol-1)))
+            for idx,row in enumerate(cells):emit(fmt(row),kind_for(idx))
+        else:
+            for idx,row in enumerate(cells):
+                for i in range(ncol):emit(headers[i]+": "+(row[i] if i<len(row) else ""),kind_for(idx) if i==0 else None)
+                emit("-"*(self.width-2))
 
 def status_kind(state):
     return "success" if state=="COMPLETED" else "error" if state in ("FAILED","BLOCKED") else "warning"

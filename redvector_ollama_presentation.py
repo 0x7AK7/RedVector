@@ -5,7 +5,9 @@ import textwrap
 from redvector_ollama_setup import plain
 
 def _text(value):
-    return plain(value).encode("ascii","backslashreplace").decode("ascii")
+    # plain() already strips control/ANSI and keeps printable Unicode (an em dash stays "—", never a
+    # literal "—"); re-escaping to ASCII is what leaked those sequences into the terminal.
+    return plain(value)
 
 def render_scan(term,value,ident,width=None):
     width=max(12,width if width is not None else shutil.get_terminal_size((80,24)).columns)
@@ -91,7 +93,7 @@ def render_result(term,record,width=None):
     if value["errors"]!="None reported":panel.line(value["errors"],"error")
     for warning in value["warnings"]:panel.line(warning,"warning")
     panel.section("EVIDENCE AND REPORTING",["Evidence ID: "+record["id"],
-                  "/raw ID: original MCP evidence; /export ID: private JSON export"])
+                  "Ask to show the original evidence, or to export the report as JSON, for this evidence ID."])
     panel.line("AI SECURITY ANALYSIS: Unavailable until separately requested or verified.","warning")
 
 def render_tools(term,matches,width=None):

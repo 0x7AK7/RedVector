@@ -12,16 +12,23 @@ class Automatic(unittest.TestCase):
         self.assertIn("--scan-delay 20ms",args["additional_args"])
         self.assertIn("--max-parallelism 8",args["additional_args"])
         self.assertFalse(args["use_recovery"])
-    def test_full_range_and_state_change_still_require_exact_approval(self):
-        # Full-range discovery now runs the attested reviewed discovery profile, which must be
-        # Ready; it still requires one explicit operator approval (never silent auto-run).
-        for tool,args in [("nmap_scan",{"target":"192.0.2.8","ports":"1-65535"}),("clear_cache",{})]:
-            policy=self.policy();policy.profile_status={"tcp-discovery-v1":{"state":"Ready"}};approve=Mock(return_value=False)
-            with self.assertRaises(PolicyError):policy.authorize(tool,args,approve)
-            approve.assert_called_once()
+    def test_state_change_still_requires_exact_approval(self):
+        # clear_cache is state-changing and still requires an explicit approval each time.
+        policy=self.policy();approve=Mock(return_value=False)
+        with self.assertRaises(PolicyError):policy.authorize("clear_cache",{},approve)
+        approve.assert_called_once()
+    def test_full_range_discovery_preauthorized_under_scope(self):
+        # Inc E: reviewed full-range TCP-connect discovery under an explicit authorized scope and an
+        # explicit task runs WITHOUT a redundant prompt; it stays the attested discovery profile.
         p=self.policy();p.profile_status={"tcp-discovery-v1":{"state":"Ready"}}
-        p.authorize("nmap_scan",{"target":"192.0.2.8","ports":"1-65535"},lambda operation:True)
-        self.assertFalse(p.last_automatic)
+        approve=Mock(side_effect=AssertionError("low-impact discovery must not prompt"))
+        out=p.authorize("nmap_scan",{"target":"192.0.2.8","ports":"1-65535"},approve)
+        self.assertTrue(p.last_automatic)
+        self.assertEqual(out["scan_type"],"--redvector-profile=tcp-discovery-v1")
+        # not an explicit task (allow_automatic False) -> still prompts
+        calls=[]
+        p.authorize("nmap_scan",{"target":"192.0.2.8","ports":"1-65535"},lambda op:calls.append(op) or True,allow_automatic=False)
+        self.assertEqual(len(calls),1)
     def test_scope_and_malformed_destinations_cannot_be_automated(self):
         for policy,args in [(Policy(),{"target":"192.0.2.8"}),(self.policy(),{"target":"192.0.2.9"}),
                             (self.policy(),{"target":"192.0.2.8","additional_args":"--script default"}),

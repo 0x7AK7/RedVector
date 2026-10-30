@@ -127,7 +127,11 @@ class Terminal:
         if readline:start="\001"+start+"\002";reset="\001"+reset+"\002"
         return start+"redvector>"+reset+" "
     def message(self,kind,text):
-        colors={"success":"92","warning":"33","error":"91","info":"38;5;196"}
+        # Dark-terminal severity palette: green success, red critical/error, orange high, yellow
+        # medium/warning, cyan informational/low, gray secondary. Colors convey evidence confidence,
+        # not only a CVSS label. NO_COLOR / non-TTY output stays plain (self.color gate below).
+        colors={"success":"92","warning":"33","error":"91","info":"36",
+                "critical":"91","high":"38;5;208","medium":"33","low":"36","meta":"38;5;245"}
         value=plain(text)
         self.write(("\033["+colors.get(kind,"0")+"m"+value+"\033[0m") if self.color else value)
     def box(self,title,lines):

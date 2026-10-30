@@ -34,11 +34,18 @@ def test_hostname_is_pinned_and_host_authority_preserved():
     assert result["url"]=="http://192.0.2.15:8080/"
     assert result["headers"]=={"Host":"lab.example:8080"}
 
-def test_advanced_nmap_reuses_reviewed_executor_requires_approval():
+def test_advanced_nmap_low_impact_detection_not_reprompted_under_scope():
     p=policy();calls=[]
+    # Inc E: explicit authorized scope + explicit task -> reviewed service-version detection runs
+    # without a redundant APPROVE prompt; the reviewed executor and bounds are unchanged.
     result=p.authorize("nmap_advanced_scan",{"target":"192.0.2.15","ports":"1-128","scan_type":"-sT -sV"},lambda op:calls.append(op) or True)
     assert result["version_detection"] is True and result["timing"]=="T2"
-    assert len(calls)==1 and "active service probes" in calls[0]["reason"]
+    assert calls==[] and p.last_automatic is True
+    # not an explicit task -> still prompts
+    calls2=[]
+    p.authorize("nmap_advanced_scan",{"target":"192.0.2.15","ports":"80","scan_type":"-sT -sV"},lambda op:calls2.append(op) or True,allow_automatic=False)
+    assert len(calls2)==1
+    # out-of-profile flags are still refused outright
     with pytest.raises(PolicyError):p.authorize("nmap_advanced_scan",{"target":"192.0.2.15","ports":"80","os_detection":True},lambda _:True)
 
 def test_nuclei_retains_authorized_hostname_authority_with_numeric_destination():

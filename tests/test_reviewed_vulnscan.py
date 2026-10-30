@@ -17,8 +17,14 @@ def _wire(monkeypatch,nuclei_ok=False):
         "findings":[{"id":"rv-missing-x-frame-options","title":"Missing X-Frame-Options response header","severity":"info","evidence":{"header":"X-Frame-Options"}}]})
     monkeypatch.setattr(http,"run_nuclei",lambda p:({"success":True,"findings":[{"id":"rv-missing-nosniff","title":"Missing X-Content-Type-Options response header","severity":"info","evidence":{}}]}
         if nuclei_ok else {"success":False,"error":"Missing Dependency: configure REDVECTOR_NUCLEI_BIN"}))
+    # Real NVD rows carry a text description; correlation keeps a candidate only when the exact
+    # product appears. This one names OpenSSH (product match) but a different version, so it stays a
+    # candidate requiring validation. The second names an unrelated product and must be dropped.
     monkeypatch.setattr(adv,"run",lambda p:{"success":True,"advisories":[
-        {"id":"CVE-2016-0777","provider_cvss_score":7.5,"provider_severity":"HIGH","reference":"https://nvd.nist.gov/vuln/detail/CVE-2016-0777"}]})
+        {"id":"CVE-2016-0777","description":"The client in OpenSSH before 7.3 allows remote servers to read memory.",
+         "provider_cvss_score":7.5,"provider_severity":"HIGH","reference":"https://nvd.nist.gov/vuln/detail/CVE-2016-0777"},
+        {"id":"CVE-2017-5638","description":"Apache Struts 2 remote code execution via Content-Type.",
+         "provider_cvss_score":10.0,"provider_severity":"CRITICAL","reference":"https://nvd.nist.gov/vuln/detail/CVE-2017-5638"}]})
 
 def test_staged_assessment_ranks_and_audits(monkeypatch):
     _wire(monkeypatch,nuclei_ok=False)
@@ -30,6 +36,11 @@ def test_staged_assessment_ranks_and_audits(monkeypatch):
     assert classes==sorted(classes,key=v._ORDER.index)
     assert any(f.get("product")=="OpenSSH" and f["classification"]=="Strongly supported" for f in out["findings"])
     assert any(f["classification"]=="Candidate CVE (requires validation)" and f.get("cve")=="CVE-2016-0777" for f in out["findings"])
+    # accuracy: an unrelated Apache-ecosystem CVE is NOT correlated to OpenSSH (product mismatch dropped)
+    assert not any(f.get("cve")=="CVE-2017-5638" for f in out["findings"])
+    # provider CVSS severity is carried separately from the evidence classification/validation
+    candidate=next(f for f in out["findings"] if f.get("cve")=="CVE-2016-0777")
+    assert candidate["cvss_severity"]=="HIGH" and candidate["classification"]=="Candidate CVE (requires validation)"
     assert any(f["classification"]=="Informational" and f.get("title","").startswith("Missing X-Frame") for f in out["findings"])
     stages={a["stage"]:a["status"] for a in out["audit_trail"]}
     assert stages.get("discovery")=="ok" and stages.get("service-version")=="ok"

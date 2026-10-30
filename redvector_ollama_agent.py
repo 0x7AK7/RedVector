@@ -622,7 +622,46 @@ class Agent:
             lines.append("Stage 2 — service identification did not complete; discovery evidence is preserved above.")
         tail=service_ids[-1] if service_ids else disc_id
         if tail:lines.append("Ask me to analyze the results, show the raw evidence, or export the report.")
-        return "\n".join(lines)
+        text="\n".join(lines)
+        if self.terminal:
+            # Operator sees the compact professional SECURITY ASSESSMENT report; the concise text
+            # below is only a pointer. Non-terminal callers (tests, piping) get the full text.
+            try:
+                from redvector_report import build_report,render_report
+                render_report(self.terminal,build_report(self._staged_report(target,disc_id,service_ids,stage)))
+            except Exception as exc:
+                record_error("Assessment report",exc)
+                return text
+            return header+". Ask to analyze the results, show the original evidence, or export the report as JSON."
+        return text
+
+    def _staged_report(self,target,disc_id,service_ids,stage):
+        """Assemble the structured report (open ports, services, per-stage native execution evidence)
+        for the professional renderer, from the preserved scan records. No findings are fabricated:
+        the staged discovery+service workflow performs service identification, not vulnerability
+        detection, so SECURITY FINDINGS stays empty here."""
+        open_ports=[];services=[];execution=[]
+        if disc_id:
+            disc=self.results.load(disc_id)["findings"]
+            open_ports=[str(r.get("port")) for r in (disc.get("ports") or []) if isinstance(r,dict) and r.get("state")=="open"]
+            execution.append({"engine":"native nmap -sT discovery","native_executed":True,
+                              "status":"ok" if disc.get("status")=="COMPLETED" else str(disc.get("status","")).lower(),
+                              "duration":disc.get("duration",""),"evidence":disc_id})
+        for sid in service_ids:
+            finding=self.results.load(sid)["findings"]
+            execution.append({"engine":"native nmap -sV service-version","native_executed":True,
+                              "status":"ok" if finding.get("status")=="COMPLETED" else str(finding.get("status","")).lower(),
+                              "duration":finding.get("duration",""),"evidence":sid})
+            for row in finding.get("ports",[]) or []:
+                if not isinstance(row,dict) or row.get("state")!="open":continue
+                version=str(row.get("version","")).strip()
+                identified=bool(version) and version.lower() not in ("not verified","unknown")
+                services.append({"port":row.get("port"),"protocol":row.get("protocol","tcp"),
+                                 "service":row.get("service","unknown"),"product":"","version":version if identified else "",
+                                 "confidence":"identified" if identified else "inconclusive"})
+        status="Complete" if stage=="complete" and disc_id else "Partial"
+        return {"target":target,"status":status,"open_ports":open_ports,"services":services,
+                "findings":[],"execution":execution}
 
     async def turn(self,text):
         if not isinstance(text,str) or len(text)>8000:raise AgentError("Task text is limited to 8000 characters.")
@@ -810,12 +849,24 @@ async def nl_dispatch(text,agent,wizard):
     aliases use (authorization, scope, status, tools, saved-result analysis/raw/export, navigation),
     so no command syntax is required. Returns 'handled'/'exit' when it acted, or None to let the
     agent's deterministic turn() handle a scan/discovery/analysis task."""
-    from redvector_nl_router import classify,HELP_TEXT
+    from redvector_nl_router import classify,HELP_TEXT,EXPLOITATION_STATUS
     term=wizard.term
     intent,payload=classify(text)
     if intent=="task":return None
     if intent=="help":term.write(HELP_TEXT);return "handled"
     if intent=="back":return "exit"
+    if intent=="exploitation":
+        term.message("warning","Exploitation is a separate, separately-authorized operation class.")
+        for line in EXPLOITATION_STATUS.split("\n"):term.write(line)
+        return "handled"
+    if intent=="exploitation_request":
+        try:
+            getattr(agent,"exploitation_requests",None)
+            if not hasattr(agent,"exploitation_requests"):agent.exploitation_requests=[]
+            agent.exploitation_requests.append(str(text).strip()[:300])
+        except Exception:pass
+        term.message("success","Recorded your request for a separately-scoped lab exploitation workflow for future review. Nothing was executed; exploitation requires a separately approved execution capability.")
+        return "handled"
     if intent=="authorize_needs_target":
         term.message("info","No target has been authorized yet. Tell me which system you own or have permission to assess.")
         return "handled"
@@ -832,6 +883,10 @@ async def nl_dispatch(text,agent,wizard):
         return await handle_command("/tools "+query,agent,wizard)
     if intent=="analyze":
         return await handle_command("/summary",agent,wizard)
+    if intent=="provenance":
+        _render_provenance(term,agent);return "handled"
+    if intent=="ports":
+        return await handle_command("/results",agent,wizard)
     if intent=="results":
         return await handle_command(("/results "+payload).strip() if isinstance(payload,str) else "/results",agent,wizard)
     if intent=="raw":
@@ -839,3 +894,39 @@ async def nl_dispatch(text,agent,wizard):
     if intent=="export":
         return await handle_command(("/export "+payload).strip() if payload else "/export",agent,wizard)
     return None
+
+# Native-execution provenance labels: which tools genuinely run a native binary vs a reviewed
+# internal engine. Honest labeling — a passive collector is never called native.
+_NATIVE_ENGINE={"nmap_scan":"native nmap","nmap_advanced_scan":"native nmap","searchsploit_lookup":"native searchsploit"}
+_INTERNAL_ENGINE={"httpx_probe":"RedVector passive HTTP collector (not native)","nikto_scan":"RedVector passive HTTP collector (not native Nikto)",
+                  "wafw00f_scan":"RedVector passive HTTP collector (not native)","jaeles_vulnerability_scan":"RedVector passive HTTP collector (not native)",
+                  "masscan_high_speed":"RedVector bounded TCP connect engine (not native)","rustscan_fast_scan":"RedVector bounded TCP connect engine (not native)"}
+
+def _render_provenance(term,agent):
+    """Show which tool actually ran for the latest saved scan — honest native-vs-internal label,
+    execution status, discovered open ports and identified service versions — WITHOUT rescanning.
+    Reads archived evidence only; never a tool catalog."""
+    from redvector_ollama_panels import Panel
+    try:
+        record=agent.results.load()
+    except (ValueError,OSError,KeyError):
+        term.message("info","No prior scan evidence is saved yet. Authorize a target and run an assessment first.")
+        return
+    finding=record.get("findings",{})
+    tool=finding.get("tool","unknown")
+    native=_NATIVE_ENGINE.get(tool);internal=_INTERNAL_ENGINE.get(tool)
+    engine=native or internal or ("reviewed internal engine")
+    panel=Panel(term)
+    panel.section("NATIVE TOOL EXECUTION PROVENANCE")
+    panel.fields([("Latest evidence ID",record.get("id","")),("Tool",tool),("Engine",engine),
+                  ("Native binary executed?","yes" if native else "no"),
+                  ("Execution status",str(finding.get("status","UNKNOWN"))),
+                  ("Duration",(format(finding.get("duration",0),".2f")+" s") if isinstance(finding.get("duration"),(int,float)) else "n/a")])
+    ports=[r for r in (finding.get("ports") or []) if isinstance(r,dict) and r.get("state")=="open"]
+    panel.line("Discovered open TCP ports: "+str(finding.get("open_count",len(ports))),"info")
+    versioned=[r for r in ports if str(r.get("version","")).strip() and str(r.get("version")).lower() not in ("not verified","unknown")]
+    if versioned:
+        panel.grid(["PORT","SERVICE","VERSION"],[[str(r.get("port")),r.get("service","unknown"),r.get("version")] for r in versioned])
+    else:
+        panel.line("No probe-identified service versions in this evidence.","meta")
+    panel.line("This is archived execution evidence; no new scan was launched.","meta")

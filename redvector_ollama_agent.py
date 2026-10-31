@@ -594,6 +594,17 @@ class Agent:
         from redvector_ollama_cli import port_count
         self.assessment_target=target
         canonical=self.policy.destination(target)
+        # Bug A: save prior discovery evidence for this target before reset, to skip re-discovery.
+        # Reuse only when: same target, coverage is complete, same port range, and open ports are recorded.
+        _pt=self.last_task
+        _pt_cov=(_pt.get("coverage") or {}) if _pt else {}
+        _prior_disc_id=(_pt["evidence"][0]
+                        if _pt and _pt.get("target")==target and _pt.get("evidence")
+                        and self.discovered_open.get(canonical)
+                        and _pt_cov.get("state")=="complete"
+                        and _pt_cov.get("range")==ports
+                        else None)
+        _prior_open=self.discovered_open.get(canonical) if _prior_disc_id else None
         coverage={"requested":port_count(ports),"completed":0,"open":0,"state":"not-started","kind":kind,"range":ports}
         self.last_task={"target":target,"evidence":[],"coverage":coverage}
         # ONE task authorization covers every bounded stage of this task (bound to this target, its
@@ -608,28 +619,38 @@ class Agent:
             return str(exc)
         self.last_task["authorization"]=task["id"]
         try:
-            return await self._run_staged(target,canonical,ports,kind,identify,coverage)
+            return await self._run_staged(target,canonical,ports,kind,identify,coverage,
+                                          prior_disc_id=_prior_disc_id,prior_open=_prior_open)
         finally:
             self.policy.end_task()
 
-    async def _run_staged(self,target,canonical,ports,kind,identify,coverage):
+    async def _run_staged(self,target,canonical,ports,kind,identify,coverage,*,prior_disc_id=None,prior_open=None):
         from redvector_ollama_results import payloads
-        # Stage A: reviewed native discovery profile over the exact requested range. Active
-        # service-version detection stays OFF so discovery is never reclassified into a version scan.
         self.version_task=False
-        if self.terminal:self.terminal.message("info","Stage 1/"+("2" if identify else "1")+": "+_discovery_label(kind,ports)+".")
-        disc=await self.execute("nmap_scan",{"target":target,"ports":ports,"scan_type":"--redvector-profile=tcp-discovery-v1"},{"nmap_scan"})
-        disc_id=self.last_result_id
-        if disc_id:self.last_task["evidence"].append(disc_id)
-        if disc.get("isError") or not disc_id:
-            coverage["state"]="failed" if not disc_id else "partial"
-            return self._staged_summary(target,disc_id,[],"discovery-incomplete")
-        actual=payloads(disc)
-        parsed=(actual[0].get("parsed") if actual and isinstance(actual[0],dict) else {}) or {}
-        open_ports=sorted({int(entry.get("port")) for entry in parsed.get("ports",[])
-                           if isinstance(entry,dict) and entry.get("state")=="open" and str(entry.get("port","")).isdigit()})
-        coverage.update(completed=coverage["requested"],open=len(open_ports),state="complete")
-        self.discovered_open.setdefault(canonical,set()).update(open_ports)
+        if prior_disc_id and prior_open is not None:
+            # Bug A: reuse prior discovery — skip Stage A nmap call, use saved open ports
+            disc_id=prior_disc_id
+            if disc_id not in self.last_task.get("evidence",[]):self.last_task["evidence"].append(disc_id)
+            open_ports=sorted(prior_open)
+            coverage.update(completed=coverage.get("requested",len(open_ports)),open=len(open_ports),state="complete")
+            self.discovered_open.setdefault(canonical,set()).update(open_ports)
+            if self.terminal:self.terminal.message("info","Reusing prior discovery ("+str(len(open_ports))+" open port(s)); skipping re-scan.")
+        else:
+            # Stage A: reviewed native discovery profile over the exact requested range. Active
+            # service-version detection stays OFF so discovery is never reclassified into a version scan.
+            if self.terminal:self.terminal.message("info","Stage 1/"+("2" if identify else "1")+": "+_discovery_label(kind,ports)+".")
+            disc=await self.execute("nmap_scan",{"target":target,"ports":ports,"scan_type":"--redvector-profile=tcp-discovery-v1"},{"nmap_scan"})
+            disc_id=self.last_result_id
+            if disc_id:self.last_task["evidence"].append(disc_id)
+            if disc.get("isError") or not disc_id:
+                coverage["state"]="failed" if not disc_id else "partial"
+                return self._staged_summary(target,disc_id,[],"discovery-incomplete")
+            actual=payloads(disc)
+            parsed=(actual[0].get("parsed") if actual and isinstance(actual[0],dict) else {}) or {}
+            open_ports=sorted({int(entry.get("port")) for entry in parsed.get("ports",[])
+                               if isinstance(entry,dict) and entry.get("state")=="open" and str(entry.get("port","")).isdigit()})
+            coverage.update(completed=coverage["requested"],open=len(open_ports),state="complete")
+            self.discovered_open.setdefault(canonical,set()).update(open_ports)
         if not open_ports:
             return self._staged_summary(target,disc_id,[],"no-open-ports")
         if not identify:
@@ -791,6 +812,16 @@ class Agent:
         ports,kind=discovery_range(text)
         canonical=self.policy.destination(target)
         self.assessment_target=target;self.policy.version_intensity=1
+        # Bug 2: save prior disc+service evidence before reset to skip re-scanning.
+        # Reuse only when: same target, coverage completed successfully, and ≥2 evidence records exist.
+        _pt=self.last_task
+        _prior_ids=(list(_pt["evidence"])
+                    if _pt and _pt.get("target")==target
+                    and len(_pt.get("evidence",[]))>=2
+                    and self.discovered_open.get(canonical)
+                    and (_pt.get("coverage") or {}).get("state")=="complete"
+                    else None)
+        _prior_cov=dict(_pt.get("coverage") or {}) if _prior_ids else None
         coverage={"requested":port_count(ports),"completed":0,"open":0,"state":"not-started","kind":kind,"range":ports}
         self.last_task={"target":target,"evidence":[],"coverage":coverage}
         stages={"discovery","offline-correlation","web-detection"}|({"service-version"} if identify else set())
@@ -805,10 +836,18 @@ class Agent:
         except PolicyError as exc:
             return str(exc)
         self.last_task["authorization"]=task["id"]
+        # Bug 4: set automatic_task AFTER task authorization is confirmed, never before.
+        # This prevents stale True state if begin_task() was declined by the operator.
+        self.automatic_task=True
         started=time.monotonic();self.quiet=True
         findings=[];extra=[];disc_id=None;service_ids=[]
         try:
-            await self._run_staged(target,canonical,ports,kind,identify,coverage)
+            if _prior_ids:
+                # Bug 2: reuse prior scan evidence — skip _run_staged entirely
+                self.last_task["evidence"].extend(_prior_ids)
+                if _prior_cov:coverage.update({k:_prior_cov[k] for k in("completed","open","state") if k in _prior_cov})
+            else:
+                await self._run_staged(target,canonical,ports,kind,identify,coverage)
             ids=list(self.last_task["evidence"])
             disc_id=ids[0] if ids else None;service_ids=ids[1:]
             base=self._staged_report(target,disc_id,service_ids,"complete" if coverage.get("state")=="complete" else "discovery-incomplete")
@@ -941,6 +980,7 @@ class Agent:
             extra.append({"engine":"Nmap NSE vulnerability scripts","binary":"not run","native_executed":False,"status":_tm.unavailability_reason("nse-vuln-v1",tool_status),"duration":""})
         finally:
             self.quiet=False
+            self.automatic_task=False
             self.policy.end_task()
         merged=ev.merge(findings)
         incomplete=coverage.get("state")!="complete" or any(not str(row["status"]).startswith(("ok","skipped")) for row in extra)
@@ -1243,10 +1283,32 @@ def _engine_identity(record):
             "sha256":str(profile.get("runtime_sha256") or payload.get("runtime_sha256") or "")}
 
 def _render_evidence(term,agent,ident=None):
-    """Readable overview of one archived evidence record — tool, actual engine/binary, status, timing,
-    counts and size — WITHOUT printing the raw payload or rescanning. The unmodified payload is shown
-    only on an explicit raw-payload request."""
+    """Readable overview of archived evidence — WITHOUT printing the raw payload or rescanning.
+    When ident is None and a multi-stage task is active, shows all stages (Bug B fix).
+    Single-record detail when a specific ident is given. Raw payload only on an explicit request."""
     from redvector_ollama_panels import Panel
+    task=getattr(agent,"last_task",None)
+    if ident is None and task and task.get("evidence"):
+        # Bug B: session assessment overview — all stages of the latest task
+        panel=Panel(term);panel.section("SESSION ASSESSMENT EVIDENCE OVERVIEW")
+        rows=[]
+        for eid in task["evidence"]:
+            try:record=agent.results.load(eid)
+            except (ValueError,OSError,KeyError):continue
+            finding=record.get("findings",{});tool=finding.get("tool","unknown");ident_=_engine_identity(record)
+            native=_NATIVE_ENGINE.get(tool)
+            rows.append([tool,ident_["engine"] or native or _INTERNAL_ENGINE.get(tool,tool),
+                         "yes" if native else "no",ident_["binary"] or "not recorded",
+                         str(finding.get("status","UNKNOWN")),
+                         (format(finding.get("duration",0),".1f")+" s") if isinstance(finding.get("duration"),(int,float)) else "-",
+                         eid[:12]])
+        panel.grid(["MCP TOOL","ENGINE","NATIVE?","ACTUAL BINARY","STATUS","DURATION","EVIDENCE"],rows)
+        coverage=task.get("coverage") or {}
+        if coverage:
+            panel.line("Coverage: "+str(coverage.get("completed",0))+" of "+str(coverage.get("requested",0))+
+                       " requested TCP ports completed ("+str(coverage.get("state","unknown"))+").","info")
+        panel.line("Ask for the raw JSON payload to see the unmodified evidence. No new scan was launched.","meta")
+        return
     try:
         record=agent.results.load(ident)
     except (ValueError,OSError,KeyError):
@@ -1281,10 +1343,10 @@ def _render_provenance(term,agent):
             except (ValueError,OSError,KeyError):continue
             finding=record.get("findings",{});tool=finding.get("tool","unknown");ident_=_engine_identity(record)
             native=_NATIVE_ENGINE.get(tool)
-            rows.append([ident_["engine"] or native or _INTERNAL_ENGINE.get(tool,tool),"yes" if native else "no",
+            rows.append([tool,ident_["engine"] or native or _INTERNAL_ENGINE.get(tool,tool),"yes" if native else "no",
                          ident_["binary"] or "not recorded",str(finding.get("status","UNKNOWN")),
                          (format(finding.get("duration",0),".1f")+" s") if isinstance(finding.get("duration"),(int,float)) else "-",eid[:12]])
-        panel.grid(["ENGINE","NATIVE?","ACTUAL BINARY","STATUS","DURATION","EVIDENCE"],rows)
+        panel.grid(["MCP TOOL","ENGINE","NATIVE?","ACTUAL BINARY","STATUS","DURATION","EVIDENCE"],rows)
         coverage=task.get("coverage") or {}
         if coverage:
             panel.line("Coverage: "+str(coverage.get("completed",0))+" of "+str(coverage.get("requested",0))+

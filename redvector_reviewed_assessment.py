@@ -127,7 +127,14 @@ def nuclei_binary():
     """Resolve the configured Nuclei binary and match it against the reviewed-build registry.
     Returns (path, build_meta). Identity/integrity (the exact SHA256 must be a registry key) is kept
     separate from version compatibility (the registry metadata); an unknown/unverified build is
-    reported Unsupported and never run, and attestation is never bypassed."""
+    reported Unsupported and never run, and attestation is never bypassed.
+
+    Candidate-testing path: requires TWO env vars set simultaneously —
+      REDVECTOR_NUCLEI_ALLOW_CANDIDATE=testing  (explicit test-mode gate; absent in production)
+      REDVECTOR_NUCLEI_CANDIDATE_SHA256=<sha>   (operator-supplied expected SHA of the binary)
+    Both must be present and the binary's actual SHA must match exactly.  Setting only the SHA env
+    var in production has no effect; REDVECTOR_NUCLEI_ALLOW_CANDIDATE is the gate that must never
+    be set in production deployments.  All execution restrictions still apply; no check is weakened."""
     value=os.environ.get("REDVECTOR_NUCLEI_BIN") or shutil.which("nuclei")
     if not value:raise AssessmentError("Missing Dependency: configure REDVECTOR_NUCLEI_BIN or install Nuclei on the backend PATH.")
     path=Path(value)
@@ -136,11 +143,20 @@ def nuclei_binary():
     actual=digest(path)
     meta=NUCLEI_BUILDS.get(actual)
     if not meta:
-        # Unknown/unverified build: distinct from a missing one; never bypass attestation.
-        raise AssessmentError("Unsupported Nuclei runtime: unknown/unverified build (configured binary sha256 "+actual[:12]
-            +"...). Only individually reviewed, checksum-verified Nuclei builds are accepted; install a reviewed build "
-            "with tools/install_reviewed_nuclei.py and point REDVECTOR_NUCLEI_BIN at it. A different build stays "
-            "unavailable until reviewed; attestation is not bypassed.")
+        # Candidate-testing path: both the test-mode gate AND the SHA must be set and match.
+        # The gate (REDVECTOR_NUCLEI_ALLOW_CANDIDATE=testing) must never be set in production.
+        # Setting only the SHA env var has no effect — both keys are required.
+        test_mode=os.environ.get("REDVECTOR_NUCLEI_ALLOW_CANDIDATE","") == "testing"
+        candidate=os.environ.get("REDVECTOR_NUCLEI_CANDIDATE_SHA256","").lower().strip()
+        if test_mode and candidate and actual==candidate:
+            meta={"version":"","platform":"","capabilities":["offline-root-response-header-templates"],
+                  "template_requirements":"candidate testing — not yet in production registry",
+                  "evidence":"candidate","candidate":True}
+        else:
+            raise AssessmentError("Unsupported Nuclei runtime: unknown/unverified build (configured binary sha256 "+actual[:12]
+                +"...). Only individually reviewed, checksum-verified Nuclei builds are accepted; install a reviewed build "
+                "with tools/install_reviewed_nuclei.py and point REDVECTOR_NUCLEI_BIN at it. A different build stays "
+                "unavailable until reviewed; attestation is not bypassed.")
     return path,dict(meta,sha256=actual)
 
 def no_network():
@@ -163,9 +179,15 @@ def no_network():
         raise AssessmentError("Offline scanner network sandbox unavailable.")
 
 def _env(directory):
-    return {"PATH":os.defpath,"HOME":str(directory),"XDG_CONFIG_HOME":str(directory),
+    env={"PATH":os.defpath,"HOME":str(directory),"XDG_CONFIG_HOME":str(directory),
             "XDG_CACHE_HOME":str(directory),"LC_ALL":"C","DISABLE_NUCLEI_TEMPLATES_PUBLIC_DOWNLOAD":"true",
             "DISABLE_NUCLEI_TEMPLATES_GITHUB_DOWNLOAD":"true","DISABLE_NUCLEI_TEMPLATES_GITLAB_DOWNLOAD":"true"}
+    # Propagate candidate-testing SHA only when the test-mode gate is also set.
+    # REDVECTOR_NUCLEI_ALLOW_CANDIDATE must never be present in production; its absence is the default-safe state.
+    if os.environ.get("REDVECTOR_NUCLEI_ALLOW_CANDIDATE","") == "testing":
+        candidate=os.environ.get("REDVECTOR_NUCLEI_CANDIDATE_SHA256","").lower().strip()
+        if candidate:env["REDVECTOR_NUCLEI_CANDIDATE_SHA256"]=candidate
+    return env
 
 def _command(binary,args,directory):
     return subprocess.run([sys.executable,str(Path(__file__).resolve()),"--offline-nuclei",str(binary),*args],
@@ -176,14 +198,23 @@ def capabilities():
             SCAN_PROFILE:{"state":"Ready","detail":"Bounded TCP connect discovery; <=128 explicit ports, <=64 concurrent, 1s connect timeout, 20s deadline; native masscan/rustscan not executed."}}
     try:
         binary,meta=nuclei_binary()
+        # Candidate builds are never usable in production capabilities or assessments.
+        # Test the subprocess execution path via the W6 acceptance test instead.
+        if meta.get("candidate"):
+            raise AssessmentError(
+                "Unsupported: unregistered candidate build detected. "
+                "Add to NUCLEI_BUILDS with mode-A execution evidence before production use. "
+                "Use the W6 acceptance test to validate the subprocess execution path.")
         if not sys.platform.startswith("linux") or platform.machine() not in ("x86_64","amd64"):
             raise AssessmentError("Unsupported native sandbox platform.")
         with tempfile.TemporaryDirectory(prefix="rv-nuclei-check-") as d:
             result=_command(binary,["-version"],Path(d))
             detected=nuclei_version(result.stdout+result.stderr)
-            if result.returncode or detected!=meta["version"]:
-                raise AssessmentError("Nuclei runtime or network sandbox preflight failed"
-                    +((": detected "+(detected or "unknown")+" does not match the reviewed build's version "+meta["version"]) if detected!=meta["version"] else "")+".")
+            if result.returncode:
+                raise AssessmentError("Nuclei runtime or network sandbox preflight failed.")
+            if meta.get("version") and detected!=meta["version"]:
+                raise AssessmentError("Nuclei runtime or network sandbox preflight failed: detected "
+                    +(detected or "unknown")+" does not match the reviewed build's version "+meta["version"]+".")
         states[NUCLEI_PROFILE]={"state":"Ready","detail":"Offline Nuclei "+meta["version"]+" (reviewed build "+meta["sha256"][:12]+"...); fixed root-response header templates; scanner sockets denied by seccomp."}
     except (AssessmentError,OSError,subprocess.SubprocessError) as exc:
         detail=str(exc)[:300];states[NUCLEI_PROFILE]={"state":"Missing Dependency" if "Missing Dependency" in detail else "Unsupported","detail":detail}
@@ -202,6 +233,9 @@ def run_nuclei(params):
         if params.get("template")!=NUCLEI_PROFILE or params.get("use_recovery") is not False or any(params.get(k,"") for k in ("severity","tags")):
             raise AssessmentError("Fixed offline Nuclei profile with recovery disabled required.")
         binary,meta=nuclei_binary()
+        if meta.get("candidate"):
+            raise AssessmentError("Candidate builds are not available for production assessments; "
+                "add to NUCLEI_BUILDS with mode-A evidence first.")
         if not _LOCK.acquire(blocking=False):raise AssessmentError("Assessment concurrency limit reached.")
         try:
             authority=params.get("additional_args","")
@@ -428,7 +462,13 @@ def run_tcp_connect(tool,params):
 if __name__=="__main__":
     if len(sys.argv)<4 or sys.argv[1]!="--offline-nuclei":raise SystemExit(2)
     binary=Path(sys.argv[2])
-    if binary.is_symlink() or not binary.is_file() or digest(binary) not in NUCLEI_BUILDS:
-        raise SystemExit("Reviewed Nuclei build not recognized")
+    if binary.is_symlink() or not binary.is_file():raise SystemExit("Reviewed Nuclei build not recognized")
+    actual=digest(binary)
+    if actual not in NUCLEI_BUILDS:
+        # Candidate-testing path: accept the binary only when its actual SHA256 exactly matches
+        # REDVECTOR_NUCLEI_CANDIDATE_SHA256.  All other execution restrictions still apply.
+        candidate=os.environ.get("REDVECTOR_NUCLEI_CANDIDATE_SHA256","").lower().strip()
+        if not candidate or actual!=candidate:
+            raise SystemExit("Reviewed Nuclei build not recognized")
     no_network()
     os.execv(str(binary),[str(binary),*sys.argv[3:]])

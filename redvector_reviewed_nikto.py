@@ -154,26 +154,68 @@ def _execute(command, directory, timeout=_DEADLINE):
 
 
 def parse_json(text):
-    """Parse nikto JSON output into a bounded, structured result. nikto emits either a single
-    object or a list of host objects. Raises NiktoError (Unsupported) when unrecognizable."""
+    """Parse nikto JSON output into a bounded, structured result.
+
+    Nikto 2.6.x may emit JSONL (one JSON object per line per finding) rather than the wrapped
+    {"vulnerabilities":[...]} structure. We try full-text json.loads first (standard format),
+    then fall back to line-by-line parsing of lines starting with '{' (JSONL/per-finding format).
+    Raises NiktoError (Unsupported) only when neither approach produces any parseable JSON object.
+    """
     text = (text or "").strip()
     if not text:
         return {"host": "", "port": "", "findings": [], "note": "Empty nikto output"}
+    obj = None
     try:
         obj = json.loads(text)
     except ValueError:
-        raise NiktoError("Unsupported: nikto JSON output was not recognized")
-    hosts = obj if isinstance(obj, list) else [obj]
+        # JSONL fallback: Nikto 2.6.x may emit one JSON object per finding per line
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip().startswith("{")]
+        if lines:
+            parsed_lines = []
+            for ln in lines:
+                try:
+                    parsed_lines.append(json.loads(ln))
+                except ValueError:
+                    pass
+            if parsed_lines:
+                obj = parsed_lines
+        if obj is None:
+            snippet = text[:120].replace("\n", " ")
+            raise NiktoError(
+                "Unsupported: nikto JSON output was not recognized"
+                " (first 120 chars: " + snippet + ")"
+            )
+    # Detect whether we have host-wrapper objects ({"host":..., "vulnerabilities":[...]})
+    # or per-finding JSONL objects ({"id":..., "msg":...}).  Per-finding objects lack both
+    # "vulnerabilities" and "host"/"ip" keys and carry finding-level fields instead.
+    obj_list = obj if isinstance(obj, list) else [obj]
+    has_host_structure = any(
+        isinstance(o, dict) and ("vulnerabilities" in o or "host" in o or "ip" in o)
+        for o in obj_list
+    )
     findings = []
     host = port = ""
-    for entry in hosts:
-        if not isinstance(entry, dict):
-            continue
-        host = host or str(entry.get("host", entry.get("ip", "")))
-        port = port or str(entry.get("port", ""))
-        vulns = entry.get("vulnerabilities")
-        for item in vulns if isinstance(vulns, list) else []:
+    if has_host_structure:
+        for entry in obj_list:
+            if not isinstance(entry, dict):
+                continue
+            host = host or str(entry.get("host", entry.get("ip", "")))
+            port = port or str(entry.get("port", ""))
+            vulns = entry.get("vulnerabilities")
+            for item in vulns if isinstance(vulns, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                findings.append({"id": str(item.get("id", "")), "method": str(item.get("method", "")),
+                                 "url": str(item.get("url", ""))[:500], "message": str(item.get("msg", ""))[:500],
+                                 "references": str(item.get("references", ""))[:300]})
+    else:
+        # Per-finding JSONL: each object IS a finding.
+        # Require at least one of "id" or "msg" to be non-empty so that malformed objects
+        # (JSON that happens to start with '{' but contains no finding content) are skipped.
+        for item in obj_list:
             if not isinstance(item, dict):
+                continue
+            if not (item.get("id") or item.get("msg")):
                 continue
             findings.append({"id": str(item.get("id", "")), "method": str(item.get("method", "")),
                              "url": str(item.get("url", ""))[:500], "message": str(item.get("msg", ""))[:500],
@@ -217,6 +259,21 @@ def run_nikto(params):
                 raw = outfile.read_text("utf-8", "replace") if outfile.is_file() else stdout
                 if outfile.is_file() and outfile.stat().st_size > _LIMIT:
                     raise NiktoError("Reviewed nikto output limit exceeded")
+                if not raw.strip():
+                    if code != 0:
+                        # Binary exited non-zero with no output: crashed before producing evidence.
+                        raise NiktoError(
+                            "Unsupported: nikto exited with code {} and produced no output".format(code)
+                        )
+                    # Zero exit with empty output: require a non-empty output file as the sole
+                    # accepted completion evidence.  An empty output file cannot distinguish a
+                    # completed scan from premature exit; arbitrary stderr text is not sufficient
+                    # either (it cannot be attributed to scan completion vs. startup errors).
+                    if not outfile.is_file() or outfile.stat().st_size == 0:
+                        raise NiktoError(
+                            "Unsupported: nikto produced no output and left no completion evidence "
+                            "(a non-empty output file is required to confirm a zero-finding scan)"
+                        )
                 parsed = parse_json(raw)
                 return {"success": True, "execution_mode": "A", "execution_mode_detail": "native binary executed",
                         "profile": PROFILE, "engine": "native nikto (reviewed non-destructive tuning)",

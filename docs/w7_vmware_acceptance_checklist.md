@@ -109,6 +109,20 @@ Run after N1–N4 are all PASS.
 
 ---
 
+## W6 rerun after fix commit (Nuclei SHA + Nikto JSON)
+
+> Run these steps after the Nuclei SHA enablement commit is merged.
+
+| # | Step | Expected |
+|---|------|----------|
+| R1 | `export REDVECTOR_RUN_SMOKE=1 REDVECTOR_NUCLEI_ALLOW_CANDIDATE=testing REDVECTOR_NUCLEI_CANDIDATE_SHA256=141b859667fd2cc97a648adc09d4c0ddbc2449b780ebb4d851edebc0f5b24710` | env set |
+| R2 | `python3 -m pytest tests/test_w6_native_acceptance.py -v` | **4 PASSED, 0 FAILED** |
+| R3 | Confirm `test_nuclei_candidate_build_validation` prints `NUCLEI candidate: /usr/bin/nuclei … detected v3.11.0` | ✓ |
+| R4 | Confirm `test_native_nikto_adapter` prints `NIKTO … binary /usr/bin/nikto findings <N>` | mode A, no JSON error |
+| R5 | `python3 -m pytest tests/test_w8_native_regression.py -v` | **10 PASSED, 0 FAILED** |
+
+---
+
 ## Sign-off
 
 | Criterion | Signed off by | Date |

@@ -37,6 +37,37 @@ def _searchsploit(rows):
 _PASSIVE = {"success": True, "findings": [{"id": "rv-missing-x-frame-options", "title": "Missing X-Frame-Options response header",
                                           "severity": "info"}]}
 
+# Fixed tool-status fixture: makes discover_tools() deterministic and host-independent.
+# Reflects "native Linux required" for Nikto and NSE (the normal state on any non-Linux host
+# or when the profile is not activated for the assessment), so the W5 passive-fallback scenario
+# is reproducible on Windows, WSL and VMware Kali alike.
+_W5_TOOL_STATUS = {
+    "nmap": {
+        "display": "native Nmap", "execution_class": "detection",
+        "install_hint": "sudo apt-get install nmap",
+        "profiles": {
+            "tcp-discovery-v1":    {"state": "Ready",       "detail": ""},
+            "service-version-v1":  {"state": "Ready",       "detail": ""},
+            "nse-vuln-v1":         {"state": "Unsupported", "detail": "NSE vuln script allowlist not yet curated from live nmap --script-help; nse-vuln-v1 disabled"},
+        },
+    },
+    "nuclei": {
+        "display": "native Nuclei (reviewed offline header profile)", "execution_class": "web-scan",
+        "install_hint": "python3 tools/install_reviewed_nuclei.py  (reviewed build required)",
+        "profiles": {"--redvector-profile=http-headers-v1": {"state": "Unsupported", "detail": "Nuclei SHA256 not in approved builds registry"}},
+    },
+    "nikto": {
+        "display": "native Nikto (reviewed non-destructive tuning)", "execution_class": "web-scan",
+        "install_hint": "sudo apt-get install nikto",
+        "profiles": {"nikto-native-v1": {"state": "Unsupported", "detail": "reviewed native Nikto requires native Linux"}},
+    },
+    "searchsploit": {
+        "display": "native Searchsploit (offline Exploit-DB, read-only)", "execution_class": "exploit-db",
+        "install_hint": "sudo apt-get install exploitdb",
+        "profiles": {"searchsploit-v1": {"state": "Ready", "detail": ""}},
+    },
+}
+
 
 class W5(unittest.IsolatedAsyncioTestCase):
     setUp = staged.StagedAssessment.setUp
@@ -63,7 +94,8 @@ class W5(unittest.IsolatedAsyncioTestCase):
         agent, api, session = self._agent(results)
         approvals = []
         agent.approve = lambda operation: approvals.append(operation) or True
-        answer = await agent.assess("Find critical and high vulnerability candidates on " + TARGET + ".")
+        with patch("redvector_tool_manager.discover_tools", return_value=_W5_TOOL_STATUS):
+            answer = await agent.assess("Find critical and high vulnerability candidates on " + TARGET + ".")
         calls = [c.args[0] if c.args else c.kwargs.get("name") for c in session.call_tool.await_args_list]
         assert calls[:2] == ["nmap_scan", "nmap_scan"] and "searchsploit_lookup" in calls and "nikto_scan" in calls
         assert session.call_tool.await_args_list[1].kwargs["arguments"]["ports"] == "22,80"   # discovered ports only
@@ -113,7 +145,8 @@ class W5(unittest.IsolatedAsyncioTestCase):
         agent, api, session = self._agent(results)
         stream = io.StringIO()
         agent.terminal = Terminal(stream)
-        answer = await agent.assess("Find vulnerabilities on " + TARGET)
+        with patch("redvector_tool_manager.discover_tools", return_value=_W5_TOOL_STATUS):
+            answer = await agent.assess("Find vulnerabilities on " + TARGET)
         out = stream.getvalue()
         assert out.count("SECURITY ASSESSMENT") == 1                 # per-stage records are not re-rendered
         assert "VULNERABILITIES" in out and "NEXT STEPS" in out and "not proof" in " ".join(out.split())

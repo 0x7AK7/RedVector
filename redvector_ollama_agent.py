@@ -934,7 +934,10 @@ class Agent:
                 extra.append({"engine":"native Nuclei","binary":"not run","native_executed":False,
                               "status":_tm.unavailability_reason(NUCLEI_PROFILE,tool_status),"duration":""})
             if web and not _nikto_ran:
-                extra.append({"engine":"native Nikto","binary":"not run","native_executed":False,"status":_tm.unavailability_reason("nikto-native-v1",tool_status),"duration":""})
+                _nikto_not_run=_tm.unavailability_reason("nikto-native-v1",tool_status)
+                if _nikto_not_run=="ready":
+                    _nikto_not_run="not run: profile not activated for this assessment"
+                extra.append({"engine":"native Nikto","binary":"not run","native_executed":False,"status":_nikto_not_run,"duration":""})
             extra.append({"engine":"Nmap NSE vulnerability scripts","binary":"not run","native_executed":False,"status":_tm.unavailability_reason("nse-vuln-v1",tool_status),"duration":""})
         finally:
             self.quiet=False

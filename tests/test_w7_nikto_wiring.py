@@ -130,6 +130,56 @@ class W7NiktoWiring(unittest.IsolatedAsyncioTestCase):
         assert nikto_unavail["native_executed"] is False
         assert not nikto_unavail["status"].startswith("ok")
 
+    async def test_nikto_ready_host_but_profile_not_activated(self):
+        """Nikto binary installed and adapter says Ready on host, but nikto-native-v1 is NOT in the
+        active profile set for this assessment (only passive HTTP ready).  The 'native Nikto' row must
+        say 'not run: profile not activated ...' — never 'ready' — so operators see a clear action."""
+        results = [
+            _result(_discovery([(80, "open", "http")])),
+            _result(_service_with_products()),
+            _result({"success": True, "execution_mode": "A", "profile": "searchsploit-v1",
+                     "binary": "/usr/bin/searchsploit", "execution_time": 0.1,
+                     "parsed": {"search": "", "results": [], "shellcode": []}}),
+            _result(_PASSIVE),
+        ]
+        # Profile set: searchsploit + passive HTTP only — no nikto-native-v1
+        agent, api, session = self._agent(
+            results, ready_profiles=("searchsploit-v1", "redvector-http-read-v1"))
+        agent.approve = lambda operation: True
+
+        # Host reports Nikto is Ready (simulates real VMware Kali with nikto installed)
+        _host_ready = {
+            "nmap": {"display": "native Nmap", "execution_class": "detection",
+                     "install_hint": "sudo apt-get install nmap",
+                     "profiles": {"tcp-discovery-v1": {"state": "Ready", "detail": ""},
+                                  "service-version-v1": {"state": "Ready", "detail": ""},
+                                  "nse-vuln-v1": {"state": "Unsupported",
+                                                  "detail": "NSE vuln script allowlist not yet curated from live nmap --script-help; nse-vuln-v1 disabled"}}},
+            "nuclei": {"display": "native Nuclei (reviewed offline header profile)", "execution_class": "web-scan",
+                       "install_hint": "...", "profiles": {"--redvector-profile=http-headers-v1": {"state": "Unsupported", "detail": "SHA not registered"}}},
+            "nikto": {"display": "native Nikto (reviewed non-destructive tuning)", "execution_class": "web-scan",
+                      "install_hint": "sudo apt-get install nikto",
+                      "profiles": {"nikto-native-v1": {"state": "Ready", "detail": ""}}},
+            "searchsploit": {"display": "native Searchsploit (offline Exploit-DB, read-only)", "execution_class": "exploit-db",
+                             "install_hint": "sudo apt-get install exploitdb",
+                             "profiles": {"searchsploit-v1": {"state": "Ready", "detail": ""}}},
+        }
+        with patch("redvector_tool_manager.discover_tools", return_value=_host_ready):
+            with patch("redvector_reviewed_nikto.run_nikto") as mock_run:
+                await agent.assess("Find vulnerabilities on " + TARGET)
+
+        mock_run.assert_not_called()
+
+        report = agent.last_task["report"]
+        engines = {row["engine"]: row for row in report["execution"]}
+        nikto_row = engines.get("native Nikto")
+        assert nikto_row is not None, list(engines)
+        assert nikto_row["native_executed"] is False
+        # Must NOT be "ready" — binary being Ready on host is not the same as executing in this task
+        assert nikto_row["status"] != "ready", nikto_row["status"]
+        # Must explain that the profile was not activated
+        assert nikto_row["status"].startswith("not run:"), nikto_row["status"]
+
     async def test_nikto_mode_e_reported_honestly(self):
         """If run_nikto() returns mode E (unsupported), native_executed is False and status is not ok."""
         results = [

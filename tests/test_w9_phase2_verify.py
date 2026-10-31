@@ -276,7 +276,8 @@ class TestWriteEvidenceAtomic(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             cache = Path(d) / "ev.json"
             with patch("redvector_verify._ensure_cache_dir"):
-                _write_evidence_atomic(self._make_entry(), cache)
+                with patch("redvector_verify._verify_path_chain_trusted"):
+                    _write_evidence_atomic(self._make_entry(), cache)
             self.assertTrue(cache.exists())
 
     @patch("os.getuid", return_value=0)
@@ -285,7 +286,8 @@ class TestWriteEvidenceAtomic(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             cache = Path(d) / "ev.json"
             with patch("redvector_verify._ensure_cache_dir"):
-                _write_evidence_atomic(self._make_entry(sha), cache)
+                with patch("redvector_verify._verify_path_chain_trusted"):
+                    _write_evidence_atomic(self._make_entry(sha), cache)
             data = json.loads(cache.read_text())
         self.assertEqual(data["format_version"], rte.CACHE_FORMAT_VERSION)
         self.assertIn(sha, data["entries"])
@@ -299,8 +301,9 @@ class TestWriteEvidenceAtomic(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             cache = Path(d) / "ev.json"
             with patch("redvector_verify._ensure_cache_dir"):
-                _write_evidence_atomic(self._make_entry(sha1), cache)
-                _write_evidence_atomic(self._make_entry(sha2), cache)
+                with patch("redvector_verify._verify_path_chain_trusted"):
+                    _write_evidence_atomic(self._make_entry(sha1), cache)
+                    _write_evidence_atomic(self._make_entry(sha2), cache)
             data = json.loads(cache.read_text())
         self.assertIn(sha1, data["entries"])
         self.assertIn(sha2, data["entries"])
@@ -315,8 +318,9 @@ class TestWriteEvidenceAtomic(unittest.TestCase):
             e2 = self._make_entry(sha)
             e2["notes"] = "updated"
             with patch("redvector_verify._ensure_cache_dir"):
-                _write_evidence_atomic(e1, cache)
-                _write_evidence_atomic(e2, cache)
+                with patch("redvector_verify._verify_path_chain_trusted"):
+                    _write_evidence_atomic(e1, cache)
+                    _write_evidence_atomic(e2, cache)
             data = json.loads(cache.read_text())
         self.assertEqual(data["entries"][sha]["notes"], "updated")
 
@@ -327,7 +331,8 @@ class TestWriteEvidenceAtomic(unittest.TestCase):
             cache = Path(d) / "ev.json"
             cache.write_bytes(b"NOT VALID JSON {{{{")
             with patch("redvector_verify._ensure_cache_dir"):
-                _write_evidence_atomic(self._make_entry(sha), cache)
+                with patch("redvector_verify._verify_path_chain_trusted"):
+                    _write_evidence_atomic(self._make_entry(sha), cache)
             data = json.loads(cache.read_text())
         self.assertIn(sha, data["entries"])
 
@@ -336,7 +341,8 @@ class TestWriteEvidenceAtomic(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             cache = Path(d) / "ev.json"
             with patch("redvector_verify._ensure_cache_dir"):
-                _write_evidence_atomic(self._make_entry(), cache)
+                with patch("redvector_verify._verify_path_chain_trusted"):
+                    _write_evidence_atomic(self._make_entry(), cache)
             leftover = [f for f in Path(d).iterdir() if f.name.startswith(".rv-evidence-")]
         self.assertEqual(leftover, [])
 
@@ -926,25 +932,24 @@ class TestWriteEvidenceAtomicSecurity(unittest.TestCase):
         sys.platform == "win32",
         reason="symlink creation requires elevated privileges on Windows",
     )
-    def test_symlink_at_target_after_check_raises(self, _):
-        """A symlink created at cache_path between chain-check and rename must be rejected."""
+    def test_existing_target_symlink_is_rejected(self, _):
+        """An existing symlink at cache_path is detected and rejected before rename."""
         with tempfile.TemporaryDirectory() as d:
             cache = Path(d) / "ev.json"
             real = Path(d) / "real.json"
             real.write_text("{}")
-            # Simulate: symlink appears at cache_path just before rename
-            original_rename = Path.rename
-            def symlink_injecting_rename(self, target):
-                # Replace target with a symlink right before rename
-                if str(target) == str(cache):
-                    cache.symlink_to(real)
-                return original_rename(self, target)
-            with patch.object(Path, "rename", symlink_injecting_rename):
-                with patch("redvector_verify._ensure_cache_dir"):
-                    with patch("redvector_verify._verify_path_chain_trusted"):
-                        with self.assertRaises(VerifyError) as ctx:
-                            _write_evidence_atomic(self._make_entry(), cache)
-                        self.assertIn("symlink", str(ctx.exception).lower())
+            # Pre-create a symlink at cache_path: simulates the race window after
+            # _verify_path_chain_trusted passes (mocked below) but before the second
+            # is_symlink() guard runs inside _write_evidence_atomic.
+            # On Linux, rename(tmp, cache_path) when cache_path is a symlink would
+            # atomically replace the symlink — not follow it — so the check is the
+            # only mechanism that raises here.
+            cache.symlink_to(real)
+            with patch("redvector_verify._ensure_cache_dir"):
+                with patch("redvector_verify._verify_path_chain_trusted"):
+                    with self.assertRaises(VerifyError) as ctx:
+                        _write_evidence_atomic(self._make_entry(), cache)
+                    self.assertIn("symlink", str(ctx.exception).lower())
 
 
 # ---------------------------------------------------------------------------

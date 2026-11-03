@@ -16,13 +16,25 @@ def load_client():
     # SDK/network are external boundaries. The actual client, logging and main run.
     sdk = types.ModuleType('mcp.server.fastmcp')
     sdk.FastMCP = object
-    with patch.dict(sys.modules, {'mcp': types.ModuleType('mcp'),
-                                  'mcp.server': types.ModuleType('mcp.server'),
-                                  'mcp.server.fastmcp': sdk}):
+    # Restore only the SDK keys we replace. patch.dict(sys.modules) also
+    # removes unrelated dependencies imported inside its scope, splitting the
+    # Requests/CookieJar identities when later real integration tests import SDKs.
+    stubs = {'mcp': types.ModuleType('mcp'),
+             'mcp.server': types.ModuleType('mcp.server'),
+             'mcp.server.fastmcp': sdk}
+    previous = {name: sys.modules.get(name) for name in stubs}
+    sys.modules.update(stubs)
+    try:
         spec = importlib.util.spec_from_file_location('health_test_client', ROOT / 'redvector_mcp.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
+    finally:
+        for name, original in previous.items():
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
 
 
 class HealthTests(unittest.TestCase):

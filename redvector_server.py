@@ -1804,13 +1804,13 @@ class IntelligentDecisionEngine:
 decision_engine = IntelligentDecisionEngine()
 
 # ============================================================================
-# LLM INTEGRATION CLIENT (Ollama / OpenAI-compatible backends)
+# LLM INTEGRATION CLIENT (OpenAI-compatible backends)
 # ============================================================================
 
 class LLMClient:
-    """Client for Ollama and OpenAI-compatible LLM APIs."""
+    """Client for OpenAI-compatible LLM APIs."""
 
-    DEFAULT_URL = "http://127.0.0.1:11434"  # Ollama default
+    DEFAULT_URL = "http://127.0.0.1:11434"
     SYSTEM_PROMPT = (
         "You are RedVector AI, an expert red team and penetration testing assistant. "
         "You help security professionals with reconnaissance, vulnerability analysis, "
@@ -1821,7 +1821,7 @@ class LLMClient:
     def __init__(self):
         self._lock = threading.Lock()
         self.base_url = os.environ.get("LLM_BASE_URL", self.DEFAULT_URL)
-        self.api_key = os.environ.get("LLM_API_KEY", "ollama")
+        self.api_key = os.environ.get("LLM_API_KEY", "")
         self.default_model = os.environ.get("LLM_MODEL", "")
         self.timeout = int(os.environ.get("LLM_TIMEOUT", "120"))
 
@@ -1856,7 +1856,7 @@ class LLMClient:
             models = [m.get("id", "unknown") for m in data.get("data", [])]
             return {"success": True, "models": models, "provider": self.base_url}
         except requests.ConnectionError:
-            return {"success": False, "error": f"Cannot connect to LLM backend at {self.base_url}. Is Ollama running? Try: ollama serve"}
+            return {"success": False, "error": f"Cannot connect to LLM backend at {self.base_url}. Is the backend running?"}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -1890,7 +1890,7 @@ class LLMClient:
                 "finish_reason": choice.get("finish_reason", "")
             }
         except requests.ConnectionError:
-            return {"success": False, "error": f"Cannot connect to LLM backend at {self.base_url}. Is Ollama running? Try: ollama serve"}
+            return {"success": False, "error": f"Cannot connect to LLM backend at {self.base_url}. Is the backend running?"}
         except requests.HTTPError as e:
             return {"success": False, "error": f"LLM API error: {e.response.status_code} {e.response.text[:500]}"}
         except Exception as e:
@@ -10929,6 +10929,17 @@ def nmap():
         additional_args = params.get("additional_args", "-T4 -Pn")
         use_recovery = params.get("use_recovery", True)
 
+        # Opt-in reviewed handlers. Legacy tool behavior and route/schema stay intact.
+        if scan_type == "--redvector-profile=service-version-v1":
+            from redvector_reviewed_profiles import run_profile
+            return jsonify(run_profile("nmap_scan", params))
+        if scan_type == "--redvector-profile=tcp-discovery-v1":
+            from redvector_reviewed_profiles import run_discovery
+            return jsonify(run_discovery("nmap_scan", params))
+        if scan_type == "--redvector-profile=nse-vuln-v1":
+            from redvector_reviewed_profiles import run_nse_vuln
+            return jsonify(run_nse_vuln("nmap_scan", params))
+
         if not target:
             logger.warning("🎯 Nmap called without target parameter")
             return jsonify({
@@ -11030,6 +11041,10 @@ def nuclei():
     """Execute Nuclei vulnerability scanner with enhanced logging and intelligent error handling"""
     try:
         params = request.get_json(silent=True) or {}
+        if params.get("template")=="--redvector-profile=http-headers-v1":
+            from redvector_reviewed_assessment import run_nuclei
+            return jsonify(run_nuclei(params))
+
         target = params.get("target", "")
         severity = params.get("severity", "")
         tags = params.get("tags", "")
@@ -11588,6 +11603,9 @@ def nikto():
     """Execute nikto with enhanced logging"""
     try:
         params = request.get_json(silent=True) or {}
+        from redvector_reviewed_assessment import HTTP_ASSESS_MARKER,run_http_assessment
+        if params.get("additional_args")==HTTP_ASSESS_MARKER:
+            return jsonify(run_http_assessment("nikto_scan",params))
         target = params.get("target", "")
         additional_args = params.get("additional_args", "")
 
@@ -12099,6 +12117,9 @@ def rustscan():
     """Execute Rustscan for ultra-fast port scanning with enhanced logging"""
     try:
         params = request.get_json(silent=True) or {}
+        from redvector_reviewed_assessment import SCAN_MARKER,run_tcp_connect
+        if params.get("additional_args")==SCAN_MARKER:
+            return jsonify(run_tcp_connect("rustscan_fast_scan",params))
         target = params.get("target", "")
         ports = params.get("ports", "")
         ulimit = params.get("ulimit", 5000)
@@ -12135,6 +12156,9 @@ def masscan():
     """Execute Masscan for high-speed Internet-scale port scanning with intelligent rate limiting"""
     try:
         params = request.get_json(silent=True) or {}
+        from redvector_reviewed_assessment import SCAN_MARKER,run_tcp_connect
+        if params.get("additional_args")==SCAN_MARKER:
+            return jsonify(run_tcp_connect("masscan_high_speed",params))
         target = params.get("target", "")
         ports = params.get("ports", "1-65535")
         rate = params.get("rate", 1000)
@@ -12178,6 +12202,13 @@ def nmap_advanced():
     """Execute advanced Nmap scans with custom NSE scripts and optimized timing"""
     try:
         params = request.get_json(silent=True) or {}
+        if params.get("scan_type")=="--redvector-profile=service-version-v1":
+            from redvector_reviewed_profiles import run_profile
+            allowed={"target","scan_type","ports","timing","nse_scripts","os_detection","version_detection","aggressive","stealth","additional_args"}
+            if set(params)-allowed or params.get("timing")!="T2" or params.get("nse_scripts","") or any(params.get(k,False) for k in ("os_detection","aggressive","stealth")) or params.get("version_detection") is not True:
+                return jsonify({"success":False,"error":"Exact reviewed advanced service profile required."}),400
+            return jsonify(run_profile("nmap_scan",dict(target=params.get("target"),ports=params.get("ports"),scan_type=params["scan_type"],additional_args=params.get("additional_args"),use_recovery=False)))
+
         target = params.get("target", "")
         scan_type = params.get("scan_type", "-sS")
         ports = params.get("ports", "")
@@ -12730,6 +12761,10 @@ def checksec():
     """Check security features of a binary with enhanced logging"""
     try:
         params = request.get_json(silent=True) or {}
+        if isinstance(params.get("binary"),str) and params["binary"].startswith("rv-artifact-v1:"):
+            from redvector_reviewed_artifacts import run_profile
+            return jsonify(run_profile("checksec_analyze",params))
+
         binary = params.get("binary", "")
 
         if not binary:
@@ -12755,6 +12790,10 @@ def xxd():
     """Create a hex dump of a file using xxd with enhanced logging"""
     try:
         params = request.get_json(silent=True) or {}
+        if isinstance(params.get("file_path"),str) and params["file_path"].startswith("rv-artifact-v1:"):
+            from redvector_reviewed_artifacts import run_profile
+            return jsonify(run_profile("xxd_hexdump",params))
+
         file_path = params.get("file_path", "")
         offset = params.get("offset", "0")
         length = params.get("length", "")
@@ -12791,6 +12830,10 @@ def strings():
     """Extract strings from a binary file with enhanced logging"""
     try:
         params = request.get_json(silent=True) or {}
+        if isinstance(params.get("file_path"),str) and params["file_path"].startswith("rv-artifact-v1:"):
+            from redvector_reviewed_artifacts import run_profile
+            return jsonify(run_profile("strings_extract",params))
+
         file_path = params.get("file_path", "")
         min_len = params.get("min_len", 4)
         additional_args = params.get("additional_args", "")
@@ -12823,6 +12866,10 @@ def objdump():
     """Analyze a binary using objdump with enhanced logging"""
     try:
         params = request.get_json(silent=True) or {}
+        if isinstance(params.get("binary"),str) and params["binary"].startswith("rv-artifact-v1:"):
+            from redvector_reviewed_artifacts import run_profile
+            return jsonify(run_profile("objdump_analyze",params))
+
         binary = params.get("binary", "")
         disassemble = params.get("disassemble", True)
         additional_args = params.get("additional_args", "")
@@ -13665,6 +13712,9 @@ def jaeles():
     """Execute Jaeles for advanced vulnerability scanning with custom signatures"""
     try:
         params = request.get_json(silent=True) or {}
+        from redvector_reviewed_assessment import HTTP_ASSESS_MARKER,run_http_assessment
+        if params.get("additional_args")==HTTP_ASSESS_MARKER:
+            return jsonify(run_http_assessment("jaeles_vulnerability_scan",params))
         url = params.get("url", "")
         signatures = params.get("signatures", "")
         config = params.get("config", "")
@@ -13745,6 +13795,9 @@ def httpx():
     """Execute httpx for fast HTTP probing and technology detection"""
     try:
         params = request.get_json(silent=True) or {}
+        from redvector_reviewed_assessment import HTTP_ASSESS_MARKER,run_http_assessment
+        if params.get("additional_args")==HTTP_ASSESS_MARKER:
+            return jsonify(run_http_assessment("httpx_probe",params))
         target = params.get("target", "")
         probe = params.get("probe", True)
         tech_detect = params.get("tech_detect", False)
@@ -14669,6 +14722,12 @@ def http_framework_endpoint():
     """Enhanced HTTP testing framework (Burp Suite alternative)"""
     try:
         params = request.get_json(silent=True) or {}
+        from redvector_reviewed_assessment import HTTP_PROFILE,run_http
+        if params.get("action")==HTTP_PROFILE:
+            return jsonify(run_http(params))
+        if params.get("action")=="repeater" and isinstance(params.get("request"),dict) and params["request"].get("action")==HTTP_PROFILE:
+            return jsonify(run_http(params["request"]))
+
         action = params.get("action", "request")  # request, spider, proxy_history, set_rules, set_scope, repeater, intruder
         url = params.get("url", "")
         method = params.get("method", "GET")
@@ -14996,6 +15055,9 @@ def wafw00f():
     """Execute wafw00f to identify and fingerprint WAF products with enhanced logging"""
     try:
         params = request.get_json(silent=True) or {}
+        from redvector_reviewed_assessment import HTTP_ASSESS_MARKER,run_http_assessment
+        if params.get("additional_args")==HTTP_ASSESS_MARKER:
+            return jsonify(run_http_assessment("wafw00f_scan",params))
         target = params.get("target", "")
         additional_args = params.get("additional_args", "")
 
@@ -16733,12 +16795,12 @@ def advanced_payload_generation():
         }), 500
 
 # ============================================================================
-# LLM INTEGRATION API ENDPOINTS (Ollama / OpenAI-compatible)
+# LLM INTEGRATION API ENDPOINTS (OpenAI-compatible)
 # ============================================================================
 
 @app.route("/api/llm/models", methods=["GET"])
 def llm_list_models():
-    """List available models from the connected LLM backend (Ollama, etc.)"""
+    """List available models from the connected LLM backend"""
     try:
         result = llm_client.list_models()
         return jsonify(result), 200 if result["success"] else 502
@@ -16832,7 +16894,7 @@ def llm_config():
                 "timeout": llm_client.timeout,
                 "env_vars": {
                     "LLM_BASE_URL": "Override LLM backend URL (default: http://127.0.0.1:11434)",
-                    "LLM_API_KEY": "API key for the LLM backend (default: ollama)",
+                    "LLM_API_KEY": "API key for the LLM backend",
                     "LLM_MODEL": "Default model name (default: auto-select first available)",
                     "LLM_TIMEOUT": "Request timeout in seconds (default: 120)"
                 }
@@ -19379,6 +19441,11 @@ def searchsploit():
     """Execute SearchSploit for local Exploit-DB exploit database searching"""
     try:
         params = request.get_json(silent=True) or {}
+        # Opt-in reviewed handler. Legacy tool behavior, route and schema stay intact; only a
+        # request carrying the reserved reviewed marker is routed to the confined adapter.
+        from redvector_reviewed_searchsploit import SEARCHSPLOIT_MARKER, run_searchsploit
+        if params.get("additional_args") == SEARCHSPLOIT_MARKER:
+            return jsonify(run_searchsploit(params))
         query = params.get("query", "")
         exact = params.get("exact", False)
         cve = params.get("cve", "")

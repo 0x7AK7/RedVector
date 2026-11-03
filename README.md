@@ -68,7 +68,6 @@ graph TD
 | `redvector_server.py` | Flask backend, orchestration, security-tool execution, autonomous workflows, process management and reporting |
 | `redvector_mcp.py` | FastMCP interface exposing RedVector capabilities to AI clients |
 | `redvector-mcp.json` | Example MCP configuration |
-| `ollama-mcp.json` | Example local/Ollama-oriented MCP configuration |
 | `start_redvector.sh` | Linux launcher, verifies backend ownership, starts backend on demand and runs MCP client |
 | `redvector_backend_check.py` | Linux socket/process ownership check used by the launcher |
 | `redvector_banner.py` | Shared original terminal banner and startup panel; never starts the backend |
@@ -261,7 +260,7 @@ Example configuration:
 }
 ```
 
-The repository also contains `redvector-mcp.json` and `ollama-mcp.json` as starting points. Review paths and environment values before use.
+The repository also contains `redvector-mcp.json` as a starting point. Review paths and environment values before use.
 
 ---
 
@@ -543,7 +542,7 @@ RedVector's AI-facing behavior is built around MCP tool exposure plus backend wo
 
 ### AI client and local-model workflows
 
-RedVector can be driven by any compatible MCP client. The repository includes a local/Ollama configuration example, but the MCP design is not limited to Ollama. The typical pattern is:
+RedVector can be driven by any compatible MCP client. The typical pattern is:
 
 ```text
 AI model / AI client
@@ -979,7 +978,6 @@ RedVector/
 ├── redvector_server.py
 ├── redvector_mcp.py
 ├── redvector-mcp.json
-├── ollama-mcp.json
 ├── start_redvector.sh
 ├── redvector_backend_check.py
 ├── redvector_banner.py

@@ -38,3 +38,7 @@ test_summary.txt
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local verification runtimes and private execution evidence
+docs/final-validation/
+docs/kali-uat/

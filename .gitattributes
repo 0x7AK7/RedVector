@@ -1,0 +1,2 @@
+
+# Bash entry points must remain executable from Linux-managed or Windows-managed checkouts.

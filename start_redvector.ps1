@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 #  RedVector AI v8.0 - Windows Launcher (PowerShell)
 #  Auto-starts the backend server (if not running) then launches the MCP client.
-#  Used by Ollama / Claude Desktop / AI agents via mcp.json.
+#  Used by Claude Desktop / AI agents via mcp.json.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 $ErrorActionPreference = "Stop"

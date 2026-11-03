@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# RedVector commit-msg hook: block unwanted AI co-author trailers.
+# Version-controlled template — install via hooks/install.sh or manually.
+# Works on Windows (Git Bash), Linux and macOS.
+
+set -euo pipefail
+
+COMMIT_MSG_FILE="$1"
+
+# Patterns are case-insensitive. Each line is an extended-regex alternation
+# matching known AI assistant names or their noreply emails.
+AI_PATTERNS=(
+  'co-authored-by:.*\bclaude\b'
+  'co-authored-by:.*\bclaude[ -]?code\b'
+  'co-authored-by:.*\bcodex\b'
+  'co-authored-by:.*\bgithub[ -]?copilot\b'
+  'co-authored-by:.*\banthropic\b'
+  'co-authored-by:.*\bopenai\b'
+  'co-authored-by:.*\bcopilot\b'
+  'co-authored-by:.*noreply@anthropic\.com'
+  'co-authored-by:.*noreply@github\.com.*copilot'
+  'co-authored-by:.*\bcursor\b'
+  'co-authored-by:.*\bwindsurf\b'
+  'co-authored-by:.*\bcodeium\b'
+  'co-authored-by:.*\bamazon[ -]?q\b'
+)
+
+found=0
+for pattern in "${AI_PATTERNS[@]}"; do
+  if grep -qiE "$pattern" "$COMMIT_MSG_FILE"; then
+    if [ "$found" -eq 0 ]; then
+      echo ""
+      echo "ERROR: Unwanted AI co-author trailer detected in commit message."
+      echo ""
+    fi
+    # Show the matching line(s)
+    grep -niE "$pattern" "$COMMIT_MSG_FILE" | while IFS= read -r line; do
+      echo "  >> $line"
+    done
+    found=1
+  fi
+done
+
+if [ "$found" -ne 0 ]; then
+  echo ""
+  echo "Remove the AI co-author trailer(s) and retry the commit."
+  echo "This hook protects against unwanted contributor attribution."
+  echo "If this is a legitimate human co-author, rename the trailer to avoid"
+  echo "matching AI assistant names."
+  echo ""
+  exit 1
+fi
+
+exit 0

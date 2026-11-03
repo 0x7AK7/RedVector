@@ -40,14 +40,6 @@ _TOOLS = [
         "install_hint": "python3 tools/install_reviewed_nuclei.py  (reviewed build required)",
     },
     {
-        "name": "nikto",
-        "display": "native Nikto (reviewed non-destructive tuning)",
-        "execution_class": "web-scan",
-        "profiles": ("nikto-native-v1",),
-        "adapter": "redvector_reviewed_nikto",
-        "install_hint": "sudo apt-get install nikto",
-    },
-    {
         "name": "searchsploit",
         "display": "native Searchsploit (offline Exploit-DB, read-only)",
         "execution_class": "exploit-db",

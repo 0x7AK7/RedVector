@@ -5,9 +5,7 @@ Tests that:
   - unavailability_reason() maps adapter states to precise human-readable explanations
   - status taxonomy: Ready / Missing Dependency / Unsupported / Disabled / Restricted
   - install_hint is present and actionable for every tool
-  - the four known profiles (tcp-discovery-v1, http-headers-v1, nikto-native-v1,
-    searchsploit-v1) are covered
-  - on Windows the tool manager does not crash and returns non-Ready states for Linux-only tools
+  - the three known tool families (nmap, nuclei, searchsploit) and their profiles are covered
   - discover_tools() is idempotent and pure (no side effects)
 """
 import unittest
@@ -21,7 +19,6 @@ def _tool_status(overrides):
     base = {
         "nmap":        {"display": "native Nmap",              "execution_class": "detection",  "install_hint": "sudo apt-get install nmap",       "profiles": {}},
         "nuclei":      {"display": "native Nuclei",            "execution_class": "web-scan",   "install_hint": "python3 tools/install_reviewed_nuclei.py  (reviewed build required)", "profiles": {}},
-        "nikto":       {"display": "native Nikto",             "execution_class": "web-scan",   "install_hint": "sudo apt-get install nikto",       "profiles": {}},
         "searchsploit":{"display": "native Searchsploit",      "execution_class": "exploit-db", "install_hint": "sudo apt-get install exploitdb",   "profiles": {}},
     }
     for profile_id, info in overrides.items():
@@ -34,9 +31,9 @@ def _tool_status(overrides):
 
 class DiscoverToolsStructure(unittest.TestCase):
 
-    def test_returns_all_four_tools(self):
+    def test_returns_all_tools(self):
         result = tm.discover_tools()
-        assert set(result.keys()) == {"nmap", "nuclei", "nikto", "searchsploit"}
+        assert set(result.keys()) == {"nmap", "nuclei", "searchsploit"}
 
     def test_each_entry_has_required_fields(self):
         result = tm.discover_tools()
@@ -57,7 +54,6 @@ class DiscoverToolsStructure(unittest.TestCase):
         assert "service-version-v1" in result["nmap"]["profiles"]
         assert "nse-vuln-v1" in result["nmap"]["profiles"]
         assert "--redvector-profile=http-headers-v1" in result["nuclei"]["profiles"]
-        assert "nikto-native-v1" in result["nikto"]["profiles"]
         assert "searchsploit-v1" in result["searchsploit"]["profiles"]
 
     def test_each_profile_has_state_and_detail(self):
@@ -66,14 +62,6 @@ class DiscoverToolsStructure(unittest.TestCase):
             for pid, info in entry["profiles"].items():
                 assert "state" in info, "missing state for {} / {}".format(name, pid)
                 assert "detail" in info, "missing detail for {} / {}".format(name, pid)
-
-    def test_nikto_not_ready_on_windows(self):
-        import sys
-        if sys.platform.startswith("linux"):
-            return  # only meaningful on non-Linux
-        result = tm.discover_tools()
-        state = result["nikto"]["profiles"].get("nikto-native-v1", {}).get("state", "")
-        assert state != tm.READY
 
     def test_idempotent(self):
         first = tm.discover_tools()
@@ -84,18 +72,18 @@ class DiscoverToolsStructure(unittest.TestCase):
 class UnavailabilityReason(unittest.TestCase):
 
     def test_ready_returns_ready(self):
-        status = _tool_status({"nikto-native-v1": {"state": tm.READY, "detail": ""}})
-        assert tm.unavailability_reason("nikto-native-v1", status) == "ready"
+        status = _tool_status({"searchsploit-v1": {"state": tm.READY, "detail": ""}})
+        assert tm.unavailability_reason("searchsploit-v1", status) == "ready"
 
     def test_missing_dependency_includes_install_hint(self):
-        status = _tool_status({"nikto-native-v1": {"state": tm.MISSING, "detail": "native nikto binary unavailable"}})
-        reason = tm.unavailability_reason("nikto-native-v1", status)
+        status = _tool_status({"tcp-discovery-v1": {"state": tm.MISSING, "detail": "nmap binary not found"}})
+        reason = tm.unavailability_reason("tcp-discovery-v1", status)
         assert reason.startswith("not installed:")
         assert "apt-get" in reason or "install" in reason.lower()
 
     def test_linux_required_says_not_enabled(self):
-        status = _tool_status({"nikto-native-v1": {"state": "Unsupported", "detail": "reviewed native Nikto requires native Linux"}})
-        reason = tm.unavailability_reason("nikto-native-v1", status)
+        status = _tool_status({"tcp-discovery-v1": {"state": "Unsupported", "detail": "reviewed native Nmap requires native Linux"}})
+        reason = tm.unavailability_reason("tcp-discovery-v1", status)
         assert reason.startswith("not enabled:")
         assert "linux" in reason.lower() or "kali" in reason.lower()
 

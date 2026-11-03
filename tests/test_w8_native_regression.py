@@ -1,4 +1,4 @@
-"""W8 regression: targeted coverage for the two W6 VMware Kali acceptance failures.
+"""W8 regression: Nuclei v3.11.0 SHA registration and candidate build controls.
 
 Failure 1 — Nuclei capabilities() returns Unsupported on Kali with v3.11.0 installed:
   Root cause: _command() spawns a subprocess that re-imports NUCLEI_BUILDS from disk;
@@ -7,28 +7,15 @@ Failure 1 — Nuclei capabilities() returns Unsupported on Kali with v3.11.0 ins
   Regression: verify the exact SHA is present in the production registry so the
   subprocess re-import from disk will recognise it.
 
-Failure 2 — native Nikto returns execution_mode "E", JSON not recognised:
-  Root cause 2a: Nikto 2.6.x emits JSONL (one JSON object per line per finding),
-    not a wrapped {"vulnerabilities":[...]} structure.
-  Root cause 2b: loopback HTTP server (_Quiet handler) crashes on ValueError: embedded
-    null byte when Nikto probes paths with null bytes.
-  Fix 2a: JSONL fallback in parse_json().
-  Fix 2b: _Quiet.handle_one_request catches ValueError/UnicodeDecodeError.
-  Regression: unit tests for parse_json() covering both standard and JSONL formats,
-  plus the diagnostic snippet in the error message.
-
-These tests are Windows-runnable (no real binary required for parse_json tests;
-SHA presence test is a pure dict lookup).
+These tests are Windows-runnable (SHA presence test is a pure dict lookup;
+candidate binary tests use mocked paths).
 """
 import hashlib
-import json
 import os
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 import pytest
 import redvector_reviewed_assessment as ra
-import redvector_reviewed_nikto as nk
 
 
 # ---------------------------------------------------------------------------
@@ -217,168 +204,3 @@ def test_nuclei_env_passed_to_subprocess():
         else: os.environ["REDVECTOR_NUCLEI_CANDIDATE_SHA256"] = old_sha
         if old_allow is None: os.environ.pop("REDVECTOR_NUCLEI_ALLOW_CANDIDATE", None)
         else: os.environ["REDVECTOR_NUCLEI_ALLOW_CANDIDATE"] = old_allow
-
-
-# ---------------------------------------------------------------------------
-# Failure 2a — parse_json() JSONL fallback
-# ---------------------------------------------------------------------------
-
-def test_parse_json_standard_wrapped():
-    """Standard wrapped format still works."""
-    payload = json.dumps({"host": "127.0.0.1", "port": "80", "vulnerabilities": [
-        {"id": "1", "method": "GET", "url": "/", "msg": "X-Frame-Options missing", "references": ""}
-    ]})
-    result = nk.parse_json(payload)
-    assert result["host"] == "127.0.0.1"
-    assert result["port"] == "80"
-    assert len(result["findings"]) == 1
-    assert result["findings"][0]["message"] == "X-Frame-Options missing"
-
-
-def test_parse_json_standard_list():
-    """Standard list-of-host-objects format still works."""
-    payload = json.dumps([{"host": "127.0.0.1", "port": "80", "vulnerabilities": [
-        {"id": "42", "method": "GET", "url": "/admin", "msg": "admin exposed", "references": ""}
-    ]}])
-    result = nk.parse_json(payload)
-    assert len(result["findings"]) == 1
-
-
-def test_parse_json_jsonl_per_finding():
-    """Nikto 2.6.x JSONL: one JSON object per line per finding."""
-    # Simulate Nikto 2.6.x JSONL output — each finding is a separate JSON line
-    lines = [
-        json.dumps({"id": "OSVDB-3092", "method": "GET", "url": "/test/", "msg": "test dir found", "references": ""}),
-        json.dumps({"id": "OSVDB-396", "method": "GET", "url": "/", "msg": "Server header", "references": ""}),
-    ]
-    payload = "\n".join(lines)
-    result = nk.parse_json(payload)
-    assert len(result["findings"]) == 2
-    messages = [f["message"] for f in result["findings"]]
-    assert "test dir found" in messages
-    assert "Server header" in messages
-
-
-def test_parse_json_jsonl_mixed_with_blank_lines():
-    """JSONL with blank lines between entries is handled."""
-    lines = [
-        "",
-        json.dumps({"id": "N1", "method": "GET", "url": "/", "msg": "finding one", "references": ""}),
-        "",
-        json.dumps({"id": "N2", "method": "HEAD", "url": "/login", "msg": "finding two", "references": ""}),
-        "",
-    ]
-    payload = "\n".join(lines)
-    result = nk.parse_json(payload)
-    assert len(result["findings"]) == 2
-
-
-def test_parse_json_jsonl_single_line():
-    """Single-line JSONL (one finding object without a vulnerabilities wrapper)."""
-    finding = json.dumps({"id": "N1", "method": "GET", "url": "/", "msg": "header missing", "references": ""})
-    result = nk.parse_json(finding)
-    assert len(result["findings"]) == 1
-    assert result["findings"][0]["message"] == "header missing"
-
-
-def test_parse_json_empty_input():
-    result = nk.parse_json("")
-    assert result["findings"] == []
-    assert "note" in result
-
-
-def test_parse_json_unrecognised_raises_with_snippet():
-    """Unrecognisable content raises NiktoError whose message includes a diagnostic snippet."""
-    garbage = "THIS IS NOT JSON AT ALL, definitely broken output" * 3
-    with pytest.raises(nk.NiktoError) as exc_info:
-        nk.parse_json(garbage)
-    msg = str(exc_info.value)
-    assert "not recognized" in msg
-    # Diagnostic snippet must be present (first ≤120 chars of input)
-    assert "THIS IS NOT JSON" in msg
-
-
-def test_parse_json_unrecognised_short_snippet():
-    """Short unrecognisable input: snippet is the whole thing."""
-    garbage = "bad data here"
-    with pytest.raises(nk.NiktoError) as exc_info:
-        nk.parse_json(garbage)
-    assert "bad data here" in str(exc_info.value)
-
-
-def test_parse_json_per_finding_requires_id_or_msg():
-    """Per-finding JSONL objects without 'id' or 'msg' are silently skipped."""
-    lines = [
-        json.dumps({"key": "value", "other": "garbage"}),   # no id or msg → skipped
-        json.dumps({"id": "NIKTO-001", "msg": "real finding", "method": "GET", "url": "/", "references": ""}),
-        json.dumps({"msg": "msg only is enough", "method": "HEAD", "url": "/login"}),
-        json.dumps({"id": "id-only"}),                        # id alone is enough
-        json.dumps({"completely": "irrelevant"}),             # no id or msg → skipped
-    ]
-    result = nk.parse_json("\n".join(lines))
-    assert len(result["findings"]) == 3
-    messages = [f["message"] for f in result["findings"]]
-    assert "real finding" in messages
-    assert "msg only is enough" in messages
-
-
-def test_nikto_nonzero_exit_empty_output_is_mode_e():
-    """Empty output with non-zero exit must be mode E (crashed), not mode A."""
-    fake_path = Path("/usr/bin/nikto")
-    with patch("redvector_reviewed_nikto._runtime", return_value=fake_path):
-        with patch("redvector_reviewed_nikto._trusted", return_value="deadbeef"):
-            with patch("redvector_reviewed_nikto._execute", return_value=(1, "", "nikto error")):
-                result = nk.run_nikto({"target": "http://127.0.0.1/", "additional_args": nk.NIKTO_MARKER})
-    assert result["execution_mode"] == "E", result.get("error")
-    assert result["success"] is False
-    assert "no output" in result.get("error", "").lower()
-
-
-def test_nikto_zero_exit_empty_output_no_evidence_is_mode_e():
-    """Zero exit, empty output, no output file created: must be mode E (no completion evidence).
-    Neither the absence of an output file nor empty stderr constitutes a verified zero-finding scan."""
-    fake_path = Path("/usr/bin/nikto")
-    with patch("redvector_reviewed_nikto._runtime", return_value=fake_path):
-        with patch("redvector_reviewed_nikto._trusted", return_value="deadbeef"):
-            with patch("redvector_reviewed_nikto._execute", return_value=(0, "", "")):
-                result = nk.run_nikto({"target": "http://127.0.0.1/", "additional_args": nk.NIKTO_MARKER})
-    assert result["execution_mode"] == "E", result.get("error")
-    assert result["success"] is False
-    assert "completion evidence" in result.get("error", "").lower()
-
-
-def test_nikto_zero_exit_stderr_only_is_mode_e():
-    """Zero exit with empty JSON output and non-empty stderr but no output file: must be mode E.
-    Arbitrary stderr text is not sufficient completion evidence for a successful assessment."""
-    fake_path = Path("/usr/bin/nikto")
-    with patch("redvector_reviewed_nikto._runtime", return_value=fake_path):
-        with patch("redvector_reviewed_nikto._trusted", return_value="deadbeef"):
-            # stderr has content but no outfile is created by the mock
-            with patch("redvector_reviewed_nikto._execute", return_value=(0, "", "- Scan end time")):
-                result = nk.run_nikto({"target": "http://127.0.0.1/", "additional_args": nk.NIKTO_MARKER})
-    assert result["execution_mode"] == "E", result.get("error")
-    assert result["success"] is False
-    assert "completion evidence" in result.get("error", "").lower()
-
-
-def test_nikto_zero_exit_nonempty_outfile_is_mode_a(tmp_path):
-    """Zero exit with a non-empty output file (Nikto wrote its results) is mode A, zero findings.
-    The non-empty output file is the sole accepted completion evidence for a zero-finding scan."""
-    # Pre-create the output file Nikto would write (zero-finding JSON is non-empty)
-    (tmp_path / "nikto.json").write_text('{"vulnerabilities":[]}', encoding="utf-8")
-
-    from contextlib import contextmanager
-
-    @contextmanager
-    def mock_tmpdir(*args, **kwargs):
-        yield str(tmp_path)
-
-    fake_path = Path("/usr/bin/nikto")
-    with patch("redvector_reviewed_nikto._runtime", return_value=fake_path):
-        with patch("redvector_reviewed_nikto._trusted", return_value="deadbeef"):
-            with patch("redvector_reviewed_nikto._execute", return_value=(0, "", "")):
-                with patch("redvector_reviewed_nikto.tempfile.TemporaryDirectory", mock_tmpdir):
-                    result = nk.run_nikto({"target": "http://127.0.0.1/", "additional_args": nk.NIKTO_MARKER})
-    assert result["execution_mode"] == "A", result.get("error")
-    assert result["success"] is True
-    assert result["findings_count"] == 0

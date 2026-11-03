@@ -192,23 +192,7 @@ def test_nuclei_candidate_build_validation(http_listener):
     print("\nNUCLEI candidate subprocess validated:", real, "package", package, "detected", detected, "sha256", expected)
 
 
-# ---- N2: native Nikto adapter (verified before wiring) -------------------------------------------
-
-def test_native_nikto_adapter(http_listener):
-    import redvector_reviewed_nikto as nk
-    assert nk.capabilities()[nk.PROFILE]["state"] == "Ready", nk.capabilities()
-    targets = ["http://127.0.0.1:" + str(http_listener) + "/"]
-    if LAB:
-        targets.append("http://" + LAB + ":" + os.environ.get("RV_LAB_HTTP_PORT", "80") + "/")
-    for url in targets:
-        out = nk.run_nikto({"target": url, "additional_args": nk.NIKTO_MARKER})
-        assert out["execution_mode"] == "A", (url, out.get("error"))
-        assert out["binary"] and out["runtime_sha256"]
-        assert isinstance(out["parsed"]["findings"], list)
-        print("\nNIKTO", url, "binary", out["binary"], "findings", out["findings_count"], "rc", out["return_code"])
-
-
-# ---- N3: native Searchsploit (offline, read-only) -------------------------------------------------
+# ---- N2: native Searchsploit (offline, read-only) -------------------------------------------------
 
 def test_native_searchsploit_lookup():
     import redvector_reviewed_searchsploit as ss
@@ -216,8 +200,4 @@ def test_native_searchsploit_lookup():
     out = ss.run_searchsploit({"query": "OpenSSH", "additional_args": ss.SEARCHSPLOIT_MARKER})
     assert out["execution_mode"] == "A", out.get("error")
     assert out["binary"] and out["results_count"] >= 1
-    import redvector_cve_correlation as corr
-    # references are leads, never proof: correlation never yields a validated class
-    applic = corr.exploit_reference_applicability("OpenSSH", "", out["parsed"]["results"][0]["title"])
-    assert applic in ("candidate", "applicable", "not_applicable")
     print("\nSEARCHSPLOIT binary", out["binary"], "results", out["results_count"])

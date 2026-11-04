@@ -31,7 +31,7 @@ export PATH="$VENV_DIR/bin:$PATH"
 
 # Ownership comes from Linux socket/process metadata, never from HTTP alone.
 backend_state() {
-    "$PYTHON" "$SCRIPT_DIR/redvector_backend_check.py" "$SCRIPT_DIR" "$SERVER_HOST" "$SERVER_PORT"
+    "$PYTHON" "$SCRIPT_DIR/redvector_banner.py" --backend-check "$SCRIPT_DIR" --host "$SERVER_HOST" --port "$SERVER_PORT"
 }
 port_error() {
     echo "[RedVector] ERROR: Port $SERVER_PORT is used by another process or its installation cannot be verified. No process was stopped." >&2

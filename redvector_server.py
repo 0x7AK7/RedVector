@@ -10931,13 +10931,13 @@ def nmap():
 
         # Opt-in reviewed handlers. Legacy tool behavior and route/schema stay intact.
         if scan_type == "--redvector-profile=service-version-v1":
-            from redvector_reviewed_profiles import run_profile
+            from redvector_tool_manager import nmap_run_profile as run_profile
             return jsonify(run_profile("nmap_scan", params))
         if scan_type == "--redvector-profile=tcp-discovery-v1":
-            from redvector_reviewed_profiles import run_discovery
+            from redvector_tool_manager import run_discovery
             return jsonify(run_discovery("nmap_scan", params))
         if scan_type == "--redvector-profile=nse-vuln-v1":
-            from redvector_reviewed_profiles import run_nse_vuln
+            from redvector_tool_manager import run_nse_vuln
             return jsonify(run_nse_vuln("nmap_scan", params))
 
         if not target:
@@ -11042,7 +11042,7 @@ def nuclei():
     try:
         params = request.get_json(silent=True) or {}
         if params.get("template")=="--redvector-profile=http-headers-v1":
-            from redvector_reviewed_assessment import run_nuclei
+            from redvector_tool_manager import run_nuclei
             return jsonify(run_nuclei(params))
 
         target = params.get("target", "")
@@ -11603,7 +11603,7 @@ def nikto():
     """Execute nikto with enhanced logging"""
     try:
         params = request.get_json(silent=True) or {}
-        from redvector_reviewed_assessment import HTTP_ASSESS_MARKER,run_http_assessment
+        from redvector_tool_manager import HTTP_ASSESS_MARKER,run_http_assessment
         if params.get("additional_args")==HTTP_ASSESS_MARKER:
             return jsonify(run_http_assessment("nikto_scan",params))
         target = params.get("target", "")
@@ -12117,7 +12117,7 @@ def rustscan():
     """Execute Rustscan for ultra-fast port scanning with enhanced logging"""
     try:
         params = request.get_json(silent=True) or {}
-        from redvector_reviewed_assessment import SCAN_MARKER,run_tcp_connect
+        from redvector_tool_manager import SCAN_MARKER,run_tcp_connect
         if params.get("additional_args")==SCAN_MARKER:
             return jsonify(run_tcp_connect("rustscan_fast_scan",params))
         target = params.get("target", "")
@@ -12156,7 +12156,7 @@ def masscan():
     """Execute Masscan for high-speed Internet-scale port scanning with intelligent rate limiting"""
     try:
         params = request.get_json(silent=True) or {}
-        from redvector_reviewed_assessment import SCAN_MARKER,run_tcp_connect
+        from redvector_tool_manager import SCAN_MARKER,run_tcp_connect
         if params.get("additional_args")==SCAN_MARKER:
             return jsonify(run_tcp_connect("masscan_high_speed",params))
         target = params.get("target", "")
@@ -12203,7 +12203,7 @@ def nmap_advanced():
     try:
         params = request.get_json(silent=True) or {}
         if params.get("scan_type")=="--redvector-profile=service-version-v1":
-            from redvector_reviewed_profiles import run_profile
+            from redvector_tool_manager import nmap_run_profile as run_profile
             allowed={"target","scan_type","ports","timing","nse_scripts","os_detection","version_detection","aggressive","stealth","additional_args"}
             if set(params)-allowed or params.get("timing")!="T2" or params.get("nse_scripts","") or any(params.get(k,False) for k in ("os_detection","aggressive","stealth")) or params.get("version_detection") is not True:
                 return jsonify({"success":False,"error":"Exact reviewed advanced service profile required."}),400
@@ -12762,7 +12762,7 @@ def checksec():
     try:
         params = request.get_json(silent=True) or {}
         if isinstance(params.get("binary"),str) and params["binary"].startswith("rv-artifact-v1:"):
-            from redvector_reviewed_artifacts import run_profile
+            from redvector_tool_manager import artifact_run_profile as run_profile
             return jsonify(run_profile("checksec_analyze",params))
 
         binary = params.get("binary", "")
@@ -12791,7 +12791,7 @@ def xxd():
     try:
         params = request.get_json(silent=True) or {}
         if isinstance(params.get("file_path"),str) and params["file_path"].startswith("rv-artifact-v1:"):
-            from redvector_reviewed_artifacts import run_profile
+            from redvector_tool_manager import artifact_run_profile as run_profile
             return jsonify(run_profile("xxd_hexdump",params))
 
         file_path = params.get("file_path", "")
@@ -12831,7 +12831,7 @@ def strings():
     try:
         params = request.get_json(silent=True) or {}
         if isinstance(params.get("file_path"),str) and params["file_path"].startswith("rv-artifact-v1:"):
-            from redvector_reviewed_artifacts import run_profile
+            from redvector_tool_manager import artifact_run_profile as run_profile
             return jsonify(run_profile("strings_extract",params))
 
         file_path = params.get("file_path", "")
@@ -12867,7 +12867,7 @@ def objdump():
     try:
         params = request.get_json(silent=True) or {}
         if isinstance(params.get("binary"),str) and params["binary"].startswith("rv-artifact-v1:"):
-            from redvector_reviewed_artifacts import run_profile
+            from redvector_tool_manager import artifact_run_profile as run_profile
             return jsonify(run_profile("objdump_analyze",params))
 
         binary = params.get("binary", "")
@@ -13712,7 +13712,7 @@ def jaeles():
     """Execute Jaeles for advanced vulnerability scanning with custom signatures"""
     try:
         params = request.get_json(silent=True) or {}
-        from redvector_reviewed_assessment import HTTP_ASSESS_MARKER,run_http_assessment
+        from redvector_tool_manager import HTTP_ASSESS_MARKER,run_http_assessment
         if params.get("additional_args")==HTTP_ASSESS_MARKER:
             return jsonify(run_http_assessment("jaeles_vulnerability_scan",params))
         url = params.get("url", "")
@@ -13795,7 +13795,7 @@ def httpx():
     """Execute httpx for fast HTTP probing and technology detection"""
     try:
         params = request.get_json(silent=True) or {}
-        from redvector_reviewed_assessment import HTTP_ASSESS_MARKER,run_http_assessment
+        from redvector_tool_manager import HTTP_ASSESS_MARKER,run_http_assessment
         if params.get("additional_args")==HTTP_ASSESS_MARKER:
             return jsonify(run_http_assessment("httpx_probe",params))
         target = params.get("target", "")
@@ -14722,7 +14722,7 @@ def http_framework_endpoint():
     """Enhanced HTTP testing framework (Burp Suite alternative)"""
     try:
         params = request.get_json(silent=True) or {}
-        from redvector_reviewed_assessment import HTTP_PROFILE,run_http
+        from redvector_tool_manager import HTTP_PROFILE,run_http
         if params.get("action")==HTTP_PROFILE:
             return jsonify(run_http(params))
         if params.get("action")=="repeater" and isinstance(params.get("request"),dict) and params["request"].get("action")==HTTP_PROFILE:
@@ -15055,7 +15055,7 @@ def wafw00f():
     """Execute wafw00f to identify and fingerprint WAF products with enhanced logging"""
     try:
         params = request.get_json(silent=True) or {}
-        from redvector_reviewed_assessment import HTTP_ASSESS_MARKER,run_http_assessment
+        from redvector_tool_manager import HTTP_ASSESS_MARKER,run_http_assessment
         if params.get("additional_args")==HTTP_ASSESS_MARKER:
             return jsonify(run_http_assessment("wafw00f_scan",params))
         target = params.get("target", "")
@@ -19443,7 +19443,7 @@ def searchsploit():
         params = request.get_json(silent=True) or {}
         # Opt-in reviewed handler. Legacy tool behavior, route and schema stay intact; only a
         # request carrying the reserved reviewed marker is routed to the confined adapter.
-        from redvector_reviewed_searchsploit import SEARCHSPLOIT_MARKER, run_searchsploit
+        from redvector_tool_manager import SEARCHSPLOIT_MARKER, run_searchsploit
         if params.get("additional_args") == SEARCHSPLOIT_MARKER:
             return jsonify(run_searchsploit(params))
         query = params.get("query", "")

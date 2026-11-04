@@ -1,0 +1,5 @@
+{
+  "name": "RedVector Diagnostic Plugin",
+  "version": "0.1.0",
+  "description": "Private, local, read-only diagnostics for a locally running RedVector backend (health, service status, version). Desktop-only; runs a local stdio MCP server."
+}

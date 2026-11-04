@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "redvector-diagnostics": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["${PLUGIN_ROOT}/adapter/redvector_diag_adapter.py"],
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}

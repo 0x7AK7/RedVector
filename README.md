@@ -67,12 +67,13 @@ graph TD
 |---|---|
 | `redvector_server.py` | Flask backend, orchestration, security-tool execution, autonomous workflows, process management and reporting |
 | `redvector_mcp.py` | FastMCP interface exposing RedVector capabilities to AI clients |
+| `redvector_tool_manager.py` | Runtime tool registry and manager backing RedVector's MCP tool surface |
 | `redvector-mcp.json` | Example MCP configuration |
 | `start_redvector.sh` | Linux launcher, verifies backend ownership, starts backend on demand and runs MCP client |
-| `redvector_backend_check.py` | Linux socket/process ownership check used by the launcher |
-| `redvector_banner.py` | Shared original terminal banner and startup panel; never starts the backend |
+| `redvector_banner.py` | Shared original terminal banner and startup panel; also performs the Linux socket/process ownership backend identity check via `--backend-check` (migrated from the removed `redvector_backend_check.py`); never starts the backend |
 | `install_claude_desktop_kali.sh` | Optional Claude Desktop installer for Kali, Debian and Ubuntu |
 | `install_redvector_claude_mcp.sh` | Registers RedVector with Claude Desktop on Linux using its own directory |
+| `redvector_ai_desktop_manager.sh` | Unified AI desktop manager: install and manage Claude Desktop (with RedVector MCP) or ChatGPT Desktop |
 | `start_redvector.ps1` | Windows PowerShell launcher |
 | `requirements.txt` | Python dependencies |
 
@@ -145,6 +146,28 @@ Or start the backend directly:
 ```bash
 python redvector_server.py
 ```
+
+### AI Desktop Manager (Claude or ChatGPT)
+
+`redvector_ai_desktop_manager.sh` is a unified, menu-driven manager that installs and manages **one** AI desktop client at a time. Run it after cloning and installing the Python dependencies above:
+
+```bash
+chmod +x redvector_ai_desktop_manager.sh
+./redvector_ai_desktop_manager.sh
+```
+
+```text
+REDVECTOR  —  AI DESKTOP MANAGER
+
+  [1] Claude Desktop    Install Claude and register the RedVector MCP server
+  [2] ChatGPT Desktop   Install ChatGPT and check integration compatibility
+  [0] Exit
+```
+
+- **Claude Desktop** — installs from the verified official APT repository (signing-key fingerprint checked) and registers RedVector as an MCP server by launching `start_redvector.sh`. Existing MCP servers and any existing RedVector environment variables are preserved, a timestamped backup is written, and the configuration is updated atomically.
+- **ChatGPT Desktop** — installs the official OpenAI Linux-preview package and checks integration compatibility. ChatGPT Desktop does not use Claude Desktop's local MCP configuration, so direct RedVector MCP connectivity is **not** configured or claimed.
+
+The two clients are managed independently; return to the main menu to switch. Run the manager as your normal desktop user (it uses `sudo` only for package steps). Use `--status` for a non-interactive summary and `--help` for usage. This manager is an optional convenience; the manual Claude Desktop setup below remains fully supported.
 
 ### Claude Desktop automatic setup (Kali Linux)
 
@@ -971,19 +994,22 @@ The clean public repository is intentionally small:
 RedVector/
 ├── assets/
 │   └── Redvector-logo4.png
+├── docs/
+│   └── ... (planning notes and reference checklists)
 ├── LICENSE
 ├── README.md
-├── THIRD_PARTY_NOTICES.md
 ├── requirements.txt
 ├── redvector_server.py
 ├── redvector_mcp.py
+├── redvector_tool_manager.py
 ├── redvector-mcp.json
 ├── start_redvector.sh
-├── redvector_backend_check.py
 ├── redvector_banner.py
+├── redvector_ai_desktop_manager.sh
 ├── install_claude_desktop_kali.sh
 ├── install_redvector_claude_mcp.sh
 ├── start_redvector.ps1
+├── .gitattributes
 └── .gitignore
 ```
 

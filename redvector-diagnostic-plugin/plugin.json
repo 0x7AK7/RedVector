@@ -1,5 +1,6 @@
 {
-  "name": "RedVector Diagnostic Plugin",
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "redvector-diagnostic-plugin",
   "version": "0.1.0",
   "description": "Private, local, read-only diagnostics for a locally running RedVector backend (health, service status, version). Desktop-only; runs a local stdio MCP server."
 }

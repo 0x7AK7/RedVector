@@ -601,40 +601,73 @@ chatgpt_log() {  # chatgpt_log "message"  — best-effort, always returns 0
   return 0
 }
 
+# Print the PIDs of LIVE ChatGPT Desktop processes (one per line). A process
+# qualifies ONLY when its real executable (/proc/<pid>/exe) basename is the
+# chatgpt binary. This deliberately excludes the RedVector manager script (which
+# runs under bash), pagers/editors, and any other command whose arguments merely
+# contain the word "chatgpt"; it also excludes defunct/zombie processes (whose
+# /proc/<pid>/exe is empty). Best-effort: prints nothing if pgrep/ps or /proc are
+# unavailable. It is used only for status, never to block launching.
+chatgpt_running_pids() {
+  command -v pgrep >/dev/null 2>&1 || return 0
+  local p exe st
+  for p in $(pgrep -f chatgpt 2>/dev/null); do
+    exe="$(readlink -f "/proc/$p/exe" 2>/dev/null || true)"
+    [[ "${exe##*/}" == chatgpt* ]] || continue
+    st="$(ps -o state= -p "$p" 2>/dev/null || true)"
+    [[ -n "$st" && "$st" != Z* ]] && printf '%s\n' "$p"
+  done
+}
+
 chatgpt_start() {
   chatgpt_installed || { err 'ChatGPT Desktop is not installed. Choose option 1.'; chatgpt_log 'ERROR start aborted: ChatGPT not installed'; return 1; }
   gui_available     || { err 'No active graphical display detected. Log into a desktop session first.'; chatgpt_log 'ERROR start aborted: no graphical session (DISPLAY/WAYLAND_DISPLAY unset)'; return 1; }
   command -v chatgpt >/dev/null 2>&1 || { err 'The chatgpt executable is not on PATH.'; chatgpt_log 'ERROR start aborted: chatgpt not found on PATH'; return 1; }
 
-  # Avoid spawning a duplicate when an instance is already running. Matching the
-  # "chatgpt" binary is best-effort and deliberately narrow: it never matches
-  # Claude Desktop (claude-desktop) nor a standalone Codex CLI (codex), so this
-  # can neither launch Claude by mistake nor treat a Codex CLI as ChatGPT.
-  if command -v pgrep >/dev/null 2>&1 && pgrep -f chatgpt >/dev/null 2>&1; then
-    ok 'ChatGPT Desktop is already running; not starting a second instance.'
-    chatgpt_log 'INFO existing chatgpt instance detected; skipped duplicate launch'
-    return 0
+  # Detect a genuine, LIVE ChatGPT process by its real executable (see
+  # chatgpt_running_pids). This is used ONLY to inform the user and NEVER to skip
+  # launching: the previous bare `pgrep -f chatgpt` early-return reported a false
+  # "already running" (matching helper subprocesses, stale/zombie entries or
+  # unrelated commands) while no usable window was open.
+  local had_instance=0
+  [[ -n "$(chatgpt_running_pids)" ]] && had_instance=1
+  if [[ "$had_instance" == 1 ]]; then
+    info 'An existing ChatGPT Desktop process is running; the launch below will focus/raise its window (the app is single-instance).'
+    chatgpt_log 'INFO existing live chatgpt process detected via /proc; relaunch will focus it'
   fi
 
   # Default view limitation: the official OpenAI Linux desktop app bundles
   # ChatGPT Chat, ChatGPT Work and Codex in ONE application and exposes no
   # documented URI scheme, command-line flag, XDG desktop action or default-view
-  # setting to force the regular Chat interface. Unlike Claude Desktop
-  # (claude://claude.ai/new) there is no verified equivalent, so we launch the
-  # graphical application normally; it opens its own default/last-used view
-  # (which may be Codex). We deliberately do NOT invent an unsupported URI/flag.
+  # setting to force the regular Chat interface. We launch the graphical app
+  # normally (no invented URI/flag); it opens its own default/last-used view
+  # (which may be Codex). The OpenAI app is single-instance, so relaunching
+  # focuses an existing window instead of creating a duplicate and opens a fresh
+  # window when none exists -- which is why we always launch rather than
+  # short-circuiting on a process match.
   info 'Starting ChatGPT Desktop...'
-  chatgpt_log 'INFO launching chatgpt graphical app (no documented Chat deep link available; opens app default view)'
+  chatgpt_log 'INFO launching chatgpt graphical app (no documented Chat deep link; opens app default view)'
   nohup chatgpt >/dev/null 2>&1 </dev/null &
   local pid=$!
-  sleep 1
-  if kill -0 "$pid" 2>/dev/null; then
-    ok "Launch requested (PID $pid)."
-  elif command -v pgrep >/dev/null 2>&1 && pgrep -f chatgpt >/dev/null 2>&1; then
-    ok 'ChatGPT Desktop launched (running in the background).'
+  sleep 2
+
+  # Report accurately. A bare PID is NOT success: confirm a live chatgpt binary
+  # process. Window presence and focus cannot be guaranteed from a shell under
+  # X11/Wayland, so we say so rather than claim a window exists.
+  if [[ -n "$(chatgpt_running_pids)" ]]; then
+    if [[ "$had_instance" == 1 ]]; then
+      ok 'ChatGPT Desktop is running; asked the existing single-instance app to open/focus its window.'
+    else
+      ok 'ChatGPT Desktop started; a live application process is running.'
+    fi
+    info 'If no window appears, it may be minimized or on another workspace. This manager does not force window focus (no wmctrl/xdotool dependency).'
+    chatgpt_log 'INFO chatgpt live process confirmed after launch (window presence not verified)'
+  elif kill -0 "$pid" 2>/dev/null; then
+    ok 'ChatGPT Desktop launch requested (process still starting up).'
+    chatgpt_log 'INFO chatgpt launcher still alive shortly after start; window not yet confirmed'
   else
-    warn 'The launch process exited quickly. Run "chatgpt" in a terminal to see any error.'
-    chatgpt_log 'WARN launch process exited quickly; run chatgpt in a terminal to see the error'
+    warn 'ChatGPT Desktop did not start. Run "chatgpt" in a terminal to see the error.'
+    chatgpt_log 'WARN chatgpt launch failed; no live process detected after start'
   fi
 }
 
@@ -677,7 +710,19 @@ chatgpt_menu() {
 # ═══════════════════════════════════════════════════════════════════════════════
 banner_main() {
   clear 2>/dev/null || true
-  printf "${GREEN}"
+  # Classic terminal green (#00FF41) on a dark background (#0B0F0B) via truecolor
+  # ANSI, applied to the RedVector banner ONLY and reset at the end of every line
+  # so no foreground/background styling leaks into the menu, prompt or elsewhere.
+  # Graceful fallback to the existing bright green when the terminal does not
+  # advertise truecolor; success/warning/error colours are untouched.
+  local g bg
+  if [[ "${COLORTERM:-}" == *truecolor* || "${COLORTERM:-}" == *24bit* ]]; then
+    g='\033[1;38;2;0;255;65m'   # #00FF41
+    bg='\033[48;2;11;15;11m'    # #0B0F0B (banner-scoped)
+  else
+    g="$GREEN"; bg=''
+  fi
+  printf "%b" "${bg}${g}"
   cat <<'ART'
    ██████╗ ███████╗██████╗ ██╗   ██╗███████╗ ██████╗████████╗ ██████╗ ██████╗
    ██╔══██╗██╔════╝██╔══██╗██║   ██║██╔════╝██╔════╝╚══██╔══╝██╔═══██╗██╔══██╗
@@ -686,12 +731,12 @@ banner_main() {
    ██║  ██║███████╗██████╔╝ ╚████╔╝ ███████╗╚██████╗   ██║   ╚██████╔╝██║  ██║
    ╚═╝  ╚═╝╚══════╝╚═════╝   ╚═══╝  ╚══════╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ART
-  printf "${RESET}"
-  say "        ${GREEN}A I   D E S K T O P   M A N A G E R${RESET}  ${DIM}v1.0${RESET}"
-  say "        ${GREEN}${BOLD}By Adam K.${RESET}"
+  printf "%b" "${RESET}"
+  say "        ${bg}${g}A I   D E S K T O P   M A N A G E R${RESET}  ${DIM}v1.0${RESET}"
+  say "        ${bg}${g}By Adam K.${RESET}"
   hr
-  say " ${GREEN}SYSTEM${RESET}   ${OS_ID:-unknown} ${OS_VERSION:-} | $(uname -m 2>/dev/null) $([[ "$IS_WSL" == 1 ]] && printf '| WSL2')"
-  say " ${GREEN}PROJECT${RESET}  ${DIM}${PROJECT}${RESET}"
+  say " ${bg}${g}SYSTEM${RESET}   ${OS_ID:-unknown} ${OS_VERSION:-} | $(uname -m 2>/dev/null) $([[ "$IS_WSL" == 1 ]] && printf '| WSL2')"
+  say " ${bg}${g}PROJECT${RESET}  ${DIM}${PROJECT}${RESET}"
   hr
   printf '\n'
   say "   ${BOLD}CHOOSE YOUR AI CLIENT${RESET}"

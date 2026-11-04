@@ -68,11 +68,11 @@ info() { printf "${CYAN}[INFO]${RESET} %s\n"  "$*"; }
 warn() { printf "${YELLOW}[WARN]${RESET} %s\n" "$*"; }
 err()  { printf "${RED}[ERROR]${RESET} %s\n"  "$*" >&2; }
 hr()   { printf "${DIM}%s${RESET}\n" '────────────────────────────────────────────────────────────'; }
-pause(){ printf '\n'; read -r -p 'Press Enter to return to the menu...' _ || true; }
+pause(){ printf '\n'; read -r -e -p 'Press Enter to return to the menu...' _ || true; }
 
 confirm() {  # confirm "Question?"  -> 0 on explicit yes, 1 otherwise (default No)
   local answer
-  read -r -p "$1 [y/N]: " answer || return 1
+  read -r -e -p "$1 [y/N]: " answer || return 1
   [[ "$answer" == [yY] || "$answer" == [yY][eE][sS] ]]
 }
 
@@ -333,16 +333,85 @@ PY
   info 'The live MCP handshake is performed by Claude Desktop itself; this check confirms registration, not an active session.'
 }
 
+# ── Best-effort Claude Desktop startup diagnostics ─────────────────────────────
+# Appends ONLY explicitly constructed, non-sensitive status/error strings to a
+# user-writable state file. It never captures process output (which could carry
+# tokens), never logs environment variables or MCP configuration, and never
+# fails its caller: every step is guarded so a logging problem cannot stop a
+# launch. A simple size cap keeps the file from growing without bound.
+CLAUDE_START_LOG="${XDG_STATE_HOME:-$HOME/.local/state}/redvector/claude-desktop-startup.log"
+CLAUDE_START_LOG_MAX=262144   # 256 KiB; truncate once exceeded
+
+claude_log() {  # claude_log "message"  — best-effort, always returns 0
+  local dir ts size
+  dir="$(dirname -- "$CLAUDE_START_LOG")"
+  mkdir -p -- "$dir" 2>/dev/null || return 0
+  if [[ -f "$CLAUDE_START_LOG" ]]; then
+    size="$(wc -c < "$CLAUDE_START_LOG" 2>/dev/null || printf 0)"
+    if [[ "${size:-0}" =~ ^[0-9]+$ && "$size" -gt "$CLAUDE_START_LOG_MAX" ]]; then
+      : > "$CLAUDE_START_LOG" 2>/dev/null || true
+    fi
+  fi
+  ts="$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || true)"
+  printf '%s %s\n' "${ts:-[no-date]}" "$1" >> "$CLAUDE_START_LOG" 2>/dev/null || true
+  return 0
+}
+
 claude_start() {
-  claude_installed || { err 'Claude Desktop is not installed. Choose option 1.'; return 1; }
-  gui_available   || { err 'No graphical session detected (DISPLAY/WAYLAND_DISPLAY).'; return 1; }
-  command -v claude-desktop >/dev/null 2>&1 || { err 'The claude-desktop command was not found on PATH.'; return 1; }
+  claude_installed || { err 'Claude Desktop is not installed. Choose option 1.'; claude_log 'ERROR start aborted: claude-desktop package not installed'; return 1; }
+  gui_available   || { err 'No graphical session detected (DISPLAY/WAYLAND_DISPLAY).'; claude_log 'ERROR start aborted: no graphical session (DISPLAY/WAYLAND_DISPLAY unset)'; return 1; }
+  command -v claude-desktop >/dev/null 2>&1 || { err 'The claude-desktop command was not found on PATH.'; claude_log 'ERROR start aborted: claude-desktop not found on PATH'; return 1; }
+
+  # Prefer the officially documented deep link. Per Anthropic's "Open Claude
+  # Desktop with a link" support article, claude://claude.ai/new opens the
+  # regular Chat interface and launches Claude Desktop first if it is not
+  # already running. Dispatching it with xdg-open also hands off to an existing
+  # instance instead of spawning a duplicate. Used ONLY when the claude:// URL
+  # scheme has a registered handler; otherwise we launch the binary directly.
+  # No invented flags, no binary patching: this is the vendor-documented route.
+  local chat_link='claude://claude.ai/new' handler=''
+  command -v xdg-mime >/dev/null 2>&1 && handler="$(xdg-mime query default x-scheme-handler/claude 2>/dev/null || true)"
+
+  if command -v xdg-open >/dev/null 2>&1 && [[ -n "$handler" ]]; then
+    info 'Opening Claude Desktop to a new Chat (claude://claude.ai/new)...'
+    nohup xdg-open "$chat_link" >/dev/null 2>&1 </dev/null &
+    if command -v pgrep >/dev/null 2>&1; then
+      local i
+      for i in 1 2 3 4 5; do
+        pgrep -f 'claude-desktop/claude-desktop' >/dev/null 2>&1 && break
+        sleep 1
+      done
+      if pgrep -f 'claude-desktop/claude-desktop' >/dev/null 2>&1; then
+        ok 'Claude Desktop is running; requested the Chat interface via the official deep link.'
+      else
+        warn 'Claude Desktop did not appear within a few seconds. If no Chat window opens, run: xdg-open "claude://claude.ai/new"'
+        claude_log 'WARN deep link dispatched but no claude-desktop process detected within timeout'
+      fi
+    else
+      sleep 2
+      ok 'Requested Claude Desktop to open a new Chat (claude://claude.ai/new).'
+    fi
+    return 0
+  fi
+
+  # Fallback: no claude:// handler registered, or xdg-open unavailable. Launch
+  # the graphical executable directly. This does NOT force Chat; Claude Desktop
+  # restores whatever interface (Chat or Code) it last used.
+  warn 'claude:// Chat deep link unavailable; launching Claude Desktop directly (it will open in its last-used view).'
+  claude_log 'INFO deep link unavailable (no xdg-open or no claude:// handler); using direct claude-desktop launch'
+
+  # Avoid spawning a duplicate when an instance is already running.
+  if command -v pgrep >/dev/null 2>&1 && pgrep -f 'claude-desktop/claude-desktop' >/dev/null 2>&1; then
+    ok 'Claude Desktop is already running; not starting a second instance.'
+    return 0
+  fi
+
   info 'Starting Claude Desktop...'
   nohup claude-desktop >/dev/null 2>&1 </dev/null &
   local pid=$!
   sleep 1
   if kill -0 "$pid" 2>/dev/null; then ok "Launch requested (PID $pid)."
-  else warn 'The launch process exited quickly. Run "claude-desktop" in a terminal to see any error.'; fi
+  else warn 'The launch process exited quickly. Run "claude-desktop" in a terminal to see any error.'; claude_log 'WARN direct launch exited quickly; run claude-desktop in a terminal to see the error'; fi
 }
 
 claude_update() {
@@ -358,7 +427,7 @@ claude_update() {
 claude_menu() {
   while true; do
     banner_claude
-    read -r -p "  ${PROMPT_USER}@${PROMPT_HOST}:~\$ Select option [0-5]: " choice || break
+    read -r -e -p "  ${PROMPT_USER}@${PROMPT_HOST}:~\$ Select option [0-5]: " choice || break
     printf '\n'
     case "$choice" in
       1) claude_install       || warn 'Installation did not complete.' ;;
@@ -458,9 +527,28 @@ chatgpt_check() {
   if chatgpt_installed; then
     ok 'ChatGPT Desktop detected.'
     command -v chatgpt >/dev/null 2>&1 && say "     command: $(command -v chatgpt)"
-    command -v dpkg-query >/dev/null 2>&1 && dpkg-query -W -f='     version: ${Version}\n' chatgpt 2>/dev/null || true
-    command -v rpm        >/dev/null 2>&1 && rpm -q chatgpt 2>/dev/null || true
-    command -v pacman     >/dev/null 2>&1 && pacman -Q chatgpt 2>/dev/null || true
+    # Resolve a version from whichever package database actually knows chatgpt.
+    # Previously all three managers were probed unconditionally; `rpm -q` prints
+    # "package chatgpt is not installed" to STDOUT (so 2>/dev/null did not hide
+    # it), which leaked a contradictory "not installed" line beside the detected
+    # version. Here we capture output and report ONLY a real version, so a
+    # missing dpkg/rpm/pacman entry never implies the app is absent.
+    local ver=''
+    if command -v dpkg-query >/dev/null 2>&1; then
+      ver="$(dpkg-query -W -f='${Version}' chatgpt 2>/dev/null || true)"
+    fi
+    if [[ -z "$ver" ]] && command -v rpm >/dev/null 2>&1; then
+      ver="$(rpm -q --qf '%{VERSION}-%{RELEASE}' chatgpt 2>/dev/null || true)"
+      [[ "$ver" == *'is not installed'* ]] && ver=''
+    fi
+    if [[ -z "$ver" ]] && command -v pacman >/dev/null 2>&1; then
+      ver="$(pacman -Q chatgpt 2>/dev/null | awk 'NR==1{print $2}' || true)"
+    fi
+    if [[ -n "$ver" ]]; then
+      say "     version: $ver"
+    else
+      say "     version: present (executable verified; not registered with a system package manager)"
+    fi
   else
     warn 'ChatGPT package/command not found. Choose "Install ChatGPT Desktop".'
   fi
@@ -491,13 +579,63 @@ chatgpt_integration_compat() {
   info "ChatGPT Desktop docs: $CHATGPT_DOCS"
 }
 
+# ── Best-effort ChatGPT Desktop startup diagnostics ───────────────────────────
+# Same safe conventions as claude_log: only explicitly constructed, non-sensitive
+# strings; never captures process output (which could carry tokens); never logs
+# environment variables or configuration; never fails its caller; size-capped.
+CHATGPT_START_LOG="${XDG_STATE_HOME:-$HOME/.local/state}/redvector/chatgpt-desktop-startup.log"
+CHATGPT_START_LOG_MAX=262144   # 256 KiB; truncate once exceeded
+
+chatgpt_log() {  # chatgpt_log "message"  — best-effort, always returns 0
+  local dir ts size
+  dir="$(dirname -- "$CHATGPT_START_LOG")"
+  mkdir -p -- "$dir" 2>/dev/null || return 0
+  if [[ -f "$CHATGPT_START_LOG" ]]; then
+    size="$(wc -c < "$CHATGPT_START_LOG" 2>/dev/null || printf 0)"
+    if [[ "${size:-0}" =~ ^[0-9]+$ && "$size" -gt "$CHATGPT_START_LOG_MAX" ]]; then
+      : > "$CHATGPT_START_LOG" 2>/dev/null || true
+    fi
+  fi
+  ts="$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || true)"
+  printf '%s %s\n' "${ts:-[no-date]}" "$1" >> "$CHATGPT_START_LOG" 2>/dev/null || true
+  return 0
+}
+
 chatgpt_start() {
-  chatgpt_installed || { err 'ChatGPT Desktop is not installed. Choose option 1.'; return 1; }
-  gui_available     || { err 'No active graphical display detected. Log into a desktop session first.'; return 1; }
-  command -v chatgpt >/dev/null 2>&1 || { err 'The chatgpt executable is not on PATH.'; return 1; }
+  chatgpt_installed || { err 'ChatGPT Desktop is not installed. Choose option 1.'; chatgpt_log 'ERROR start aborted: ChatGPT not installed'; return 1; }
+  gui_available     || { err 'No active graphical display detected. Log into a desktop session first.'; chatgpt_log 'ERROR start aborted: no graphical session (DISPLAY/WAYLAND_DISPLAY unset)'; return 1; }
+  command -v chatgpt >/dev/null 2>&1 || { err 'The chatgpt executable is not on PATH.'; chatgpt_log 'ERROR start aborted: chatgpt not found on PATH'; return 1; }
+
+  # Avoid spawning a duplicate when an instance is already running. Matching the
+  # "chatgpt" binary is best-effort and deliberately narrow: it never matches
+  # Claude Desktop (claude-desktop) nor a standalone Codex CLI (codex), so this
+  # can neither launch Claude by mistake nor treat a Codex CLI as ChatGPT.
+  if command -v pgrep >/dev/null 2>&1 && pgrep -f chatgpt >/dev/null 2>&1; then
+    ok 'ChatGPT Desktop is already running; not starting a second instance.'
+    chatgpt_log 'INFO existing chatgpt instance detected; skipped duplicate launch'
+    return 0
+  fi
+
+  # Default view limitation: the official OpenAI Linux desktop app bundles
+  # ChatGPT Chat, ChatGPT Work and Codex in ONE application and exposes no
+  # documented URI scheme, command-line flag, XDG desktop action or default-view
+  # setting to force the regular Chat interface. Unlike Claude Desktop
+  # (claude://claude.ai/new) there is no verified equivalent, so we launch the
+  # graphical application normally; it opens its own default/last-used view
+  # (which may be Codex). We deliberately do NOT invent an unsupported URI/flag.
   info 'Starting ChatGPT Desktop...'
+  chatgpt_log 'INFO launching chatgpt graphical app (no documented Chat deep link available; opens app default view)'
   nohup chatgpt >/dev/null 2>&1 </dev/null &
-  ok "Launch requested (PID $!)."
+  local pid=$!
+  sleep 1
+  if kill -0 "$pid" 2>/dev/null; then
+    ok "Launch requested (PID $pid)."
+  elif command -v pgrep >/dev/null 2>&1 && pgrep -f chatgpt >/dev/null 2>&1; then
+    ok 'ChatGPT Desktop launched (running in the background).'
+  else
+    warn 'The launch process exited quickly. Run "chatgpt" in a terminal to see any error.'
+    chatgpt_log 'WARN launch process exited quickly; run chatgpt in a terminal to see the error'
+  fi
 }
 
 chatgpt_update() {
@@ -519,7 +657,7 @@ chatgpt_update() {
 chatgpt_menu() {
   while true; do
     banner_chatgpt
-    read -r -p "  ${PROMPT_USER}@${PROMPT_HOST}:~\$ Select option [0-5]: " choice || break
+    read -r -e -p "  ${PROMPT_USER}@${PROMPT_HOST}:~\$ Select option [0-5]: " choice || break
     printf '\n'
     case "$choice" in
       1) chatgpt_install || warn 'Installation did not complete.' ;;
@@ -550,9 +688,10 @@ banner_main() {
 ART
   printf "${RESET}"
   say "        ${GREEN}A I   D E S K T O P   M A N A G E R${RESET}  ${DIM}v1.0${RESET}"
+  say "        ${GREEN}${BOLD}By Adam K.${RESET}"
   hr
-  say " ${CYAN}SYSTEM${RESET}   ${OS_ID:-unknown} ${OS_VERSION:-} | $(uname -m 2>/dev/null) $([[ "$IS_WSL" == 1 ]] && printf '| WSL2')"
-  say " ${CYAN}PROJECT${RESET}  ${DIM}${PROJECT}${RESET}"
+  say " ${GREEN}SYSTEM${RESET}   ${OS_ID:-unknown} ${OS_VERSION:-} | $(uname -m 2>/dev/null) $([[ "$IS_WSL" == 1 ]] && printf '| WSL2')"
+  say " ${GREEN}PROJECT${RESET}  ${DIM}${PROJECT}${RESET}"
   hr
   printf '\n'
   say "   ${BOLD}CHOOSE YOUR AI CLIENT${RESET}"
@@ -682,7 +821,7 @@ print_status() {
 main_menu() {
   while true; do
     banner_main
-    read -r -p "  ${PROMPT_USER}@${PROMPT_HOST}:~\$ Select [0-2]: " choice || break
+    read -r -e -p "  ${PROMPT_USER}@${PROMPT_HOST}:~\$ Select [0-2]: " choice || break
     printf '\n'
     case "$choice" in
       1) claude_menu ;;

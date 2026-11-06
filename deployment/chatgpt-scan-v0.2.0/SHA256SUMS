@@ -1,0 +1,8 @@
+c219aabbd602eac01a41a39569909a2432146529f216a1ffc43233a9491f2418 *redvector-scan-plugin-dev/README.md
+594756ccd7992f08b4863a0dab49d85cfdd3527c0e768ce3d980dddd057a1d81 *redvector-scan-plugin-dev/SECURITY.md
+89f1938822397efdb58b7899bfd0243e35ff29ccfcf0e82161c4a4a4129462e1 *redvector-scan-plugin-dev/adapter/redvector_scan_adapter.py
+cd7e3273ccf431f1acb36affa761b9ba79e73c70663b27cb6b957c50fdf93729 *redvector-scan-plugin-dev/config/scan_scope.example.conf
+cbcec1d6c098909eae520cccaef9440a7f2d6da42325a87e49263ab4aef9f81a *redvector-scan-plugin-dev/mcp.json
+e9b3577c1efc19e882d63c9d31a648b6810cf8f52c05f5bb01d7ab9a2b41cc1c *redvector-scan-plugin-dev/plugin.json
+e6f7e22ca9245e8bb9d40d6f0cfb5f674447475059d38fa15727c91a636a61b7 *redvector-scan-plugin-dev/tests/test_scan_plugin.py
+9479ab5d2a4c6fb2fd2aeb83077d9cbd6c43d59a514dadabc85ba5c97f028647 *redvector-scan-plugin-dev-0.2.0-dev.tar.gz

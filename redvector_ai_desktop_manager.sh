@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════════════
-#  RedVector AI — Unified AI Desktop Manager  v1.0
-#  One installer/manager for the two supported AI desktop clients:
+#  RedVector AI — Claude Desktop Manager  v1.0
+#  One installer/manager for RedVector's supported AI desktop client:
 #     [1] Claude Desktop  — install + register the RedVector MCP server
-#     [2] ChatGPT Desktop — install + check RedVector integration compatibility
 #
 #  Runs as a normal desktop user. Uses sudo only for privileged package steps.
 #  Official software sources only; signing keys verified where applicable.
@@ -11,10 +10,8 @@
 #  ── Adding a new AI client later (future expansion) ───────────────────────────
 #  The interactive layer is generic. To add a client WITHOUT redesigning the menu:
 #    1. Implement <client>_menu() with its own submenu + handlers, mirroring
-#       claude_menu()/chatgpt_menu() below.
-#    2. Add one line to the CLIENTS dispatch in main_menu().
-#  Do not add speculative/placeholder clients: this release ships Claude Desktop
-#  and ChatGPT Desktop only.
+#       claude_menu() below.
+#    2. Add one line to the dispatch in main_menu().
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # No 'set -e': this is a long-lived interactive menu. Errors are handled per-call
@@ -39,13 +36,9 @@ CLAUDE_REPO_LINE="deb [arch=amd64,arm64 signed-by=${CLAUDE_KEY_PATH}] https://do
 CLAUDE_EXPECTED_FPR='31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE'
 CLAUDE_CONFIG="$HOME/.config/Claude/claude_desktop_config.json"
 
-# ── ChatGPT Desktop official source constants (OpenAI Linux preview) ───────────
-CHATGPT_DOCS='https://learn.chatgpt.com/docs/linux/linux-app'
-CHATGPT_BASE='https://persistent.oaistatic.com/codex-app-prod/linux'
-
 # ── System facts (filled by inspect_system) ───────────────────────────────────
-OS_ID=''; OS_VERSION=''; OS_LIKE=''; ARCH=''; PKG=''
-CHATGPT_SUPPORTED=0; IS_WSL=0
+OS_ID=''; OS_VERSION=''; OS_LIKE=''
+IS_WSL=0
 PROMPT_USER='user'; PROMPT_HOST='host'
 
 # ── RedVector v8.0 runtime files required to register the MCP server ───────────
@@ -90,30 +83,6 @@ inspect_system() {
   else
     OS_ID='unknown'
   fi
-
-  case "$(uname -m 2>/dev/null)" in
-    x86_64)        ARCH='amd64';;
-    aarch64|arm64) ARCH='arm64';;
-    *)             ARCH='';;
-  esac
-
-  # Package family (used by the ChatGPT installer)
-  case "$OS_ID" in
-    ubuntu|debian|kali) PKG='deb';;
-    fedora)             PKG='rpm';;
-    arch)               PKG='arch';;
-    *)
-      if   [[ " $OS_LIKE " == *' debian '* ]]; then PKG='deb'
-      elif [[ " $OS_LIKE " == *' fedora '* ]]; then PKG='rpm'
-      elif [[ " $OS_LIKE " == *' arch '*   ]]; then PKG='arch'
-      fi;;
-  esac
-
-  # ChatGPT officially-tested distributions (OpenAI Linux preview)
-  case "$OS_ID:$OS_VERSION" in
-    ubuntu:24.04|ubuntu:26.04|debian:13|fedora:43|fedora:44) CHATGPT_SUPPORTED=1;;
-  esac
-  [[ "$OS_ID" == arch ]] && CHATGPT_SUPPORTED=1
 
   if grep -qiE '(microsoft|wsl)' /proc/sys/kernel/osrelease /proc/version 2>/dev/null; then
     IS_WSL=1
@@ -443,302 +412,6 @@ claude_menu() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  CHATGPT DESKTOP  (official OpenAI Linux preview packages only)
-# ═══════════════════════════════════════════════════════════════════════════════
-chatgpt_installed() {
-  command -v chatgpt >/dev/null 2>&1 && return 0
-  command -v dpkg-query >/dev/null 2>&1 && dpkg-query -W -f='${Status}' chatgpt 2>/dev/null | grep -qx 'install ok installed' && return 0
-  command -v rpm    >/dev/null 2>&1 && rpm -q chatgpt >/dev/null 2>&1 && return 0
-  command -v pacman >/dev/null 2>&1 && pacman -Q chatgpt >/dev/null 2>&1 && return 0
-  return 1
-}
-
-chatgpt_install() {
-  require_non_root || return 1
-  [[ -n "$ARCH" ]] || { err 'Unsupported processor architecture.'; return 1; }
-  [[ -n "$PKG"  ]] || { err "No installation procedure for this distribution. See $CHATGPT_DOCS"; return 1; }
-  if chatgpt_installed; then ok 'ChatGPT Desktop appears to be installed already. Use "Check installation" or "Update".'; return 0; fi
-
-  if [[ "$CHATGPT_SUPPORTED" != 1 ]]; then
-    warn "${OS_ID:-This distribution} is not in OpenAI's officially tested list for the ChatGPT Linux preview."
-    warn 'Installation may fail due to dependencies or desktop compatibility.'
-    confirm 'Try installing the official package anyway?' || { info 'Installation cancelled.'; return 0; }
-  fi
-
-  case "$PKG" in
-    deb)
-      command -v apt  >/dev/null 2>&1 || { err 'apt not found.'; return 1; }
-      command -v curl >/dev/null 2>&1 || { err 'curl is required.'; return 1; }
-      local tmp url rc
-      tmp="$(mktemp -d)" || return 1
-      url="$CHATGPT_BASE/deb/latest/chatgpt_${ARCH}.deb"
-      info "Downloading the official package from $url"
-      if ! curl --proto '=https' --tlsv1.2 --fail --location --show-error --output "$tmp/chatgpt_${ARCH}.deb" "$url"; then
-        err 'Download failed.'; rm -rf -- "$tmp"; return 1
-      fi
-      if ! dpkg-deb --info "$tmp/chatgpt_${ARCH}.deb" >/dev/null 2>&1; then
-        err 'Downloaded file is not a valid Debian package.'; rm -rf -- "$tmp"; return 1
-      fi
-      confirm 'Package verified. Install it now with sudo apt (apt will show the changes)?' \
-        || { info 'Installation cancelled.'; rm -rf -- "$tmp"; return 0; }
-      sudo apt install "$tmp/chatgpt_${ARCH}.deb"; rc=$?
-      rm -rf -- "$tmp"
-      (( rc == 0 )) && ok 'Installation command completed.' || err "Installation failed (exit $rc)."
-      return "$rc" ;;
-    rpm)
-      command -v dnf  >/dev/null 2>&1 || { err 'dnf not found.'; return 1; }
-      command -v curl >/dev/null 2>&1 || { err 'curl is required.'; return 1; }
-      local tmp url rc rpm_arch
-      tmp="$(mktemp -d)" || return 1
-      rpm_arch='x86_64'; [[ "$ARCH" == 'arm64' ]] && rpm_arch='aarch64'
-      url="$CHATGPT_BASE/rpm/latest/chatgpt.${rpm_arch}.rpm"
-      info "Downloading the official package from $url"
-      if ! curl --proto '=https' --tlsv1.2 --fail --location --show-error --output "$tmp/chatgpt.${rpm_arch}.rpm" "$url"; then
-        err 'Download failed.'; rm -rf -- "$tmp"; return 1
-      fi
-      confirm 'Install it now with sudo dnf (dnf will show the changes)?' \
-        || { info 'Installation cancelled.'; rm -rf -- "$tmp"; return 0; }
-      sudo dnf install "$tmp/chatgpt.${rpm_arch}.rpm"; rc=$?
-      rm -rf -- "$tmp"
-      (( rc == 0 )) && ok 'Installation command completed.' || err "Installation failed (exit $rc)."
-      return "$rc" ;;
-    arch)
-      command -v curl >/dev/null 2>&1 || { err 'curl is required.'; return 1; }
-      local tmp rc
-      tmp="$(mktemp -d)" || return 1
-      warn 'The official Arch installer configures the OpenAI repo and performs a FULL system upgrade.'
-      confirm 'Download the official Arch installer for review?' || { info 'Cancelled.'; rm -rf -- "$tmp"; return 0; }
-      if ! curl --proto '=https' --tlsv1.2 --fail --location --show-error --output "$tmp/install-arch.sh" "$CHATGPT_BASE/install-arch.sh"; then
-        err 'Download failed.'; rm -rf -- "$tmp"; return 1
-      fi
-      info 'Review the script below (q to quit the pager). It will NOT run until you confirm.'
-      "${PAGER:-less}" "$tmp/install-arch.sh" || true
-      if confirm 'Execute the reviewed script with sudo (includes a full system upgrade)?'; then
-        sudo bash "$tmp/install-arch.sh"; rc=$?
-      else
-        info 'Cancelled. Nothing was executed.'; rc=0
-      fi
-      rm -rf -- "$tmp"
-      return "$rc" ;;
-  esac
-}
-
-chatgpt_check() {
-  if chatgpt_installed; then
-    ok 'ChatGPT Desktop detected.'
-    command -v chatgpt >/dev/null 2>&1 && say "     command: $(command -v chatgpt)"
-    # Resolve a version from whichever package database actually knows chatgpt.
-    # Previously all three managers were probed unconditionally; `rpm -q` prints
-    # "package chatgpt is not installed" to STDOUT (so 2>/dev/null did not hide
-    # it), which leaked a contradictory "not installed" line beside the detected
-    # version. Here we capture output and report ONLY a real version, so a
-    # missing dpkg/rpm/pacman entry never implies the app is absent.
-    local ver=''
-    if command -v dpkg-query >/dev/null 2>&1; then
-      ver="$(dpkg-query -W -f='${Version}' chatgpt 2>/dev/null || true)"
-    fi
-    if [[ -z "$ver" ]] && command -v rpm >/dev/null 2>&1; then
-      ver="$(rpm -q --qf '%{VERSION}-%{RELEASE}' chatgpt 2>/dev/null || true)"
-      [[ "$ver" == *'is not installed'* ]] && ver=''
-    fi
-    if [[ -z "$ver" ]] && command -v pacman >/dev/null 2>&1; then
-      ver="$(pacman -Q chatgpt 2>/dev/null | awk 'NR==1{print $2}' || true)"
-    fi
-    if [[ -n "$ver" ]]; then
-      say "     version: $ver"
-    else
-      say "     version: present (executable verified; not registered with a system package manager)"
-    fi
-  else
-    warn 'ChatGPT package/command not found. Choose "Install ChatGPT Desktop".'
-  fi
-  if gui_available; then ok 'Graphical session detected.'
-  else warn 'No DISPLAY/WAYLAND_DISPLAY detected. Graphical launch may fail (e.g. over SSH or WSL without GUI).'; fi
-}
-
-# Honest RedVector-integration status for ChatGPT Desktop.
-# RedVector's MCP server is designed and verified for Claude Desktop's
-# claude_desktop_config.json. We do NOT claim or fabricate a ChatGPT integration.
-chatgpt_integration_compat() {
-  hr
-  say "${BOLD}RedVector ↔ ChatGPT Desktop integration${RESET}"
-  hr
-  info 'RedVector exposes its toolset through the Model Context Protocol (MCP) server'
-  info 'launched by start_redvector.sh, and this integration is verified for Claude Desktop'
-  info '(via ~/.config/Claude/claude_desktop_config.json).'
-  printf '\n'
-  warn 'ChatGPT Desktop (OpenAI Linux preview) does NOT use the same local MCP'
-  warn 'configuration file as Claude Desktop. A verified, first-party local-MCP'
-  warn 'registration path equivalent to Claude Desktop is NOT available here.'
-  printf '\n'
-  say "  ${RED}●${RESET} RedVector MCP for ChatGPT Desktop: ${YELLOW}NOT SUPPORTED / NOT VERIFIED${RESET}"
-  printf '\n'
-  info 'This manager writes no ChatGPT configuration and will not display a RedVector'
-  info 'connection status for ChatGPT unless a real connection is actually verified.'
-  info "For verified RedVector MCP integration, use Claude Desktop (main menu option 1)."
-  info "ChatGPT Desktop docs: $CHATGPT_DOCS"
-}
-
-# ── Best-effort ChatGPT Desktop startup diagnostics ───────────────────────────
-# Same safe conventions as claude_log: only explicitly constructed, non-sensitive
-# strings; never captures process output (which could carry tokens); never logs
-# environment variables or configuration; never fails its caller; size-capped.
-CHATGPT_START_LOG="${XDG_STATE_HOME:-$HOME/.local/state}/redvector/chatgpt-desktop-startup.log"
-CHATGPT_START_LOG_MAX=262144   # 256 KiB; truncate once exceeded
-
-chatgpt_log() {  # chatgpt_log "message"  — best-effort, always returns 0
-  local dir ts size
-  dir="$(dirname -- "$CHATGPT_START_LOG")"
-  mkdir -p -- "$dir" 2>/dev/null || return 0
-  if [[ -f "$CHATGPT_START_LOG" ]]; then
-    size="$(wc -c < "$CHATGPT_START_LOG" 2>/dev/null || printf 0)"
-    if [[ "${size:-0}" =~ ^[0-9]+$ && "$size" -gt "$CHATGPT_START_LOG_MAX" ]]; then
-      : > "$CHATGPT_START_LOG" 2>/dev/null || true
-    fi
-  fi
-  ts="$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || true)"
-  printf '%s %s\n' "${ts:-[no-date]}" "$1" >> "$CHATGPT_START_LOG" 2>/dev/null || true
-  return 0
-}
-
-# Print the PIDs of LIVE ChatGPT Desktop processes (one per line). A process
-# qualifies only when its REAL executable (/proc/<pid>/exe) is the chatgpt
-# binary -- the path that `chatgpt` resolves to, or a basename of chatgpt*. This
-# deliberately excludes the RedVector manager script (which runs under bash),
-# pagers/editors and any unrelated command whose arguments merely contain the
-# word "chatgpt", and it excludes defunct/zombie processes (whose /proc exe is
-# empty). Candidates are seeded from both the generic name and the resolved
-# binary path, so the real Electron process is matched even when its command
-# line uses the resolved path rather than the literal word "chatgpt". Best-effort:
-# prints nothing if pgrep/ps or /proc are unavailable. Used only for status,
-# never to block launching.
-chatgpt_running_pids() {
-  command -v pgrep >/dev/null 2>&1 || return 0
-  local target base p exe st seen=' '
-  target="$(readlink -f "$(command -v chatgpt 2>/dev/null)" 2>/dev/null || true)"
-  base="${target##*/}"
-  for p in $(pgrep -f chatgpt 2>/dev/null; [[ -n "$target" ]] && pgrep -f "$target" 2>/dev/null); do
-    case "$seen" in *" $p "*) continue;; esac
-    seen="$seen$p "
-    exe="$(readlink -f "/proc/$p/exe" 2>/dev/null || true)"
-    [[ -n "$exe" ]] || continue
-    { [[ -n "$target" && "$exe" == "$target" ]] || [[ "${exe##*/}" == chatgpt* ]] || [[ -n "$base" && "${exe##*/}" == "$base" ]]; } || continue
-    st="$(ps -o state= -p "$p" 2>/dev/null || true)"
-    [[ -n "$st" && "$st" != Z* ]] && printf '%s\n' "$p"
-  done
-}
-
-chatgpt_start() {
-  chatgpt_installed || { err 'ChatGPT Desktop is not installed. Choose option 1.'; chatgpt_log 'ERROR start aborted: ChatGPT not installed'; return 1; }
-  gui_available     || { err 'No active graphical display detected. Log into a desktop session first.'; chatgpt_log 'ERROR start aborted: no graphical session (DISPLAY/WAYLAND_DISPLAY unset)'; return 1; }
-  command -v chatgpt >/dev/null 2>&1 || { err 'The chatgpt executable is not on PATH.'; chatgpt_log 'ERROR start aborted: chatgpt not found on PATH'; return 1; }
-
-  # Detect a genuine, LIVE ChatGPT process by its real executable (see
-  # chatgpt_running_pids). This is used ONLY to inform the user and NEVER to skip
-  # launching: the previous bare `pgrep -f chatgpt` early-return reported a false
-  # "already running" (matching helper subprocesses, stale/zombie entries or
-  # unrelated commands) while no usable window was open.
-  local had_instance=0
-  [[ -n "$(chatgpt_running_pids)" ]] && had_instance=1
-  if [[ "$had_instance" == 1 ]]; then
-    info 'An existing ChatGPT Desktop process is running; the launch below will focus/raise its window (the app is single-instance).'
-    chatgpt_log 'INFO existing live chatgpt process detected via /proc; relaunch will focus it'
-  fi
-
-  # Default view: the official OpenAI Linux desktop app bundles ChatGPT Chat,
-  # ChatGPT Work and Codex in ONE app and, for existing Codex users, opens in
-  # Codex. OpenAI documents NO command-line flag, URI scheme or desktop-entry
-  # action to pick the view at launch; the only supported way to change it is the
-  # ChatGPT/Codex selector in the app's upper-left (and the default-view/app-icon
-  # setting inside the app). So we launch normally and never invent a URI/flag.
-  # The app is single-instance, so relaunching focuses an existing window instead
-  # of creating a duplicate and opens a fresh window when none exists.
-  info 'Starting ChatGPT Desktop...'
-  chatgpt_log 'INFO launching chatgpt graphical app (no supported launch-time view selector; opens app default view)'
-  nohup chatgpt >/dev/null 2>&1 </dev/null &
-  local pid=$!
-
-  # Confirm startup by polling for a LIVE application process. Electron can take
-  # a few seconds to initialise, and the initial launcher often EXITS after
-  # handing off to the real/existing process -- so the launcher's exit must NOT
-  # be treated as failure (this was the false "did not start" bug).
-  local i live=''
-  for i in 1 2 3 4 5 6 7 8; do
-    live="$(chatgpt_running_pids)"
-    [[ -n "$live" ]] && break
-    sleep 1
-  done
-
-  # Best-effort GUI window confirmation, only with tools already installed (no
-  # new dependency). Read-only: we confirm a window exists; we do NOT claim to
-  # focus it or to have selected the Chat view.
-  local window=0
-  if command -v wmctrl >/dev/null 2>&1; then
-    wmctrl -l 2>/dev/null | grep -qiE 'chatgpt|codex' && window=1
-  elif command -v xdotool >/dev/null 2>&1; then
-    { xdotool search --name 'ChatGPT' || xdotool search --name 'Codex'; } >/dev/null 2>&1 && window=1
-  fi
-
-  if [[ -n "$live" ]]; then
-    if [[ "$window" == 1 ]]; then
-      ok 'ChatGPT Desktop is running and a GUI window was detected.'
-      chatgpt_log 'INFO chatgpt running; GUI window detected'
-    else
-      ok 'ChatGPT Desktop is running (live application process confirmed).'
-      info 'A GUI window could not be verified from the shell (no wmctrl/xdotool). If no window appears, it may be minimized or on another workspace.'
-      chatgpt_log 'INFO chatgpt running; window not verified from shell'
-    fi
-  elif [[ "$window" == 1 ]]; then
-    ok 'ChatGPT Desktop window detected.'
-    chatgpt_log 'INFO chatgpt GUI window detected (process match unavailable)'
-  else
-    # Launch dispatched but neither a process nor a window could be confirmed
-    # from this shell. That is NOT proof of failure -- the launcher may have
-    # handed off to a process this check cannot match -- so we report INFO, not a
-    # false startup failure.
-    info 'ChatGPT Desktop launch was requested; a running process or window could not be confirmed from this shell. If no window appears shortly, run "chatgpt" in a terminal to see any error.'
-    chatgpt_log 'INFO chatgpt launch requested; process/window not confirmed from shell (not asserting failure)'
-  fi
-
-  # Supported way to reach regular Chat instead of Codex (cannot be done at launch).
-  info 'To use the regular ChatGPT Chat interface instead of Codex, use the ChatGPT/Codex selector in the app window (upper-left) or set the default view in the app settings.'
-}
-
-chatgpt_update() {
-  require_non_root || return 1
-  chatgpt_installed || { warn 'ChatGPT Desktop is not installed. Use option 1.'; return 1; }
-  case "$PKG" in
-    deb) command -v sudo >/dev/null 2>&1 || { err 'sudo required.'; return 1; }
-         info 'Updating via the OpenAI APT repository configured at install time...'
-         sudo apt update && sudo apt install --only-upgrade chatgpt ;;
-    rpm) command -v sudo >/dev/null 2>&1 || { err 'sudo required.'; return 1; }
-         info 'Updating via the OpenAI DNF repository...'
-         sudo dnf upgrade --refresh chatgpt ;;
-    arch) warn 'On Arch, the official update path is a full system upgrade (pacman -Syu).'
-          confirm 'Run sudo pacman -Syu now?' && sudo pacman -Syu || info 'Cancelled.' ;;
-    *)   err "No supported update procedure for this distribution. See $CHATGPT_DOCS"; return 1 ;;
-  esac
-}
-
-chatgpt_menu() {
-  while true; do
-    banner_chatgpt
-    read -r -e -p "  ${PROMPT_USER}@${PROMPT_HOST}:~\$ Select option [0-5]: " choice || break
-    printf '\n'
-    case "$choice" in
-      1) chatgpt_install || warn 'Installation did not complete.' ;;
-      2) chatgpt_check ;;
-      3) chatgpt_integration_compat ;;
-      4) chatgpt_start  || warn 'ChatGPT Desktop could not be started.' ;;
-      5) chatgpt_update || warn 'Update did not complete.' ;;
-      0) return 0 ;;
-      *) warn 'Choose 0, 1, 2, 3, 4 or 5.' ;;
-    esac
-    [[ "$choice" == 0 ]] || pause
-  done
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
 #  Banners
 # ═══════════════════════════════════════════════════════════════════════════════
 banner_main() {
@@ -772,12 +445,10 @@ ART
   say " ${g}PROJECT${RESET}  ${DIM}${PROJECT}${RESET}"
   hr
   printf '\n'
-  say "   ${BOLD}CHOOSE YOUR AI CLIENT${RESET}"
+  say "   ${BOLD}AI DESKTOP CLIENT${RESET}"
   printf '\n'
   say "   ${GREEN}[1]${RESET} ${BOLD}Claude Desktop${RESET}"
   say "       ${DIM}Install Claude and register the RedVector MCP server${RESET}"
-  say "   ${GREEN}[2]${RESET} ${BOLD}ChatGPT Desktop${RESET}"
-  say "       ${DIM}Install ChatGPT and check integration compatibility${RESET}"
   say "   ${RED}[0]${RESET} Exit"
   printf '\n'
 }
@@ -804,35 +475,12 @@ ART
   printf '\n'
 }
 
-banner_chatgpt() {
-  clear 2>/dev/null || true
-  printf "${GREEN}"
-  cat <<'ART'
-  ╔══════════════════════════════════════════════════╗
-  ║            CHATGPT  DESKTOP  MANAGER              ║
-  ╚══════════════════════════════════════════════════╝
-ART
-  printf "${RESET}"
-  if chatgpt_installed; then say "  ${GREEN}●${RESET} ChatGPT Desktop installed"
-  else say "  ${YELLOW}●${RESET} ChatGPT Desktop not installed"; fi
-  [[ "$CHATGPT_SUPPORTED" == 1 ]] || say "  ${YELLOW}●${RESET} ${OS_ID:-This distribution} is not in OpenAI's officially tested list"
-  say "  ${DIM}Docs: ${CHATGPT_DOCS}${RESET}"
-  hr
-  say "   ${GREEN}[1]${RESET} Install ChatGPT Desktop"
-  say "   ${GREEN}[2]${RESET} Check installation"
-  say "   ${GREEN}[3]${RESET} Check RedVector integration compatibility"
-  say "   ${GREEN}[4]${RESET} Start ChatGPT Desktop"
-  say "   ${GREEN}[5]${RESET} Update ChatGPT Desktop"
-  say "   ${RED}[0]${RESET} Back to main menu"
-  printf '\n'
-}
-
 # ═══════════════════════════════════════════════════════════════════════════════
 #  --help / --status
 # ═══════════════════════════════════════════════════════════════════════════════
 print_help() {
   cat <<EOF
-RedVector AI — Unified AI Desktop Manager v1.0
+RedVector AI — Claude Desktop Manager v1.0
 
 USAGE:
   $(basename "$0") [REDVECTOR_PROJECT_DIR]
@@ -840,16 +488,12 @@ USAGE:
   $(basename "$0") --help
 
 DESCRIPTION:
-  Interactive manager for the two supported AI desktop clients. Pick ONE client
-  at a time from the main menu; return later to manage the other.
+  Interactive manager for RedVector's supported AI desktop client, Claude Desktop.
 
     [1] Claude Desktop  — install from the verified official APT repository and
                           register the RedVector MCP server (start_redvector.sh),
                           preserving existing MCP servers and RedVector env, with
                           a timestamped backup and atomic config writes.
-    [2] ChatGPT Desktop — install the official OpenAI Linux-preview package and
-                          report RedVector integration compatibility honestly
-                          (no fabricated MCP configuration).
 
 ARGUMENTS:
   REDVECTOR_PROJECT_DIR  Path to the RedVector v8.0 project. Defaults to the
@@ -887,10 +531,6 @@ print_status() {
     say " RedVector MCP   : ${YELLOW}not registered${RESET} (use Claude menu → Configure RedVector MCP)"
   fi
   hr
-  if chatgpt_installed; then say " ChatGPT Desktop : ${GREEN}installed${RESET}"
-  else say " ChatGPT Desktop : ${YELLOW}not installed${RESET}"; fi
-  say " ChatGPT ↔ RedVector MCP : ${YELLOW}not supported / not verified${RESET}"
-  hr
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -899,13 +539,12 @@ print_status() {
 main_menu() {
   while true; do
     banner_main
-    read -r -e -p "  ${PROMPT_USER}@${PROMPT_HOST}:~\$ Select [0-2]: " choice || break
+    read -r -e -p "  ${PROMPT_USER}@${PROMPT_HOST}:~\$ Select [0-1]: " choice || break
     printf '\n'
     case "$choice" in
       1) claude_menu ;;
-      2) chatgpt_menu ;;
       0) ok 'Exiting RedVector AI Desktop Manager.'; return 0 ;;
-      *) warn 'Choose 0, 1 or 2.'; pause ;;
+      *) warn 'Choose 0 or 1.'; pause ;;
     esac
   done
 }

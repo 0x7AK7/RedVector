@@ -73,7 +73,7 @@ graph TD
 | `redvector_banner.py` | Shared original terminal banner and startup panel; also performs the Linux socket/process ownership backend identity check via `--backend-check` (migrated from the removed `redvector_backend_check.py`); never starts the backend |
 | `install_claude_desktop_kali.sh` | Optional Claude Desktop installer for Kali, Debian and Ubuntu |
 | `install_redvector_claude_mcp.sh` | Registers RedVector with Claude Desktop on Linux using its own directory |
-| `redvector_ai_desktop_manager.sh` | Unified AI desktop manager: install and manage Claude Desktop (with RedVector MCP) or ChatGPT Desktop |
+| `redvector_ai_desktop_manager.sh` | Claude Desktop manager: install and manage Claude Desktop (with RedVector MCP) |
 | `start_redvector.ps1` | Windows PowerShell launcher |
 | `requirements.txt` | Python dependencies |
 
@@ -147,9 +147,9 @@ Or start the backend directly:
 python redvector_server.py
 ```
 
-### AI Desktop Manager (Claude or ChatGPT)
+### AI Desktop Manager (Claude Desktop)
 
-`redvector_ai_desktop_manager.sh` is a unified, menu-driven manager that installs and manages **one** AI desktop client at a time. Run it after cloning and installing the Python dependencies above:
+`redvector_ai_desktop_manager.sh` is a menu-driven manager that installs and manages Claude Desktop with its RedVector MCP integration. Run it after cloning and installing the Python dependencies above:
 
 ```bash
 chmod +x redvector_ai_desktop_manager.sh
@@ -160,14 +160,12 @@ chmod +x redvector_ai_desktop_manager.sh
 REDVECTOR  —  AI DESKTOP MANAGER
 
   [1] Claude Desktop    Install Claude and register the RedVector MCP server
-  [2] ChatGPT Desktop   Install ChatGPT and check integration compatibility
   [0] Exit
 ```
 
 - **Claude Desktop** — installs from the verified official APT repository (signing-key fingerprint checked) and registers RedVector as an MCP server by launching `start_redvector.sh`. Existing MCP servers and any existing RedVector environment variables are preserved, a timestamped backup is written, and the configuration is updated atomically.
-- **ChatGPT Desktop** — installs the official OpenAI Linux-preview package and checks integration compatibility. ChatGPT Desktop does not use Claude Desktop's local MCP configuration, so direct RedVector MCP connectivity is **not** configured or claimed.
 
-The two clients are managed independently; return to the main menu to switch. Run the manager as your normal desktop user (it uses `sudo` only for package steps). Use `--status` for a non-interactive summary and `--help` for usage. This manager is an optional convenience; the manual Claude Desktop setup below remains fully supported.
+Run the manager as your normal desktop user (it uses `sudo` only for package steps). Use `--status` for a non-interactive summary and `--help` for usage. This manager is an optional convenience; the manual Claude Desktop setup below remains fully supported.
 
 ### Claude Desktop automatic setup (Kali Linux)
 

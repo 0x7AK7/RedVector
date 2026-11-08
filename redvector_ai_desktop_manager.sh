@@ -21,7 +21,7 @@ set -uo pipefail
 
 # ── Colours (green=success, yellow=warning, red=error, cyan=accent) ────────────
 RESET='\033[0m'; BOLD='\033[1m'; DIM='\033[2m'
-GREEN='\033[1;92m'; CYAN='\033[1;96m'; YELLOW='\033[1;93m'; RED='\033[1;91m'
+GREEN='\033[1;92m'; CYAN='\033[1;38;2;0;255;0m'; YELLOW='\033[1;93m'; RED='\033[1;91m'
 
 # ── Paths / project location ───────────────────────────────────────────────────
 SCRIPT_SOURCE="$(realpath -- "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"

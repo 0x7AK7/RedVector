@@ -212,14 +212,43 @@ servers = data.setdefault('mcpServers', {})
 if not isinstance(servers, dict):
     raise SystemExit('mcpServers is not an object. Nothing was changed.')
 
-# Preserve any existing RedVector env (e.g. REDVECTOR_API_TOKEN) untouched.
-old = servers.get('redvector-ai', {})
-env = dict(old.get('env', {})) if isinstance(old, dict) and isinstance(old.get('env', {}), dict) else {}
-servers['redvector-ai'] = {
-    'command': '/bin/bash',
-    'args': [str(project / 'start_redvector.sh')],
-    **({'env': env} if env else {}),
-}
+# Preserve an existing RedVector MCP entry. A user may have pointed redvector-ai
+# at a hardened/secure launcher (e.g. ~/.local/bin/redvector_claude_secure.sh) and
+# added keys such as 'timeout', 'alwaysAllow' or 'cwd'. Never silently replace an
+# existing custom launcher, always carry over every other key, and never inject or
+# restore a development token.
+old = servers.get('redvector-ai')
+is_dict = isinstance(old, dict)
+old_command = old.get('command') if is_dict else None
+old_args = old.get('args') if is_dict else None
+has_launcher = (isinstance(old_command, str) and old_command
+                and isinstance(old_args, list) and old_args)
+
+
+def _launcher_basename(args):
+    for a in reversed(args):
+        if isinstance(a, str) and a.strip():
+            return os.path.basename(a)
+    return ''
+
+
+if has_launcher and _launcher_basename(old_args) != 'start_redvector.sh':
+    # Custom/secure launcher already configured: keep command, args and ALL other
+    # keys exactly as they are. Nothing is overwritten.
+    entry = dict(old)
+    launcher_mode = 'preserved-custom'
+else:
+    # No usable entry yet, or the manager's own start_redvector.sh launcher:
+    # (re)point it at THIS project's start_redvector.sh while preserving every
+    # other pre-existing key (env, timeout, alwaysAllow, cwd, description, ...).
+    entry = dict(old) if is_dict else {}
+    entry['command'] = '/bin/bash'
+    entry['args'] = [str(project / 'start_redvector.sh')]
+    launcher_mode = 'registered-default'
+
+# No development token is ever added or restored here; any existing 'env' mapping
+# (including a real user token) is preserved untouched by the dict(old) copy above.
+servers['redvector-ai'] = entry
 
 backup = None
 if config.exists():
@@ -241,6 +270,8 @@ finally:
 print('[OK] RedVector MCP registered in Claude Desktop.')
 print('RedVector project:', project)
 print('Config file:', config)
+if launcher_mode == 'preserved-custom':
+    print('Existing custom redvector-ai launcher preserved (command and args unchanged).')
 if backup:
     print('Backup created:', backup)
 print('Other MCP servers and any existing RedVector environment variables were preserved.')

@@ -8,6 +8,7 @@ __pycache__/
 .venv/
 venv/
 redvector-env/
+redvector_env/
 
 # Test / coverage artifacts
 .coverage

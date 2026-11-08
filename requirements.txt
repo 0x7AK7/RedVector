@@ -1,8 +1,8 @@
 ﻿# RedVector AI MCP Agents v8.0
 #
 # INSTALLATION COMMANDS:
-# python3 -m venv redvector_env
-# source redvector_env/bin/activate
+# python3 -m venv .venv
+# source .venv/bin/activate
 # python -m pip install -r requirements.txt
 # python3 redvector_server.py
 
@@ -12,7 +12,7 @@
 flask>=2.3.0,<4.0.0             # Web framework for API server (flask import)
 requests>=2.31.0,<3.0.0         # HTTP library (requests import)
 psutil>=5.9.0,<7.0.0            # System utilities (psutil import)
-fastmcp>=0.2.0,<1.0.0           # MCP framework (from mcp.server.fastmcp import FastMCP)
+mcp>=1.30.0,<2.0.0             # Official MCP Python SDK (provides mcp.server.fastmcp.FastMCP)
 
 # ============================================================================
 # WEB SCRAPING & AUTOMATION (ACTUALLY USED)

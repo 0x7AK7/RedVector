@@ -71,9 +71,7 @@ graph TD
 | `redvector-mcp.json` | Example MCP configuration |
 | `start_redvector.sh` | Linux launcher, verifies backend ownership, starts backend on demand and runs MCP client |
 | `redvector_banner.py` | Shared original terminal banner and startup panel; also performs the Linux socket/process ownership backend identity check via `--backend-check` (migrated from the removed `redvector_backend_check.py`); never starts the backend |
-| `install_claude_desktop_kali.sh` | Optional Claude Desktop installer for Kali, Debian and Ubuntu |
-| `install_redvector_claude_mcp.sh` | Registers RedVector with Claude Desktop on Linux using its own directory |
-| `redvector_ai_desktop_manager.sh` | Claude Desktop manager: install and manage Claude Desktop (with RedVector MCP) |
+| `redvector_ai_desktop_manager.sh` | Primary Claude Desktop installer and MCP manager (install, configure, check, start and update Claude Desktop with RedVector MCP) |
 | `start_redvector.ps1` | Windows PowerShell launcher |
 | `requirements.txt` | Python dependencies |
 
@@ -171,25 +169,7 @@ Run the manager as your normal desktop user (it uses `sudo` only for package ste
 
 Claude Desktop on Linux is currently a beta release. Kali Linux is Debian-based, but it is not among Anthropic's officially tested distributions. An x86_64 or arm64 Debian-based desktop is required. If you use **Kali through WSL2**, Anthropic recommends installing Claude Desktop on **Windows** and running sessions in WSL rather than installing the Linux desktop app inside WSL.
 
-The following installers must be included in the cloned RedVector directory before you run them: `install_claude_desktop_kali.sh` and `install_redvector_claude_mcp.sh`. If either is missing from your checkout, obtain it from the project's published installation assets or wait until it has been added to the repository. Do not run a non-existent script.
-
-**One-time setup**, after cloning and installing the Python dependencies above:
-
-```bash
-# Install Claude Desktop if it is not already installed.
-bash ./install_claude_desktop_kali.sh
-
-# Register RedVector with Claude Desktop automatically.
-bash ./install_redvector_claude_mcp.sh
-```
-
-The MCP installer locates RedVector from the actual location of its own script, including when called from another working directory or through a symbolic link. You can also pass the RedVector directory explicitly:
-
-```bash
-bash /path/to/RedVector/install_redvector_claude_mcp.sh /path/to/RedVector
-```
-
-It creates or updates `~/.config/Claude/claude_desktop_config.json`, backs up an existing configuration, and **preserves other MCP server entries**. The generated `redvector-ai` entry launches `start_redvector.sh` using an absolute path. Use your existing API token configuration when applicable; avoid publishing secrets in Git.
+**One-time setup:** use the **AI Desktop Manager** described above (`./redvector_ai_desktop_manager.sh`). Choose **Install Claude Desktop**, then **Configure RedVector MCP**. The manager creates or updates `~/.config/Claude/claude_desktop_config.json`, backs up an existing configuration, and **preserves other MCP server entries**. The generated `redvector-ai` entry launches `start_redvector.sh` using an absolute path. Use your existing API token configuration when applicable; avoid publishing secrets in Git.
 
 **Everyday use**, after fully quitting and restarting Claude Desktop once to load the configuration:
 
@@ -1004,8 +984,6 @@ RedVector/
 ├── start_redvector.sh
 ├── redvector_banner.py
 ├── redvector_ai_desktop_manager.sh
-├── install_claude_desktop_kali.sh
-├── install_redvector_claude_mcp.sh
 ├── start_redvector.ps1
 ├── .gitattributes
 └── .gitignore

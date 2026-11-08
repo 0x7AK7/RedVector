@@ -486,22 +486,23 @@ ART
 
 banner_claude() {
   clear 2>/dev/null || true
-  printf "${GREEN}"
+  local HGREEN='\033[1;38;2;0;255;0m'
+  printf "${HGREEN}"
   cat <<'ART'
   ╔══════════════════════════════════════════════════╗
   ║            CLAUDE  DESKTOP  MANAGER               ║
   ╚══════════════════════════════════════════════════╝
 ART
   printf "${RESET}"
-  if claude_installed; then say "  ${GREEN}●${RESET} Claude Desktop installed ${DIM}($(claude_version))${RESET}"
+  if claude_installed; then say "  ${HGREEN}●${RESET} Claude Desktop installed ${DIM}($(claude_version))${RESET}"
   else say "  ${YELLOW}●${RESET} Claude Desktop not installed"; fi
   say "  ${DIM}RedVector project: ${PROJECT}${RESET}"
   hr
-  say "   ${GREEN}[1]${RESET} Install Claude Desktop"
-  say "   ${GREEN}[2]${RESET} Configure RedVector MCP"
-  say "   ${GREEN}[3]${RESET} Check installation and MCP connection"
-  say "   ${GREEN}[4]${RESET} Start Claude Desktop"
-  say "   ${GREEN}[5]${RESET} Update Claude Desktop"
+  say "   ${HGREEN}[1]${RESET} Install Claude Desktop"
+  say "   ${HGREEN}[2]${RESET} Configure RedVector MCP"
+  say "   ${HGREEN}[3]${RESET} Check installation and MCP connection"
+  say "   ${HGREEN}[4]${RESET} Start Claude Desktop"
+  say "   ${HGREEN}[5]${RESET} Update Claude Desktop"
   say "   ${RED}[0]${RESET} Back to main menu"
   printf '\n'
 }

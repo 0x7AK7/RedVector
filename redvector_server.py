@@ -951,6 +951,56 @@ def _redact_command_for_log(command: Any) -> str:
     return _redact_inline_secrets(' '.join(out))
 
 
+# ---------------------------------------------------------------------------
+# API serialization-boundary redaction for process-related responses.
+# ---------------------------------------------------------------------------
+# Authenticated process registry / dashboard / statistics / task-result
+# responses echo the live command metadata, which can contain credentials
+# (passwords, API tokens, Authorization headers, cookies, URL-embedded
+# credentials). The sanitizer below builds a NEW, sanitized representation for
+# the response — it never mutates the process registry or internal execution
+# state, and it leaves non-sensitive fields, field names and data types intact.
+_PROCESS_COMMAND_KEYS = frozenset({
+    'command', 'command_display', 'cmd', 'cmdline', 'full_command',
+})
+_PROCESS_OUTPUT_KEYS = frozenset({'last_output'})
+
+
+def _sanitize_process_response(obj: Any, _key: Optional[str] = None) -> Any:
+    """Return a credential-redacted, JSON-safe deep copy of a process-related
+    response object. Redacts command fields and the ``last_output`` preview,
+    masks known sensitive keys, and never exposes live, non-serializable
+    objects (e.g. a subprocess handle). Originals are left unmodified.
+    """
+    if isinstance(obj, dict):
+        return {k: _sanitize_process_response(v, str(k).lower()) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_process_response(v, _key) for v in obj]
+
+    if _key in _PROCESS_COMMAND_KEYS and isinstance(obj, str):
+        return _redact_command_for_log(obj)
+    if _key in SENSITIVE_KEYS and obj:
+        return '***REDACTED***'
+    if _key in _PROCESS_OUTPUT_KEYS and isinstance(obj, str):
+        return _redact_inline_secrets(obj)
+    if isinstance(obj, (str, int, float, bool)) or obj is None:
+        return obj
+    # Any other value (e.g. a live subprocess.Popen handle) is internal state
+    # that must never appear in an external response.
+    return f"<{type(obj).__name__}>"
+
+
+def _redact_error_message(message: Any) -> str:
+    """Redact credentials from an error string returned in a response.
+
+    Applies the command-aware redactor so an embedded command or argument
+    (passwords, API tokens, Authorization headers, URL credentials) is masked.
+    This never alters the raised exception, logging, or any execution behaviour
+    — it only sanitises the string placed into the HTTP response body.
+    """
+    return _redact_command_for_log(str(message))
+
+
 def _result_size_bytes(result: Dict[str, Any]) -> int:
     """Estimate serialized result size for cache decisions."""
     try:
@@ -10508,7 +10558,9 @@ def get_telemetry():
 def list_processes():
     """List all active processes"""
     try:
-        processes = ProcessManager.list_active_processes()
+        # Sanitized copy at the serialization boundary (redacts credentials in
+        # command metadata; never mutates the live registry).
+        processes = _sanitize_process_response(ProcessManager.list_active_processes())
 
         # Add calculated fields for each process
         for pid, info in processes.items():
@@ -10528,13 +10580,16 @@ def list_processes():
         })
     except Exception as e:
         logger.error(f"💥 Error listing processes: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/processes/status/<int:pid>", methods=["GET"])
 def get_process_status(pid):
     """Get status of a specific process"""
     try:
-        process_info = ProcessManager.get_process_status(pid)
+        raw_info = ProcessManager.get_process_status(pid)
+        # Sanitized copy for the response (redacts credentials; does not mutate
+        # the live registry entry).
+        process_info = _sanitize_process_response(raw_info) if raw_info else None
 
         if process_info:
             # Add calculated fields
@@ -10559,7 +10614,7 @@ def get_process_status(pid):
 
     except Exception as e:
         logger.error(f"💥 Error getting process status: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/processes/terminate/<int:pid>", methods=["POST"])
 def terminate_process(pid):
@@ -10581,7 +10636,7 @@ def terminate_process(pid):
 
     except Exception as e:
         logger.error(f"💥 Error terminating process {pid}: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/processes/pause/<int:pid>", methods=["POST"])
 def pause_process(pid):
@@ -10603,7 +10658,7 @@ def pause_process(pid):
 
     except Exception as e:
         logger.error(f"💥 Error pausing process {pid}: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/processes/resume/<int:pid>", methods=["POST"])
 def resume_process(pid):
@@ -10625,13 +10680,15 @@ def resume_process(pid):
 
     except Exception as e:
         logger.error(f"💥 Error resuming process {pid}: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/processes/dashboard", methods=["GET"])
 def process_dashboard():
     """Get enhanced process dashboard with visual status using ModernVisualEngine"""
     try:
-        processes = ProcessManager.list_active_processes()
+        # Sanitize first so credentials are redacted everywhere downstream,
+        # including inside the rendered visual dashboard string.
+        processes = _sanitize_process_response(ProcessManager.list_active_processes())
         current_time = time.time()
 
         # Create beautiful dashboard using ModernVisualEngine
@@ -10678,7 +10735,7 @@ def process_dashboard():
 
     except Exception as e:
         logger.error(f"💥 Error getting process dashboard: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/visual/vulnerability-card", methods=["POST"])
 def create_vulnerability_card():
@@ -18227,14 +18284,14 @@ def execute_command_async():
         return jsonify({
             "success": True,
             "task_id": task_id,
-            "command": command,
+            "command": _redact_command_for_log(argv),
             "status": "submitted",
             "timestamp": datetime.now().isoformat()
         })
 
     except Exception as e:
         logger.error(f"💥 Error in async command execution: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/process/get-task-result/<task_id>", methods=["GET"])
 def get_async_task_result(task_id):
@@ -18249,19 +18306,19 @@ def get_async_task_result(task_id):
         return jsonify({
             "success": True,
             "task_id": task_id,
-            "result": result,
+            "result": _sanitize_process_response(result),
             "timestamp": datetime.now().isoformat()
         })
 
     except Exception as e:
         logger.error(f"💥 Error getting task result: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/process/pool-stats", methods=["GET"])
 def get_process_pool_stats():
     """Get process pool statistics and performance metrics"""
     try:
-        stats = enhanced_process_manager.get_comprehensive_stats()
+        stats = _sanitize_process_response(enhanced_process_manager.get_comprehensive_stats())
 
         logger.info(f"📊 Process pool stats retrieved | Active workers: {stats['process_pool']['active_workers']}")
         return jsonify({
@@ -18272,7 +18329,7 @@ def get_process_pool_stats():
 
     except Exception as e:
         logger.error(f"💥 Error getting pool stats: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/process/cache-stats", methods=["GET"])
 def get_cache_stats():
@@ -18289,7 +18346,7 @@ def get_cache_stats():
 
     except Exception as e:
         logger.error(f"💥 Error getting cache stats: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/process/clear-cache", methods=["POST"])
 def clear_process_cache():
@@ -18358,7 +18415,7 @@ def get_performance_dashboard():
 
     except Exception as e:
         logger.error(f"💥 Error getting performance dashboard: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/process/terminate-gracefully/<int:pid>", methods=["POST"])
 def terminate_process_gracefully(pid):
@@ -18387,7 +18444,7 @@ def terminate_process_gracefully(pid):
 
     except Exception as e:
         logger.error(f"💥 Error terminating process {pid}: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/process/auto-scaling", methods=["POST"])
 def configure_auto_scaling():
@@ -18457,7 +18514,7 @@ def manual_scale_pool():
 
     except Exception as e:
         logger.error(f"💥 Error scaling pool: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/process/health-check", methods=["GET"])
 def process_health_check():
@@ -18526,7 +18583,7 @@ def process_health_check():
             "overall_status": status,
             "health_score": health_score,
             "issues": issues,
-            "system_stats": comprehensive_stats,
+            "system_stats": _sanitize_process_response(comprehensive_stats),
             "recommendations": []
         }
 
@@ -18549,7 +18606,7 @@ def process_health_check():
 
     except Exception as e:
         logger.error(f"💥 Error in health check: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 # ============================================================================
 # BANNER AND STARTUP CONFIGURATION

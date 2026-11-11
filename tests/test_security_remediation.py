@@ -514,6 +514,153 @@ def test_final_results_summary_line_is_redacted(monkeypatch):
     assert any("***REDACTED***" in m for m in cmd_lines), cmd_lines
 
 
+# ── Process-registry / dashboard / stats API-boundary redaction ─────────────
+class _InertProcess:
+    """Stand-in for a live subprocess.Popen handle (never executed)."""
+
+
+_SECRET = "REGISTRYSECRET123"
+
+
+def _sample_process_entry(pid=4242):
+    return {
+        "pid": pid,
+        "command": f"hydra -l admin -p {_SECRET} ssh://10.0.0.1",
+        "process": _InertProcess(),
+        "start_time": 1.0,
+        "status": "running",
+        "progress": 0.0,
+        "last_output": f"sent Authorization: Bearer {_SECRET}",
+        "bytes_processed": 0,
+        "password": _SECRET,
+    }
+
+
+def test_sanitize_process_response_redacts_and_preserves():
+    entry = _sample_process_entry()
+    original_command = entry["command"]
+    out = rv._sanitize_process_response({4242: entry})[4242]
+    # Credentials redacted
+    assert _SECRET not in out["command"] and "***REDACTED***" in out["command"]
+    assert _SECRET not in out["last_output"]
+    assert out["password"] == "***REDACTED***"
+    # Live handle never exposed; result is JSON-safe
+    assert out["process"] == "<_InertProcess>"
+    import json
+    json.dumps(out)  # must not raise
+    # Non-sensitive fields preserved, originals untouched (no in-place mutation)
+    assert out["pid"] == 4242 and out["status"] == "running" and out["start_time"] == 1.0
+    assert entry["command"] == original_command
+    assert isinstance(entry["process"], _InertProcess)
+
+
+def test_process_list_and_status_endpoints_redact():
+    pid = 991234
+    rv.active_processes[pid] = _sample_process_entry(pid)
+    try:
+        c = _client()
+        r1 = c.get("/api/processes/list", headers=AUTH_HEADER)
+        r2 = c.get(f"/api/processes/status/{pid}", headers=AUTH_HEADER)
+    finally:
+        rv.active_processes.pop(pid, None)
+    for r in (r1, r2):
+        assert r.status_code == 200, r.get_data(as_text=True)
+        body = r.get_data(as_text=True)
+        assert _SECRET not in body
+        assert "***REDACTED***" in body
+
+
+def test_dashboard_visual_string_redacts():
+    safe = rv._sanitize_process_response({7: _sample_process_entry(7)})
+    visual = rv.ModernVisualEngine.create_live_dashboard(safe)
+    assert _SECRET not in visual
+
+
+def test_async_submit_response_redacts(monkeypatch):
+    # No execution: the pool submit is stubbed so nothing runs.
+    monkeypatch.setattr(rv.enhanced_process_manager, "execute_command_async",
+                        lambda argv, context=None: "task_stub")
+    resp = _client().post(
+        "/api/process/execute-async",
+        json={"command": f"wpscan --url http://t --api-token {_SECRET}"},
+        headers=AUTH_HEADER,
+    )
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert _SECRET not in body and "***REDACTED***" in body
+
+
+def test_task_result_response_redacts(monkeypatch):
+    monkeypatch.setattr(rv.enhanced_process_manager, "get_task_result",
+                        lambda task_id: {"status": "completed",
+                                          "command": f"hydra -p {_SECRET} ssh://t",
+                                          "result": {"stdout": "ok", "return_code": 0}})
+    resp = _client().get("/api/process/get-task-result/task_stub", headers=AUTH_HEADER)
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert _SECRET not in body
+    # Legitimate, non-sensitive result output is preserved.
+    assert "ok" in body
+
+
+def test_pool_stats_response_redacts_nested_history(monkeypatch):
+    monkeypatch.setattr(
+        rv.enhanced_process_manager, "get_comprehensive_stats",
+        lambda: {"process_pool": {"active_workers": 4},
+                 "cache": {"hit_rate": 50},
+                 "history": [{"command": f"sqlmap -u http://t --tamper x --cookie S={_SECRET}",
+                              "success": True}]},
+    )
+    resp = _client().get("/api/process/pool-stats", headers=AUTH_HEADER)
+    assert resp.status_code == 200
+    assert _SECRET not in resp.get_data(as_text=True)
+    # Non-sensitive metrics intact.
+    assert resp.get_json()["stats"]["process_pool"]["active_workers"] == 4
+
+
+def test_process_error_response_redacts_credentials(monkeypatch):
+    """A credential embedded in an exception message must not leak through the
+    serialized error response."""
+    err = ("boom while running hydra -p ERRSECRET123 ssh://10.0.0.1 "
+           "-H Authorization: Bearer ERRTOKENXYZ via http://u:ERRPASS@h/")
+
+    def _raise():
+        raise RuntimeError(err)
+
+    monkeypatch.setattr(rv.enhanced_process_manager, "get_comprehensive_stats", _raise)
+    resp = _client().get("/api/process/pool-stats", headers=AUTH_HEADER)
+    assert resp.status_code == 500
+    body = resp.get_data(as_text=True)
+    for secret in ("ERRSECRET123", "ERRTOKENXYZ", "ERRPASS"):
+        assert secret not in body, body
+
+
+def test_error_message_redactor_unit():
+    r = rv._redact_error_message
+    assert "ERRSECRET" not in r("failed: hydra -p ERRSECRET ssh://t")
+    assert "TOK" not in r("sent Authorization: Bearer TOK123 to host")
+    assert "PW" not in r("connect http://admin:PW@host/path failed")
+
+
+def test_task_result_findings_are_preserved(monkeypatch):
+    """stdout/stderr carry real security-tool findings and must NOT be silently
+    removed. Only command/metadata fields are redacted."""
+    finding = "VULN: login form accepts password=admin123 at /admin"
+    monkeypatch.setattr(
+        rv.enhanced_process_manager, "get_task_result",
+        lambda task_id: {"status": "completed",
+                         "command": f"hydra -p {_SECRET} ssh://t",
+                         "result": {"stdout": finding, "stderr": "", "return_code": 0}},
+    )
+    resp = _client().get("/api/process/get-task-result/t", headers=AUTH_HEADER)
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    # Our injected command credential is redacted ...
+    assert _SECRET not in body
+    # ... but the legitimate finding in stdout is preserved intact.
+    assert finding in body
+
+
 def _main():
     import types
 

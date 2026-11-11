@@ -110,8 +110,25 @@ app = Flask(__name__)
 app.config['JSON_SORT_KEYS'] = False
 
 # API Configuration
-API_TOKEN = os.environ.get('REDVECTOR_API_TOKEN', 'redvector-dev-token')
+# SECURITY (CWE-798): there is no usable default credential. The server fails
+# closed whenever REDVECTOR_API_TOKEN is missing, empty, or set to the known
+# published development token. A strong token must be supplied through the
+# environment; the launchers generate a strong ephemeral token automatically
+# when one is not provided. Token values are never logged.
+INSECURE_DEFAULT_TOKENS = frozenset({'', 'redvector-dev-token'})
+API_TOKEN = os.environ.get('REDVECTOR_API_TOKEN', '').strip()
+AUTH_CONFIGURED = API_TOKEN not in INSECURE_DEFAULT_TOKENS
 AUTH_EXEMPT_PATHS = {'/health', '/health/details'}
+
+# SECURITY: the Python execution / installation endpoints provide authenticated
+# arbitrary-code execution. They are DISABLED by default and only enabled by an
+# explicit opt-in environment setting, for authorized LOCAL use. Even when the
+# opt-in is set they stay disabled unless the backend is bound to a loopback
+# interface. The launchers and installers never set this flag.
+PYTHON_EXEC_ENABLED = os.environ.get('REDVECTOR_ENABLE_PYTHON_EXEC', '').strip().lower() in (
+    '1', 'true', 'yes', 'on'
+)
+LOOPBACK_HOSTS = frozenset({'127.0.0.1', 'localhost', '::1', '::ffff:127.0.0.1'})
 MAX_CACHED_RESULT_BYTES = 10 * 1024 * 1024
 HEALTH_DETAILS_TTL = 60.0
 SENSITIVE_KEYS = {
@@ -301,8 +318,634 @@ def _prepare_subprocess_command(command: Any) -> List[str]:
 
 
 def _contains_shell_metacharacters(command: str) -> bool:
-    """Detect shell metacharacters that should be blocked from generic command input."""
+    """Detect shell metacharacters that should be blocked from generic command input.
+
+    Retained only as *secondary* defence-in-depth. The primary execution
+    boundary is ``shell=False`` subprocess invocation plus the program and
+    argument validation in :func:`_validate_generic_command`.
+    """
     return bool(SHELL_METACHAR_PATTERN.search(command))
+
+
+# ---------------------------------------------------------------------------
+# Generic /api/command hardening (CWE-184: incomplete validation / arbitrary
+# command execution, and arbitrary local file access).
+# ---------------------------------------------------------------------------
+# The generic command endpoint is constrained by a STRICT, PER-TOOL ALLOWLIST
+# with validated argument schemas (``TOOL_SCHEMAS`` below), not by a denylist.
+# For every supported tool only explicitly enumerated options and positionals
+# are accepted; every unknown or unsupported argument is rejected by default,
+# a user cannot select an arbitrary executable, values are type-validated, and
+# no argument may reference a sensitive local path. Tools that cannot be safely
+# constrained generically (debuggers, general file utilities, code-exec
+# engines, password crackers, exploitation frameworks, …) are intentionally
+# absent here and remain available only through their dedicated, typed
+# ``/api/tools/*`` integrations. ``shell=False`` remains the primary boundary;
+# the metacharacter and denylist checks below are secondary defence-in-depth.
+
+# Arguments that turn any program into an arbitrary command launcher
+# (``find -exec`` family) or an interactive shell escape. Blocked on EVERY
+# execution path, including the typed tool adapters (see
+# :func:`_command_execution_block_reason`). Matched case-insensitively against
+# the flag portion of each argument (text before any ``=``).
+INDIRECT_EXEC_ARGUMENTS = frozenset({
+    "-exec", "-execdir", "-ok", "-okdir", "--interactive",
+})
+
+# Flags that make a scanner load and run attacker-supplied code — scripting
+# engines, OS-command features, local plugins/checks, executable config files,
+# or local tamper scripts (e.g. ``nmap --script``, ``sqlmap --eval``/``--os-cmd``/
+# ``--tamper``, ``exiftool -config`` Perl, nuclei ``-code``, ``checkov
+# --external-checks-dir``, ``volatility3 --plugin-dirs``). These are rejected on
+# the generic endpoint in addition to not being part of any tool schema.
+DANGEROUS_ARGUMENTS = frozenset({
+    "--eval", "--os-cmd", "--os-shell", "--os-pwn", "--os-bof", "--os-smbrelay",
+    "--tamper",
+    "--script", "--script-args", "--script-args-file", "--script-help", "--datadir",
+    "-config", "--config",
+    "--plugin-dirs", "--external-checks-dir", "--external-checks-git",
+    "-code", "--code",
+})
+
+# Combined per-argument flag denylist (secondary defence-in-depth).
+_BLOCKED_FLAG_ARGUMENTS = INDIRECT_EXEC_ARGUMENTS | DANGEROUS_ARGUMENTS
+
+# Local filesystem locations a command must never touch, even through an
+# allowed tool's file arguments (defence-in-depth against sensitive-file
+# disclosure). Compared after normalisation, case-insensitively.
+_SENSITIVE_PATH_PREFIXES = (
+    '/etc', '/proc', '/sys', '/root', '/boot', '/dev', '/var/log',
+    '/run/secrets', '/private/etc', '/private/var/root',
+    'c:/windows', 'c:/programdata/microsoft',
+)
+_SENSITIVE_BASENAMES = frozenset({
+    'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'authorized_keys',
+    'ntuser.dat', '.netrc', 'shadow', 'gshadow', 'sudoers',
+})
+
+
+def _candidate_paths(argument: str) -> Sequence[str]:
+    """Yield path-like substrings from an argument (handles ``--flag=value``)."""
+    raw = str(argument)
+    parts = [raw]
+    if '=' in raw:
+        parts.append(raw.split('=', 1)[1])
+    cleaned = []
+    for part in parts:
+        part = part.strip().strip('"').strip("'")
+        if part:
+            cleaned.append(part)
+    return cleaned
+
+
+def _normalise_path_variants(candidate: str) -> set:
+    """Return lowercased, normalised forms of a path candidate.
+
+    Collapses repeated separators (defeats ``//etc/passwd`` style bypasses),
+    expands ``~``, and resolves symlinks via ``realpath`` for paths that exist
+    (defeats a symlink-in-the-workspace pointing at a sensitive file).
+    """
+    variants = set()
+    forms = [candidate]
+    try:
+        forms.append(os.path.expanduser(candidate))
+    except Exception:
+        pass
+    for form in forms:
+        try:
+            normalised = os.path.normpath(form)
+        except Exception:
+            normalised = form
+        normalised = re.sub(r'/{2,}', '/', normalised.replace('\\', '/')).lower()
+        variants.add(normalised)
+        try:
+            real = os.path.realpath(form)
+            variants.add(re.sub(r'/{2,}', '/', real.replace('\\', '/')).lower())
+        except Exception:
+            pass
+    return variants
+
+
+def _argument_accesses_sensitive_path(argument: str) -> bool:
+    """Return True when an argument references a sensitive local path or uses traversal."""
+    for candidate in _candidate_paths(argument):
+        slashed = candidate.replace('\\', '/')
+        # Reject any path-traversal component outright.
+        if '..' in slashed.split('/'):
+            return True
+        lowered = slashed.lower()
+        # SSH material and sensitive basenames are blocked regardless of form.
+        if '/.ssh/' in lowered or lowered.endswith('/.ssh'):
+            return True
+        # Only filesystem-looking tokens are treated as candidate local paths,
+        # so URLs and bare targets (e.g. http://host/etc/x) are not false hits.
+        looks_local = ('://' not in slashed) and (
+            slashed.startswith(('/', '~')) or bool(re.match(r'^[a-zA-Z]:/', slashed))
+        )
+        for normalised in _normalise_path_variants(candidate):
+            if os.path.basename(normalised) in _SENSITIVE_BASENAMES:
+                return True
+            if not looks_local:
+                continue
+            for prefix in _SENSITIVE_PATH_PREFIXES:
+                if normalised == prefix or normalised.startswith(prefix + '/'):
+                    return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Per-argument value validators. shell=False means values are never shell
+# interpreted; these constrain the *shape* of each value so that, e.g., a
+# "target" cannot smuggle a path or option and a numeric field stays numeric.
+# ---------------------------------------------------------------------------
+def _v_target(value: str) -> bool:
+    """Host / IP / CIDR / URL with no shell metacharacters or whitespace."""
+    return bool(value) and bool(_SAFE_TARGET_RE.match(value))
+
+
+def _v_int(value: str) -> bool:
+    return bool(value) and value.isdigit()
+
+
+def _v_ports(value: str) -> bool:
+    # Port, list or range (e.g. 80, 1-65535, 80,443, U:53, '-' for all).
+    return bool(re.match(r'^(-|[A-Za-z]?:?[0-9][0-9,\-]*)$', value))
+
+
+def _v_codes(value: str) -> bool:
+    return value.lower() == 'all' or bool(re.match(r'^[0-9][0-9,\-]*$', value))
+
+
+def _v_path(value: str) -> bool:
+    """A non-sensitive filesystem path made only of safe path characters."""
+    if not value or _argument_accesses_sensitive_path(value):
+        return False
+    return bool(re.match(r'^[A-Za-z0-9._:/\\~@%+\-]+$', value))
+
+
+def _v_str(value: str) -> bool:
+    """Bounded free text (metacharacters already globally rejected); never a
+    sensitive path."""
+    return bool(value) and len(value) <= 512 and not _argument_accesses_sensitive_path(value)
+
+
+def _v_target_or_path(value: str) -> bool:
+    return _v_target(value) or _v_path(value)
+
+
+def _v_any_text(value: str) -> bool:
+    return len(value) <= 1024
+
+
+def _v_enum(*options):
+    allowed = frozenset(o.lower() for o in options)
+    return lambda value: value.lower() in allowed
+
+
+def _bf(flags: str) -> frozenset:
+    return frozenset(flags.split())
+
+
+# ---------------------------------------------------------------------------
+# Strict per-tool schemas. Each entry: ``bool`` (valueless flags), ``value``
+# (flag -> value validator), ``positional`` (validator or None). Only tools
+# that can be safely constrained generically appear here; everything else is
+# rejected by the generic endpoint and must use its dedicated integration.
+# ---------------------------------------------------------------------------
+TOOL_SCHEMAS = {
+    # -- Harmless read-only diagnostics --------------------------------------
+    "echo": {"bool": frozenset(), "value": {}, "positional": _v_any_text},
+    "which": {"bool": frozenset(), "value": {}, "positional": _v_str},
+    "whoami": {"bool": _bf("-a"), "value": {}, "positional": None},
+    "id": {"bool": _bf("-u -g -n -G -r -z"), "value": {}, "positional": _v_str},
+    "uname": {"bool": _bf("-a -s -n -r -v -m -p -i -o"), "value": {}, "positional": None},
+    "hostname": {"bool": _bf("-i -I -f -s -d -A"), "value": {}, "positional": None},
+    "pwd": {"bool": _bf("-P -L"), "value": {}, "positional": None},
+
+    # -- Network / port scanners ---------------------------------------------
+    "nmap": {
+        "bool": _bf("-sV -sC -sS -sT -sU -sn -sA -sW -sCV -sVC -A -Pn -O -n -6 -F -r "
+                    "-R -v -vv -vvv --open --reason -d -T0 -T1 -T2 -T3 -T4 -T5 -p- "
+                    "--traceroute --version-light --version-all"),
+        "value": {"-p": _v_ports, "--top-ports": _v_int, "--max-rate": _v_int,
+                   "--min-rate": _v_int, "--max-retries": _v_int, "--host-timeout": _v_str,
+                   "-iL": _v_path, "-oN": _v_path, "-oX": _v_path, "-oG": _v_path,
+                   "-oA": _v_path, "-oJ": _v_path, "-e": _v_str, "--source-port": _v_int,
+                   "-g": _v_int, "-S": _v_target, "--ttl": _v_int, "--scan-delay": _v_str,
+                   "--mtu": _v_int, "--version-intensity": _v_int, "--min-hostgroup": _v_int,
+                   "-PS": _v_ports, "-PA": _v_ports, "-PU": _v_ports},
+        "positional": _v_target,
+    },
+    "masscan": {
+        "bool": _bf("-sS --banners --open"),
+        "value": {"-p": _v_ports, "--ports": _v_ports, "--rate": _v_int,
+                   "--range": _v_target, "-oL": _v_path, "-oJ": _v_path, "-oX": _v_path,
+                   "-oG": _v_path, "-e": _v_str, "--router-ip": _v_target, "--wait": _v_int,
+                   "--seed": _v_int, "--retries": _v_int, "-iL": _v_path,
+                   "--excludefile": _v_path, "--exclude": _v_target},
+        "positional": _v_target,
+    },
+    "rustscan": {
+        "bool": _bf("--accessible -g -n --no-config"),
+        "value": {"-a": _v_target, "-p": _v_ports, "--ports": _v_ports, "-r": _v_ports,
+                   "--range": _v_ports, "-b": _v_int, "--batch-size": _v_int, "-t": _v_int,
+                   "--timeout": _v_int, "-u": _v_int, "--ulimit": _v_int,
+                   "--scan-order": _v_str},
+        "positional": _v_target,
+    },
+
+    # -- Web / HTTP probing & fuzzing ----------------------------------------
+    "httpx": {
+        "bool": _bf("-sc -title -server -td -tech-detect -ip -cdn -silent -json -cl "
+                    "-location -websocket -no-color -follow-redirects -fr -probe -nc"),
+        "value": {"-u": _v_target, "-target": _v_target, "-l": _v_path, "-list": _v_path,
+                   "-p": _v_ports, "-ports": _v_ports, "-threads": _v_int, "-t": _v_int,
+                   "-timeout": _v_int, "-retries": _v_int, "-mc": _v_codes, "-fc": _v_codes,
+                   "-H": _v_str, "-header": _v_str, "-o": _v_path, "-output": _v_path,
+                   "-rl": _v_int, "-rate-limit": _v_int, "-x": _v_str},
+        "positional": _v_target,
+    },
+    "nuclei": {
+        "bool": _bf("-silent -json -jsonl -nc -no-color -duc -stats -nts -vv -v -ni "
+                    "-as -automatic-scan"),
+        "value": {"-u": _v_target, "-target": _v_target, "-l": _v_path, "-list": _v_path,
+                   "-t": _v_path, "-templates": _v_path, "-w": _v_path, "-tags": _v_str,
+                   "-severity": _v_str, "-etags": _v_str, "-rl": _v_int, "-rate-limit": _v_int,
+                   "-c": _v_int, "-concurrency": _v_int, "-timeout": _v_int, "-retries": _v_int,
+                   "-o": _v_path, "-output": _v_path, "-H": _v_str, "-header": _v_str,
+                   "-mhe": _v_int, "-id": _v_str, "-eid": _v_str, "-itags": _v_str,
+                   "-proxy": _v_target},
+        "positional": None,
+    },
+    "ffuf": {
+        "bool": _bf("-recursion -silent -c -v -se -sf -or -noninteractive -ac -ic"),
+        "value": {"-w": _v_path, "-u": _v_target, "-mc": _v_codes, "-fc": _v_codes,
+                   "-ms": _v_codes, "-fs": _v_codes, "-ml": _v_codes, "-fl": _v_codes,
+                   "-mw": _v_codes, "-fw": _v_codes, "-mr": _v_str, "-fr": _v_str,
+                   "-t": _v_int, "-p": _v_str, "-rate": _v_int, "-timeout": _v_int,
+                   "-H": _v_str, "-X": _v_str, "-d": _v_str, "-o": _v_path, "-of": _v_str,
+                   "-recursion-depth": _v_int, "-replay-proxy": _v_target, "-x": _v_target,
+                   "-maxtime": _v_int, "-mode": _v_str},
+        "positional": None,
+    },
+    "gobuster": {
+        "bool": _bf("-k -q -r -e -z -n --wildcard --no-error -f --no-tls-validation -v --expanded"),
+        "value": {"-u": _v_target, "-w": _v_path, "-t": _v_int, "-x": _v_str, "-s": _v_codes,
+                   "-b": _v_codes, "-o": _v_path, "-d": _v_target, "-H": _v_str, "-c": _v_str,
+                   "-P": _v_str, "-U": _v_str, "-a": _v_str, "-p": _v_target,
+                   "--timeout": _v_str, "--exclude-length": _v_codes, "-m": _v_str},
+        "positional": _v_enum("dir", "dns", "vhost", "fuzz", "s3", "gcs", "tftp"),
+    },
+    "feroxbuster": {
+        "bool": _bf("-k -q -n --silent -r -g --no-recursion -A -e"),
+        "value": {"-u": _v_target, "-w": _v_path, "-t": _v_int, "-x": _v_str, "-s": _v_codes,
+                   "-C": _v_codes, "-o": _v_path, "-d": _v_int, "-H": _v_str,
+                   "--rate-limit": _v_int, "-T": _v_int, "-p": _v_target, "-m": _v_str,
+                   "--filter-status": _v_codes, "-S": _v_codes, "-N": _v_codes, "-W": _v_codes},
+        "positional": None,
+    },
+    "dirb": {
+        "bool": _bf("-r -S -w -v -i -N"),
+        "value": {"-o": _v_path, "-X": _v_str, "-x": _v_path, "-z": _v_int, "-p": _v_target,
+                   "-c": _v_str, "-H": _v_str, "-a": _v_str, "-u": _v_str},
+        "positional": _v_target_or_path,
+    },
+    "dirsearch": {
+        "bool": _bf("-q --random-agent -F --recursive"),
+        "value": {"-u": _v_target, "-l": _v_path, "-e": _v_str, "-w": _v_path, "-t": _v_int,
+                   "-x": _v_codes, "-i": _v_codes, "-o": _v_path, "-H": _v_str,
+                   "--timeout": _v_int, "--format": _v_str, "-m": _v_str},
+        "positional": None,
+    },
+    "nikto": {
+        "bool": _bf("-ssl -nossl -g"),
+        "value": {"-h": _v_target, "-host": _v_target, "-p": _v_ports, "-o": _v_path,
+                   "-Format": _v_str, "-Tuning": _v_str, "-useragent": _v_str,
+                   "-timeout": _v_int, "-id": _v_str, "-vhost": _v_target, "-Save": _v_path,
+                   "-maxtime": _v_int},
+        "positional": None,
+    },
+    "whatweb": {
+        "bool": _bf("-v --no-errors -q"),
+        "value": {"-a": _v_int, "--user-agent": _v_str, "-U": _v_str, "--max-threads": _v_int,
+                   "-t": _v_int, "--log-brief": _v_path, "--log-verbose": _v_path,
+                   "--log-json": _v_path, "--colour": _v_str, "--color": _v_str, "-H": _v_str,
+                   "--read-timeout": _v_int, "--open-timeout": _v_int},
+        "positional": _v_target,
+    },
+    "wafw00f": {
+        "bool": _bf("-a -v -l -r"),
+        "value": {"-o": _v_path, "-p": _v_path, "-i": _v_path, "--format": _v_str, "-t": _v_str},
+        "positional": _v_target,
+    },
+    "sslscan": {
+        "bool": _bf("--no-colour --no-color --no-failed --ssl2 --ssl3 --tls10 --tls11 "
+                    "--tls12 --tls13 --show-certificate --no-check-certificate "
+                    "--starttls-ftp --starttls-smtp --starttls-imap"),
+        "value": {"--targets": _v_path, "--sni-name": _v_target, "--connect-timeout": _v_int,
+                   "--xml": _v_path},
+        "positional": _v_target,
+    },
+    "testssl": {
+        "bool": _bf("--fast --sneaky -S -P -E -s --quiet --wide --full"),
+        "value": {"--file": _v_path, "--jsonfile": _v_path, "--htmlfile": _v_path,
+                   "--logfile": _v_path, "--csvfile": _v_path, "--warnings": _v_str,
+                   "-p": _v_ports},
+        "positional": _v_target,
+    },
+
+    # -- DNS / OSINT / recon --------------------------------------------------
+    "subfinder": {
+        "bool": _bf("-silent -all -recursive -nW -active -cs -oI"),
+        "value": {"-d": _v_target, "-domain": _v_target, "-dL": _v_path, "-o": _v_path,
+                   "-oD": _v_path, "-t": _v_int, "-timeout": _v_int, "-rl": _v_int,
+                   "-rate-limit": _v_int, "-s": _v_str, "-es": _v_str, "-proxy": _v_target,
+                   "-max-time": _v_int},
+        "positional": None,
+    },
+    "amass": {
+        "bool": _bf("-active -brute -silent -ip -ipv4 -ipv6 -passive -list"),
+        "value": {"-d": _v_target, "-df": _v_path, "-o": _v_path, "-oA": _v_path,
+                   "-timeout": _v_int, "-rf": _v_path, "-r": _v_target, "-w": _v_path,
+                   "-min-for-recursive": _v_int, "-max-dns-queries": _v_int, "-p": _v_ports},
+        "positional": _v_enum("enum", "intel", "viz", "db", "track"),
+    },
+    "dnsenum": {
+        "bool": _bf("--enum --noreverse --nocolor -r"),
+        "value": {"--dnsserver": _v_target, "-f": _v_path, "--file": _v_path, "-o": _v_path,
+                   "--output": _v_path, "--threads": _v_int, "-p": _v_int, "--pages": _v_int,
+                   "-s": _v_int, "--scrap": _v_int, "--subfile": _v_path, "-t": _v_int,
+                   "--timeout": _v_int},
+        "positional": _v_target,
+    },
+    "katana": {
+        "bool": _bf("-silent -jc -jsonl -json -nc -no-color -headless -hl -xhr"),
+        "value": {"-u": _v_target, "-list": _v_path, "-l": _v_path, "-d": _v_int,
+                   "-depth": _v_int, "-o": _v_path, "-output": _v_path, "-c": _v_int,
+                   "-concurrency": _v_int, "-p": _v_int, "-parallelism": _v_int, "-rl": _v_int,
+                   "-rate-limit": _v_int, "-timeout": _v_int, "-H": _v_str, "-proxy": _v_target,
+                   "-fs": _v_str, "-mr": _v_str, "-em": _v_str, "-ef": _v_str},
+        "positional": None,
+    },
+    "gau": {
+        "bool": _bf("--subs --fp --json -json"),
+        "value": {"--o": _v_path, "-o": _v_path, "--threads": _v_int, "--providers": _v_str,
+                   "--blacklist": _v_str, "--from": _v_int, "--to": _v_int, "--retries": _v_int,
+                   "--timeout": _v_int, "--proxy": _v_target},
+        "positional": _v_target,
+    },
+    "waybackurls": {
+        "bool": _bf("-dates -no-subs --no-subs -get-versions"),
+        "value": {},
+        "positional": _v_target,
+    },
+    "sherlock": {
+        "bool": _bf("--verbose --tor --unique-tor --print-found --print-all --nsfw --local"),
+        "value": {"--timeout": _v_int, "-o": _v_path, "--output": _v_path,
+                   "--folderoutput": _v_path, "-fo": _v_path, "--site": _v_str,
+                   "--proxy": _v_target, "--json": _v_path, "-j": _v_path},
+        "positional": _v_str,
+    },
+    "theharvester": {
+        "bool": _bf("-r -g -p -n -c --screenshot"),
+        "value": {"-d": _v_target, "-l": _v_int, "-b": _v_str, "-f": _v_path, "-o": _v_path,
+                   "-s": _v_int, "--limit": _v_int, "--source": _v_str, "--dns-server": _v_target},
+        "positional": None,
+    },
+
+    # -- Parameterised web attack / content discovery ------------------------
+    "dalfox": {
+        "bool": _bf("--silence --no-color --skip-bav --follow-redirects --mining-dict "
+                    "--mining-dom --deep-domxss --no-spinner --skip-mining-all --waf-evasion"),
+        "value": {"-b": _v_target, "--blind": _v_target, "-o": _v_path, "--output": _v_path,
+                   "-w": _v_path, "--custom-payload": _v_path, "--header": _v_str, "-H": _v_str,
+                   "--cookie": _v_str, "--worker": _v_int, "--delay": _v_int, "--timeout": _v_int,
+                   "--user-agent": _v_str, "--proxy": _v_target, "--format": _v_str,
+                   "--data": _v_str, "-d": _v_str},
+        "positional": (lambda a: _v_enum("url", "file", "pipe", "sxss", "server", "payload")(a)
+                       or _v_target_or_path(a)),
+    },
+    "wfuzz": {
+        "bool": _bf("-c -v -Z -L --no-follow"),
+        "value": {"-w": _v_path, "-z": _v_str, "-u": _v_target, "-d": _v_str, "-H": _v_str,
+                   "-b": _v_str, "-t": _v_int, "-s": _v_int, "--hc": _v_codes, "--hl": _v_codes,
+                   "--hw": _v_codes, "--hh": _v_codes, "--hs": _v_str, "--sc": _v_codes,
+                   "--sl": _v_codes, "--sw": _v_codes, "--sh": _v_codes, "-p": _v_target,
+                   "-m": _v_str, "-o": _v_str, "-f": _v_path, "-X": _v_str},
+        "positional": _v_target,
+    },
+    "sqlmap": {
+        "bool": _bf("--batch --banner --dbs --tables --columns --dump --dump-all "
+                    "--current-user --current-db --is-dba --users --passwords --roles "
+                    "--schema --count --forms --random-agent --flush-session "
+                    "--fresh-queries --hostname --hpp --smart --text-only --parse-errors -o"),
+        "value": {"-u": _v_target, "--url": _v_target, "-r": _v_path, "-m": _v_path,
+                   "-g": _v_str, "-p": _v_str, "--dbms": _v_str, "--level": _v_int,
+                   "--risk": _v_int, "--threads": _v_int, "-D": _v_str, "-T": _v_str,
+                   "-C": _v_str, "--technique": _v_str, "--cookie": _v_str, "--data": _v_str,
+                   "--user-agent": _v_str, "--proxy": _v_target, "--crawl": _v_int,
+                   "--time-sec": _v_int, "--timeout": _v_int, "--retries": _v_int,
+                   "--prefix": _v_str, "--suffix": _v_str, "--where": _v_str, "--start": _v_int,
+                   "--stop": _v_int, "--delay": _v_int, "--output-dir": _v_path,
+                   "--file-write": _v_path, "--file-dest": _v_str},
+        "positional": None,
+    },
+    "wpscan": {
+        "bool": _bf("--random-user-agent --force --update --disable-tls-checks "
+                    "--ignore-main-redirect --verbose -v --no-banner"),
+        "value": {"--url": _v_target, "--passwords": _v_path, "-P": _v_path,
+                   "--usernames": _v_str, "-U": _v_str, "--wordlist": _v_path, "-w": _v_path,
+                   "-e": _v_str, "--enumerate": _v_str, "--format": _v_str, "-f": _v_str,
+                   "-o": _v_path, "--output": _v_path, "--throttle": _v_int,
+                   "--max-threads": _v_int, "-t": _v_int, "--request-timeout": _v_int,
+                   "--connect-timeout": _v_int, "--plugins-detection": _v_str,
+                   "--api-token": _v_str, "--proxy": _v_target, "--cookie-string": _v_str,
+                   "--http-auth": _v_str, "--user-agent": _v_str},
+        "positional": None,
+    },
+}
+
+# Backwards-compatible view of the set of tools accepted generically.
+GENERIC_COMMAND_ALLOWLIST = frozenset(TOOL_SCHEMAS)
+
+
+def _is_flaglike_value(value: str) -> bool:
+    """True when a bare value looks like an option (so it cannot satisfy a
+    flag that expects a value — prevents flag smuggling)."""
+    return len(value) >= 2 and value[0] == '-' and (value[1].isalpha() or value[1] == '-')
+
+
+def _validate_generic_command(argv: Sequence[str]) -> 'tuple[Optional[int], Optional[str]]':
+    """Validate a parsed generic-command argv list against the strict per-tool
+    schema.
+
+    Returns ``(status_code, error_message)`` when the command must be rejected,
+    or ``(None, None)`` when it is permitted. The exact argv that will be
+    executed is validated: the program must be an explicitly supported tool,
+    every option must appear in that tool's schema, every value must pass its
+    validator, no argument may enable indirect code execution, and no argument
+    may reference a sensitive local path. ``shell=False`` remains the primary
+    execution boundary.
+    """
+    if not argv:
+        return 400, "Command parameter is required"
+
+    program = os.path.basename(str(argv[0])).lower()
+    if program.endswith('.exe'):
+        program = program[:-4]
+
+    schema = TOOL_SCHEMAS.get(program)
+    if schema is None:
+        return 403, (f"Command '{program}' is not supported through the generic endpoint; "
+                     f"use its dedicated tool integration")
+
+    bool_flags = schema["bool"]
+    value_flags = schema["value"]
+    positional = schema["positional"]
+
+    args = [str(a) for a in argv[1:]]
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        # Tool flags are case-sensitive (e.g. nmap -sV, -Pn, -D), so the schema
+        # lookup keeps original case; the denylist is matched case-insensitively.
+        flag = arg.split('=', 1)[0]
+
+        if flag.lower() in _BLOCKED_FLAG_ARGUMENTS:
+            return 403, f"Argument '{arg}' enables indirect code execution and is not allowed"
+
+        if arg.startswith('-') and arg != '-':
+            has_eq = '=' in arg
+            if flag in bool_flags and not has_eq:
+                i += 1
+                continue
+            if flag in value_flags:
+                validator = value_flags[flag]
+                if has_eq:
+                    value = arg.split('=', 1)[1]
+                    i += 1
+                else:
+                    if i + 1 >= len(args) or _is_flaglike_value(args[i + 1]):
+                        return 403, f"Argument '{arg}' is missing its required value"
+                    value = args[i + 1]
+                    i += 2
+                if _argument_accesses_sensitive_path(value):
+                    return 403, "Access to sensitive local paths is not allowed"
+                if not validator(value):
+                    return 403, f"Value for option '{flag}' is not permitted"
+                continue
+            return 403, f"Argument '{arg}' is not a supported option for '{program}'"
+
+        # Positional argument.
+        if _argument_accesses_sensitive_path(arg):
+            return 403, "Access to sensitive local paths is not allowed"
+        if positional is None or not positional(arg):
+            return 403, f"Positional argument '{arg}' is not permitted for '{program}'"
+        i += 1
+
+    return None, None
+
+
+def _command_execution_block_reason(argv: Sequence[str]) -> Optional[str]:
+    """Cross-cutting guard enforced on EVERY command before execution,
+    including the dedicated ``/api/tools/*`` adapters, so the Issue #3
+    invariants cannot be bypassed through an alternative endpoint: no
+    ``find -exec``-style indirect execution and no sensitive local file access.
+
+    Tool-specific scripting flags that legitimate dedicated integrations
+    require (e.g. an NSE scan or a debugger script) are intentionally *not*
+    blocked here; those are constrained by the strict schema on the generic
+    endpoint instead.
+    """
+    try:
+        parsed = _normalize_command(argv)
+    except Exception:
+        return None
+    for arg in parsed:
+        flag = str(arg).split('=', 1)[0].lower()
+        if flag in INDIRECT_EXEC_ARGUMENTS:
+            return f"blocked indirect command-execution argument '{arg}'"
+        if _argument_accesses_sensitive_path(arg):
+            return "blocked access to a sensitive local path"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Credential redaction for log output. Applied ONLY to strings that are
+# logged; the actual command arguments and execution behaviour are never
+# altered. Redaction is deliberately broad (over-redacting a log line is safe)
+# and covers: values of credential-bearing options, inline Authorization /
+# Bearer / Cookie headers, sensitive ``key=value`` pairs, and URL userinfo.
+# ---------------------------------------------------------------------------
+_SENSITIVE_FLAG_RE = re.compile(
+    r'(?i)(password|passwd|secret|token|api[-_]?key|api[-_]?token|apikey|'
+    r'auth|authorization|credential|cookie|bearer|private[-_]?key|passphrase)'
+)
+# Single-letter flags that carry a credential for some tools (hydra/medusa/…)
+# but a non-secret for others (nmap -p ports). Their value is redacted unless
+# it is clearly a port specification.
+_AMBIGUOUS_CRED_FLAGS = frozenset({'-p', '-P'})
+
+
+def _redact_inline_secrets(text: str) -> str:
+    """Redact secrets that appear inside a single token / free-text string."""
+    s = str(text)
+    # URL userinfo: scheme://user:pass@host
+    s = re.sub(r'([A-Za-z][A-Za-z0-9+.\-]*://)[^/\s:@]+:[^/\s@]+@', r'\1***:***@', s)
+    # Authorization / Cookie headers
+    s = re.sub(r'(?i)\b(authorization|cookie|proxy-authorization)\s*:\s*\S.*', r'\1: ***REDACTED***', s)
+    # Bearer / Basic tokens
+    s = re.sub(r'(?i)\b(bearer|basic)\s+[A-Za-z0-9._\-=/+]+', r'\1 ***REDACTED***', s)
+    # key=value with a sensitive key
+    s = re.sub(
+        r'(?i)\b(password|passwd|secret|token|api[-_]?key|api[-_]?token|apikey|'
+        r'auth|credential|cookie|passphrase)\s*=\s*[^&\s]+',
+        r'\1=***REDACTED***', s)
+    return s
+
+
+def _redact_command_for_log(command: Any) -> str:
+    """Return a log-safe rendering of a command with credentials redacted.
+
+    Never used to build the executed command — only for logging/telemetry.
+    """
+    try:
+        tokens = _normalize_command(command)
+    except Exception:
+        tokens = str(command).split()
+
+    out = []
+    pending = None  # None | 'always' | 'if_not_port'
+    for tok in tokens:
+        t = str(tok)
+        if pending == 'always':
+            out.append('***REDACTED***')
+            pending = None
+            continue
+        if pending == 'if_not_port':
+            out.append(t if _v_ports(t) else '***REDACTED***')
+            pending = None
+            continue
+        if t.startswith('-') and '=' in t:
+            flag, _, val = t.partition('=')
+            if _SENSITIVE_FLAG_RE.search(flag):
+                out.append(f'{flag}=***REDACTED***')
+                continue
+            if flag in _AMBIGUOUS_CRED_FLAGS:
+                out.append(f'{flag}={val if _v_ports(val) else "***REDACTED***"}')
+                continue
+            out.append(_redact_inline_secrets(t))
+            continue
+        if t.startswith('-') and _SENSITIVE_FLAG_RE.search(t):
+            out.append(t)
+            pending = 'always'
+            continue
+        if t in _AMBIGUOUS_CRED_FLAGS:
+            out.append(t)
+            pending = 'if_not_port'
+            continue
+        out.append(_redact_inline_secrets(t))
+    return ' '.join(out)
 
 
 def _result_size_bytes(result: Dict[str, Any]) -> int:
@@ -343,16 +986,28 @@ def _get_tools_status_snapshot(all_tools: Sequence[str]) -> Dict[str, bool]:
 
 @app.before_request
 def require_api_authentication():
-    """Enforce bearer-token authentication for all non-health endpoints."""
+    """Enforce bearer-token authentication for all non-health endpoints.
+
+    Fails closed: if no secure token has been configured (missing, empty, or
+    the known published development token), every protected request is
+    rejected. The published development token is also rejected explicitly even
+    if presented by a client, so it can never be used as a production
+    credential.
+    """
     if request.method == 'OPTIONS' or request.path in AUTH_EXEMPT_PATHS:
         return None
+
+    if not AUTH_CONFIGURED:
+        return jsonify({
+            'error': 'Server authentication is not configured; set a strong REDVECTOR_API_TOKEN'
+        }), 401
 
     auth_header = request.headers.get('Authorization', '')
     if not auth_header.startswith('Bearer '):
         return jsonify({'error': 'Unauthorized'}), 401
 
     provided_token = auth_header.split(' ', 1)[1]
-    if not hmac.compare_digest(provided_token, API_TOKEN):
+    if provided_token in INSECURE_DEFAULT_TOKENS or not hmac.compare_digest(provided_token, API_TOKEN):
         return jsonify({'error': 'Unauthorized'}), 401
 
     return None
@@ -365,6 +1020,23 @@ def add_cors_headers(response):
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
     return response
+
+
+def _python_endpoint_block_reason() -> Optional[str]:
+    """Return why the Python exec/install endpoints are unavailable, or None.
+
+    Defence in depth on top of the global bearer-token authentication (which
+    already fails closed and rejects the published development token): these
+    endpoints are disabled unless explicitly opted in, and never available when
+    the backend is bound to a non-loopback interface.
+    """
+    if not PYTHON_EXEC_ENABLED:
+        return ("Python execution endpoints are disabled. Set "
+                "REDVECTOR_ENABLE_PYTHON_EXEC=1 to enable them for authorized local use.")
+    if API_HOST not in LOOPBACK_HOSTS:
+        return ("Python execution endpoints are disabled when the server is bound to a "
+                "non-loopback interface.")
+    return None
 
 
 # ============================================================================
@@ -5636,7 +6308,7 @@ class EnhancedProcessManager:
         cache_key = f"cmd_result_{hash(command_display)}"
         cached_result = self.cache.get(cache_key)
         if cached_result and context and context.get("use_cache", True):
-            logger.info(f"📋 Using cached result for command: {command_display[:50]}...")
+            logger.info(f"📋 Using cached result for command: {_redact_command_for_log(command_display)[:50]}...")
             with self.process_pool.pool_lock:
                 self.process_pool.results[task_id] = {
                     "status": "completed",
@@ -6045,7 +6717,7 @@ class ProcessManager:
                 "last_output": "",
                 "bytes_processed": 0
             }
-            logger.info(f"🆔 REGISTERED: Process {pid} - {command[:50]}...")
+            logger.info(f"🆔 REGISTERED: Process {pid} - {_redact_command_for_log(command)[:50]}...")
 
     @staticmethod
     def update_process_progress(pid, progress, last_output="", bytes_processed=0):
@@ -6080,7 +6752,7 @@ class ProcessManager:
                             process_obj.kill()  # Force kill if still running
 
                         active_processes[pid]["status"] = "terminated"
-                        logger.warning(f"🛑 TERMINATED: Process {pid} - {process_info['command'][:50]}...")
+                        logger.warning(f"🛑 TERMINATED: Process {pid} - {_redact_command_for_log(process_info['command'])[:50]}...")
                         return True
                 except Exception as e:
                     logger.error(f"💥 Error terminating process {pid}: {str(e)}")
@@ -7152,13 +7824,13 @@ class RedVectorCache:
                 if not self._is_expired(timestamp):
                     self.cache.move_to_end(key)
                     self.stats["hits"] += 1
-                    logger.info(f"💾 Cache HIT for command: {command}")
+                    logger.info(f"💾 Cache HIT for command: {_redact_command_for_log(command)}")
                     return data
                 else:
                     del self.cache[key]
 
             self.stats["misses"] += 1
-        logger.info(f"🔍 Cache MISS for command: {command}")
+        logger.info(f"🔍 Cache MISS for command: {_redact_command_for_log(command)}")
         return None
 
     def set(self, command: str, params: Dict[str, Any], result: Dict[str, Any]):
@@ -7172,7 +7844,7 @@ class RedVectorCache:
                 self.stats["evictions"] += 1
 
             self.cache[key] = (time.time(), result)
-        logger.info(f"💾 Cached result for command: {command}")
+        logger.info(f"💾 Cached result for command: {_redact_command_for_log(command)}")
 
     def clear(self):
         """Clear all cached entries and reset cache statistics."""
@@ -7272,7 +7944,7 @@ class EnhancedCommandExecutor:
                 if line:
                     self.stdout_data += line
                     # Real-time output display
-                    logger.info(f"📤 STDOUT: {line.strip()}")
+                    logger.info(f"📤 STDOUT: {_redact_inline_secrets(line.strip())}")
         except Exception as e:
             logger.error(f"Error reading stdout: {e}")
 
@@ -7283,7 +7955,7 @@ class EnhancedCommandExecutor:
                 if line:
                     self.stderr_data += line
                     # Real-time error output display
-                    logger.warning(f"📥 STDERR: {line.strip()}")
+                    logger.warning(f"📥 STDERR: {_redact_inline_secrets(line.strip())}")
         except Exception as e:
             logger.error(f"Error reading stderr: {e}")
 
@@ -7338,7 +8010,7 @@ class EnhancedCommandExecutor:
         """Execute the command with enhanced monitoring and output"""
         self.start_time = time.time()
 
-        logger.info(f"🚀 EXECUTING: {self.command_display}")
+        logger.info(f"🚀 EXECUTING: {_redact_command_for_log(self.command_display)}")
         logger.info(f"⏱️  TIMEOUT: {self.timeout}s | PID: Starting...")
 
         try:
@@ -9118,6 +9790,25 @@ def execute_command(command: str, use_cache: bool = True) -> Dict[str, Any]:
     try:
         command_display = _command_display(command)
 
+        # Cross-cutting security guard applied to EVERY execution path,
+        # including the dedicated /api/tools/* adapters, so the Issue #3
+        # invariants (no find -exec indirect execution, no sensitive local
+        # file access) cannot be bypassed via an alternative endpoint.
+        block_reason = _command_execution_block_reason(command)
+        if block_reason:
+            logger.warning(f"⚠️  Command execution blocked: {block_reason}")
+            return {
+                "stdout": "",
+                "stderr": f"Command execution blocked: {block_reason}",
+                "return_code": -1,
+                "success": False,
+                "timed_out": False,
+                "partial_results": False,
+                "execution_time": 0,
+                "timestamp": datetime.now().isoformat(),
+                "error": f"Command execution blocked: {block_reason}",
+            }
+
         if use_cache:
             cached_result = cache.get(command_display, {})
             if cached_result:
@@ -9647,42 +10338,25 @@ def generic_command():
                 "error": "Command parameter is required"
             }), 400
 
+        # Secondary defence-in-depth only; shell=False is the real boundary.
         if _contains_shell_metacharacters(command):
             return jsonify({
                 "error": "Shell metacharacters are not allowed in generic command execution"
             }), 400
 
-        # Validate command against allowed security tool prefixes
-        ALLOWED_COMMAND_PREFIXES = {
-            "nmap", "masscan", "rustscan", "gobuster", "feroxbuster", "ffuf",
-            "dirb", "dirsearch", "nuclei", "nikto", "sqlmap", "wpscan",
-            "hydra", "john", "hashcat", "medusa", "amass", "subfinder",
-            "fierce", "dnsenum", "theharvester", "responder", "netexec",
-            "enum4linux", "arjun", "paramspider", "katana", "httpx",
-            "dalfox", "hakrawler", "gau", "waybackurls", "wafw00f",
-            "ghidra", "radare2", "r2", "gdb", "binwalk", "ropgadget",
-            "checksec", "strings", "volatility3", "foremost", "steghide",
-            "exiftool", "prowler", "scout", "trivy", "kube-hunter",
-            "kube-bench", "checkov", "terrascan", "falco", "sherlock",
-            "shodan", "censys", "testssl", "sslscan", "whatweb", "wfuzz",
-            "x8", "echo", "which", "whoami", "id", "uname", "hostname",
-            "cat", "head", "tail", "grep", "find", "ls", "pwd",
-        }
-
+        # Parse once into the exact argv that will be executed, then validate
+        # that same argv (no parser differential between check and execution).
         try:
-            base_cmd = shlex.split(command)[0]
+            argv = _normalize_command(command)
         except ValueError:
             return jsonify({"error": "Invalid command syntax"}), 400
 
-        # Extract bare command name (strip path)
-        base_cmd_name = os.path.basename(base_cmd)
-        if base_cmd_name not in ALLOWED_COMMAND_PREFIXES:
-            logger.warning(f"⚠️  Blocked disallowed command: {base_cmd_name}")
-            return jsonify({
-                "error": f"Command '{base_cmd_name}' is not in the allowed list of security tools"
-            }), 403
+        status_code, message = _validate_generic_command(argv)
+        if status_code is not None:
+            logger.warning(f"⚠️  Blocked generic command: {message}")
+            return jsonify({"error": message}), status_code
 
-        result = execute_command(_normalize_command(command), use_cache=use_cache)
+        result = execute_command(argv, use_cache=use_cache)
         return jsonify(result)
     except Exception as e:
         logger.error(f"💥 Error in command endpoint: {str(e)}")
@@ -14352,7 +15026,7 @@ class BrowserAgent:
                     return {'success': False, 'error': 'Failed to setup browser'}
 
             nav_command = f'Navigate to {url}'
-            logger.info(f"{ModernVisualEngine.format_command_execution(nav_command, 'STARTING')}")
+            logger.info(f"{ModernVisualEngine.format_command_execution(_redact_inline_secrets(nav_command), 'STARTING')}")
 
             # Navigate to URL
             self.driver.get(url)
@@ -14742,7 +15416,7 @@ def http_framework_endpoint():
                 return jsonify({"error": "URL parameter is required for request action"}), 400
 
             request_command = f"{method} {url}"
-            logger.info(f"{ModernVisualEngine.format_command_execution(request_command, 'STARTING')}")
+            logger.info(f"{ModernVisualEngine.format_command_execution(_redact_inline_secrets(request_command), 'STARTING')}")
             result = http_framework.intercept_request(url, method, data, headers, cookies)
 
             if result.get("success"):
@@ -14760,7 +15434,7 @@ def http_framework_endpoint():
             max_pages = params.get("max_pages", 100)
 
             spider_command = f"Spider {url}"
-            logger.info(f"{ModernVisualEngine.format_command_execution(spider_command, 'STARTING')}")
+            logger.info(f"{ModernVisualEngine.format_command_execution(_redact_inline_secrets(spider_command), 'STARTING')}")
             result = http_framework.spider_website(url, max_depth, max_pages)
 
             if result.get("success"):
@@ -15157,6 +15831,10 @@ def dnsenum():
 def install_python_package():
     """Install a Python package in a virtual environment"""
     try:
+        block_reason = _python_endpoint_block_reason()
+        if block_reason:
+            return jsonify({"error": block_reason}), 403
+
         params = request.get_json(silent=True) or {}
         package = params.get("package", "")
         env_name = params.get("env_name", "default")
@@ -15164,7 +15842,8 @@ def install_python_package():
         if not package:
             return jsonify({"error": "Package name is required"}), 400
 
-        logger.info(f"📦 Installing Python package: {package} in env {env_name}")
+        # Do not log the package spec (it may embed credentials, e.g. a git URL).
+        logger.info(f"📦 Installing Python package in env {env_name}")
         success = env_manager.install_package(env_name, package)
 
         if success:
@@ -15187,6 +15866,10 @@ def install_python_package():
 def execute_python_script():
     """Execute a Python script in a virtual environment"""
     try:
+        block_reason = _python_endpoint_block_reason()
+        if block_reason:
+            return jsonify({"error": block_reason}), 403
+
         params = request.get_json(silent=True) or {}
         script = params.get("script", "")
         env_name = params.get("env_name", "default")
@@ -17514,8 +18197,21 @@ def execute_command_async():
         if not command:
             return jsonify({"error": "Command parameter is required"}), 400
 
+        # Same strict validation as the synchronous /api/command endpoint so the
+        # async path cannot be used to bypass the allowlist and argument schema.
+        if isinstance(command, str) and _contains_shell_metacharacters(command):
+            return jsonify({"error": "Shell metacharacters are not allowed in generic command execution"}), 400
+        try:
+            argv = _normalize_command(command)
+        except ValueError:
+            return jsonify({"error": "Invalid command syntax"}), 400
+        status_code, message = _validate_generic_command(argv)
+        if status_code is not None:
+            logger.warning(f"⚠️  Blocked async command: {message}")
+            return jsonify({"error": message}), status_code
+
         # Execute command asynchronously
-        task_id = enhanced_process_manager.execute_command_async(command, context)
+        task_id = enhanced_process_manager.execute_command_async(argv, context)
 
         logger.info(f"🚀 Async command execution started | Task ID: {task_id}")
         return jsonify({
@@ -18828,7 +19524,7 @@ def proxychains_exec():
         if additional_args:
             cmd += f" {additional_args}"
 
-        logger.info(f"🔗 Executing through ProxyChains: {command_to_run}")
+        logger.info(f"🔗 Executing through ProxyChains: {_redact_command_for_log(command_to_run)}")
         result = execute_command(cmd)
         logger.info(f"📊 ProxyChains execution completed")
         return jsonify(result)
@@ -18909,7 +19605,7 @@ def mimikatz():
         if additional_args:
             cmd += f" {additional_args}"
 
-        logger.info(f"🔑 Starting Mimikatz: {command_to_run}")
+        logger.info(f"🔑 Starting Mimikatz: {_redact_command_for_log(command_to_run)}")
         result = execute_command(cmd)
         logger.info(f"📊 Mimikatz execution completed")
         return jsonify(result)
@@ -35876,6 +36572,21 @@ if __name__ == "__main__":
     for line in startup_info.strip().split('\n'):
         if line.strip():
             logger.info(line)
+
+    # SECURITY: surface fail-closed state and risky network exposure without
+    # ever emitting the token value itself.
+    if not AUTH_CONFIGURED:
+        logger.warning(
+            "SECURITY: REDVECTOR_API_TOKEN is not set to a secure value. All "
+            "authenticated endpoints will reject requests until a strong token "
+            "is configured in the environment."
+        )
+    if API_HOST not in ('127.0.0.1', 'localhost', '::1'):
+        logger.warning(
+            "SECURITY: binding to a non-loopback address (%s). Ensure a strong "
+            "REDVECTOR_API_TOKEN and transport encryption (TLS) are in place "
+            "before exposing RedVector to a network.", API_HOST
+        )
 
     try:
         app.run(host=API_HOST, port=API_PORT, debug=False, use_reloader=False)

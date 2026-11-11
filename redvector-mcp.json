@@ -4,9 +4,7 @@
       "command": "bash",
       "args": ["./start_redvector.sh"],
       "cwd": ".",
-      "env": {
-        "REDVECTOR_API_TOKEN": "redvector-dev-token"
-      },
+      "env": {},
       "description": "RedVector AI v8.0 - Autonomous Red Team Operations Platform. Auto-starts the backend server. All 321 tools are fully autonomous. Supports stdio (default) and SSE transports.",
       "timeout": 300,
       "alwaysAllow": [

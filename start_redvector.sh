@@ -16,9 +16,6 @@ cd "$SCRIPT_DIR"
 SERVER_PORT="${REDVECTOR_PORT:-8888}"
 SERVER_HOST="${REDVECTOR_HOST:-127.0.0.1}"
 VENV_DIR="$SCRIPT_DIR/.venv"
-TOKEN="${REDVECTOR_API_TOKEN:-redvector-dev-token}"
-
-export REDVECTOR_API_TOKEN="$TOKEN"
 
 # Select the project interpreter explicitly, including from Claude Desktop.
 PYTHON=python3
@@ -28,6 +25,28 @@ elif [ -x "$VENV_DIR/bin/python" ]; then
     PYTHON="$VENV_DIR/bin/python"
 fi
 export PATH="$VENV_DIR/bin:$PATH"
+
+# ── Authentication token (CWE-798) ────────────────────────────────────────────
+# There is no hard-coded default credential. Use an explicitly provided token
+# when present, reject the known published development token, and otherwise
+# generate a strong ephemeral per-session token shared by the backend and the
+# MCP client (both inherit REDVECTOR_API_TOKEN from this process).
+if [ -n "${REDVECTOR_API_TOKEN:-}" ]; then
+    if [ "$REDVECTOR_API_TOKEN" = "redvector-dev-token" ]; then
+        echo "[RedVector] ERROR: REDVECTOR_API_TOKEN is set to the insecure published development token. Refusing to start. Set a strong, unique token." >&2
+        exit 1
+    fi
+    TOKEN="$REDVECTOR_API_TOKEN"
+else
+    TOKEN="$("$PYTHON" -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    if [ -z "$TOKEN" ]; then
+        echo "[RedVector] ERROR: Unable to generate a secure API token. Set REDVECTOR_API_TOKEN explicitly." >&2
+        exit 1
+    fi
+    echo "[RedVector] No REDVECTOR_API_TOKEN set; generated a strong ephemeral per-session token. Set REDVECTOR_API_TOKEN to use a persistent credential." >&2
+fi
+
+export REDVECTOR_API_TOKEN="$TOKEN"
 
 # Ownership comes from Linux socket/process metadata, never from HTTP alone.
 backend_state() {

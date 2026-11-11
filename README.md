@@ -226,6 +226,7 @@ Common environment variables used by the project include:
 | `REDVECTOR_HOST` / `HOST` | Backend bind address, depending on launcher/runtime path |
 | `REDVECTOR_PORT` / `PORT` | Backend port |
 | `REDVECTOR_API_TOKEN` | Bearer token used to protect API access |
+| `REDVECTOR_ENABLE_PYTHON_EXEC` | Opt-in switch for the Python execution/installation endpoints (see below). Disabled unless set to `1`/`true`/`yes`/`on` |
 | `COMMAND_TIMEOUT` | Maximum command execution time where supported |
 | `CACHE_TTL` | Cache lifetime |
 | `FLASK_DEBUG` | Flask debug setting |
@@ -238,6 +239,24 @@ python redvector_server.py
 ```
 
 For remote exposure, use appropriate network controls, authentication, TLS termination, and an isolated assessment environment. Binding to localhost is the safest default.
+
+### Python execution endpoints (`REDVECTOR_ENABLE_PYTHON_EXEC`)
+
+The `/api/python/execute` and `/api/python/install` endpoints run arbitrary Python
+and install arbitrary packages, so they provide authenticated arbitrary-code
+execution. They are **disabled by default** and hardened as follows:
+
+- They return `403` unless `REDVECTOR_ENABLE_PYTHON_EXEC` is explicitly set to a
+  truthy value (`1`, `true`, `yes`, `on`).
+- Even when enabled, they stay disabled whenever the backend is bound to a
+  **non-loopback** interface, so they can never be reached over the network.
+- Valid API authentication is always required; the historical development token
+  is rejected like any other request.
+- The launchers, installers and Claude Desktop integration never set this
+  variable — enabling the endpoints is always a deliberate, local action.
+
+Only enable this on a trusted local workstation for authorized use (e.g. local
+tooling or CTF work). Leave it unset for any shared, exposed or production host.
 
 ---
 

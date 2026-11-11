@@ -179,7 +179,18 @@ class RedVectorClient:
         self.server_url = server_url.rstrip("/")
         self.timeout = timeout
         self.session = requests.Session()
-        self.api_token = os.environ.get("REDVECTOR_API_TOKEN", "redvector-dev-token")
+        # SECURITY (CWE-798): never fall back to a hard-coded credential. The
+        # launchers export a strong token (generated per-session when unset),
+        # so a missing or insecure value here means the environment is
+        # misconfigured and we fail closed rather than sending the known
+        # published development token.
+        self.api_token = os.environ.get("REDVECTOR_API_TOKEN", "").strip()
+        if not self.api_token or self.api_token == "redvector-dev-token":
+            raise ValueError(
+                "REDVECTOR_API_TOKEN is not configured with a secure value. "
+                "Set a strong REDVECTOR_API_TOKEN (the launcher generates one "
+                "automatically) before starting the MCP client."
+            )
         self.session.headers.update({"Authorization": f"Bearer {self.api_token}"})
 
         parsed_server = urllib.parse.urlparse(self.server_url)

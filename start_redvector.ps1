@@ -13,7 +13,23 @@ Set-Location $ScriptDir
 # Configurable
 $ServerPort = if ($env:REDVECTOR_PORT) { $env:REDVECTOR_PORT } else { "8888" }
 $ServerHost = if ($env:REDVECTOR_HOST) { $env:REDVECTOR_HOST } else { "127.0.0.1" }
-$Token = if ($env:REDVECTOR_API_TOKEN) { $env:REDVECTOR_API_TOKEN } else { "redvector-dev-token" }
+
+# Authentication token (CWE-798): no hard-coded default credential. Use an
+# explicitly provided token when present, reject the known published
+# development token, and otherwise generate a strong ephemeral per-session
+# token shared by the backend and the MCP client (both inherit the variable).
+if ($env:REDVECTOR_API_TOKEN) {
+    if ($env:REDVECTOR_API_TOKEN -eq "redvector-dev-token") {
+        Write-Host "[RedVector] ERROR: REDVECTOR_API_TOKEN is set to the insecure published development token. Refusing to start. Set a strong, unique token." -ForegroundColor Red
+        exit 1
+    }
+    $Token = $env:REDVECTOR_API_TOKEN
+} else {
+    $bytes = New-Object byte[] 32
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    $Token = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+    Write-Host "[RedVector] No REDVECTOR_API_TOKEN set; generated a strong ephemeral per-session token. Set REDVECTOR_API_TOKEN to use a persistent credential." -ForegroundColor Yellow
+}
 
 $env:REDVECTOR_API_TOKEN = $Token
 

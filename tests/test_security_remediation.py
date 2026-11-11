@@ -405,9 +405,54 @@ def test_redact_inline_secrets():
     assert "secretpw" not in f("ftp://bob:secretpw@host/")
 
 
-def test_executing_log_line_is_redacted():
-    """The execution-layer EXECUTING log (used by every /api/tools/* adapter)
-    must not contain credential values."""
+class _FakeStream:
+    def readline(self):
+        return ""
+
+    def read(self, *a):
+        return ""
+
+
+def _install_mock_execution(monkeypatch):
+    """Replace subprocess.Popen with a fake so NO real tool (hydra, nmap, …)
+    runs, and trip any real network use. Returns a dict recording the argv the
+    (mocked) executor received, to prove execution arguments are unchanged."""
+    calls = {"popen": 0, "argv": None}
+
+    class _FakePopen:
+        def __init__(self, args, *a, **k):
+            calls["popen"] += 1
+            calls["argv"] = list(args)
+            self.pid = 4242
+            self.stdout = _FakeStream()
+            self.stderr = _FakeStream()
+            self.returncode = 0
+
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            return 0
+
+        def terminate(self):
+            pass
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(rv.subprocess, "Popen", _FakePopen)
+
+    import socket as _socket
+
+    def _no_network(*a, **k):
+        raise AssertionError("network connection attempted during an isolated test")
+
+    monkeypatch.setattr(_socket, "socket", _no_network)
+    monkeypatch.setattr(_socket, "create_connection", _no_network)
+    return calls
+
+
+def _capture_server_logs(argv):
     srv_logger = logging.getLogger("redvector_server")
     captured = []
 
@@ -420,20 +465,53 @@ def test_executing_log_line_is_redacted():
     old_level = srv_logger.level
     srv_logger.setLevel(logging.INFO)
     try:
-        # The binary almost certainly is not installed here; the EXECUTING line
-        # is emitted before the process is spawned regardless, which is what we
-        # are asserting on. No network and no credential ever leaves the host.
-        rv.execute_command(
-            ["hydra", "-l", "admin", "-p", "TOPSECRETPW123", "ssh://127.0.0.1"],
-            use_cache=False,
-        )
+        rv.execute_command(argv, use_cache=False)
     finally:
         srv_logger.removeHandler(handler)
         srv_logger.setLevel(old_level)
+    return captured
 
-    exec_lines = [m for m in captured if "EXECUTING" in m]
-    assert exec_lines, "no EXECUTING log line captured"
-    assert all("TOPSECRETPW123" not in m for m in exec_lines), exec_lines
+
+def test_command_summary_logs_never_leak_credentials(monkeypatch):
+    """Fully isolated (mocked subprocess, no network): across every captured
+    log record — EXECUTING, PROCESS, REGISTERED, FINAL RESULTS, SUCCESS and
+    cleanup — the credential must never appear, for several credential formats.
+    The original argv handed to the (mocked) executor stays intact."""
+    calls = _install_mock_execution(monkeypatch)
+
+    SECRET = "TOPSECRETPW123"
+    cases = [
+        ["hydra", "-l", "admin", "-p", SECRET, "ssh://127.0.0.1"],      # password flag
+        ["httpx", "-u", "http://t", "-H", f"Authorization: Bearer {SECRET}"],  # auth header
+        ["wpscan", "--url", "http://t", "--api-token", SECRET],         # API token
+        ["curl", f"http://admin:{SECRET}@host/"],                       # URL-embedded password
+    ]
+
+    for argv in cases:
+        before = calls["popen"]
+        captured = _capture_server_logs(argv)
+
+        # The mock really intercepted execution (no real tool, no network) ...
+        assert calls["popen"] == before + 1, "subprocess.Popen was not intercepted"
+        # ... and received the ORIGINAL, unredacted argv (execution unchanged).
+        assert SECRET in " ".join(calls["argv"]), "execution argv must be unchanged"
+        # The FINAL RESULTS command-summary line was emitted ...
+        assert any("🚀 Command:" in m for m in captured), f"FINAL RESULTS line missing for {argv[0]}"
+        # ... and NO captured log record (any summary/error/cleanup line) leaks it.
+        leaks = [m for m in captured if SECRET in m]
+        assert not leaks, f"credential leaked in logs for {argv[0]}: {leaks}"
+
+
+def test_final_results_summary_line_is_redacted(monkeypatch):
+    """Focused check on the FINAL RESULTS 'Command:' line itself."""
+    calls = _install_mock_execution(monkeypatch)
+    captured = _capture_server_logs(
+        ["hydra", "-l", "admin", "-p", "TOPSECRETPW123", "ssh://127.0.0.1"]
+    )
+    cmd_lines = [m for m in captured if "🚀 Command:" in m]
+    assert cmd_lines, "no FINAL RESULTS command line captured"
+    assert all("TOPSECRETPW123" not in m for m in cmd_lines), cmd_lines
+    assert any("***REDACTED***" in m for m in cmd_lines), cmd_lines
 
 
 def _main():

@@ -945,7 +945,10 @@ def _redact_command_for_log(command: Any) -> str:
             pending = 'if_not_port'
             continue
         out.append(_redact_inline_secrets(t))
-    return ' '.join(out)
+    # Final sweep over the joined string catches credential patterns that span
+    # multiple tokens (e.g. a header "Authorization: Bearer <tok>" that a
+    # flattened display re-split into separate tokens).
+    return _redact_inline_secrets(' '.join(out))
 
 
 def _result_size_bytes(result: Dict[str, Any]) -> int:
@@ -8010,7 +8013,7 @@ class EnhancedCommandExecutor:
         """Execute the command with enhanced monitoring and output"""
         self.start_time = time.time()
 
-        logger.info(f"🚀 EXECUTING: {_redact_command_for_log(self.command_display)}")
+        logger.info(f"🚀 EXECUTING: {_redact_command_for_log(self.command)}")
         logger.info(f"⏱️  TIMEOUT: {self.timeout}s | PID: Starting...")
 
         try:
@@ -8096,12 +8099,19 @@ class EnhancedCommandExecutor:
             status_color = ModernVisualEngine.COLORS['MATRIX_GREEN'] if success else ModernVisualEngine.COLORS['HACKER_RED']
             timeout_status = f" {ModernVisualEngine.COLORS['WARNING']}[TIMEOUT]{ModernVisualEngine.COLORS['RESET']}" if self.timed_out else ""
 
+            # SECURITY: redact credentials from the logged command summary.
+            # Redact the argv LIST (self.command) rather than the flattened
+            # display string, so multi-word values (e.g. an Authorization
+            # header) keep their token boundaries and are redacted correctly.
+            # The real command and execution behaviour are unchanged.
+            redacted_display = _redact_command_for_log(self.command)
+
             # Create beautiful results summary
             results_summary = f"""
 {ModernVisualEngine.COLORS['MATRIX_GREEN']}{ModernVisualEngine.COLORS['BOLD']}╭─────────────────────────────────────────────────────────────────────────────╮{ModernVisualEngine.COLORS['RESET']}
 {ModernVisualEngine.COLORS['BOLD']}│{ModernVisualEngine.COLORS['RESET']} {status_color}📊 FINAL RESULTS {status_icon}{ModernVisualEngine.COLORS['RESET']}
 {ModernVisualEngine.COLORS['BOLD']}├─────────────────────────────────────────────────────────────────────────────┤{ModernVisualEngine.COLORS['RESET']}
-{ModernVisualEngine.COLORS['BOLD']}│{ModernVisualEngine.COLORS['RESET']} {ModernVisualEngine.COLORS['NEON_BLUE']}🚀 Command:{ModernVisualEngine.COLORS['RESET']} {self.command_display[:55]}{'...' if len(self.command_display) > 55 else ''}
+{ModernVisualEngine.COLORS['BOLD']}│{ModernVisualEngine.COLORS['RESET']} {ModernVisualEngine.COLORS['NEON_BLUE']}🚀 Command:{ModernVisualEngine.COLORS['RESET']} {redacted_display[:55]}{'...' if len(redacted_display) > 55 else ''}
 {ModernVisualEngine.COLORS['BOLD']}│{ModernVisualEngine.COLORS['RESET']} {ModernVisualEngine.COLORS['CYBER_ORANGE']}⏱️  Duration:{ModernVisualEngine.COLORS['RESET']} {execution_time:.2f}s{timeout_status}
 {ModernVisualEngine.COLORS['BOLD']}│{ModernVisualEngine.COLORS['RESET']} {ModernVisualEngine.COLORS['WARNING']}📊 Output Size:{ModernVisualEngine.COLORS['RESET']} {output_size} bytes
 {ModernVisualEngine.COLORS['BOLD']}│{ModernVisualEngine.COLORS['RESET']} {ModernVisualEngine.COLORS['ELECTRIC_PURPLE']}🔢 Exit Code:{ModernVisualEngine.COLORS['RESET']} {self.return_code}

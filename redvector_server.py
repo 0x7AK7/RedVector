@@ -1001,6 +1001,47 @@ def _redact_error_message(message: Any) -> str:
     return _redact_command_for_log(str(message))
 
 
+# Sensitive CLI flag whose value is separated from it by whitespace, '=', ':',
+# a comma or a quote -- e.g. "--password secret", "--api-token=ABC", or a list
+# repr like "'--password', 'secret'". Used for free-text log and traceback
+# redaction, where the command tokenizer cannot be relied on.
+_SENSITIVE_SPACE_FLAG_RE = re.compile(
+    r"(?i)(-{1,2}(?:password|passwd|secret|token|api[-_]?key|api[-_]?token|"
+    r"apikey|auth[-_]?token|authorization|credential|cookie|passphrase))"
+    r"[\s=:,'\"]+"
+    r"(?!-)([^\s,'\"]+)"
+)
+
+# Ambiguous single-letter credential flags (-p/-P): carry a secret for some
+# tools (hydra/medusa) but a port for others (nmap). In free-text logs their
+# value is redacted unless it is clearly a port specification.
+_AMBIGUOUS_LOG_FLAG_RE = re.compile(r"(?i)(?<![\w-])(-[pP])([ \t=:,'\"]+)(?!-)([^\s,'\"]+)")
+
+
+def _redact_ambiguous_log_flag(match):
+    flag, _sep, value = match.group(1), match.group(2), match.group(3)
+    if _v_ports(value):
+        return match.group(0)
+    return flag + " ***REDACTED***"
+
+
+def _redact_log_text(text: Any) -> str:
+    """Return a credential-safe rendering of free-text log output -- an
+    exception message, a multi-line traceback, or other diagnostics -- while
+    preserving structure (file paths, line numbers, function names) for
+    debugging.
+
+    Masks space/quote-separated sensitive CLI flags (e.g. "--password secret")
+    in addition to the URL-userinfo, Authorization/Cookie-header, Bearer/Basic
+    and key=value patterns handled by _redact_inline_secrets. It never alters
+    the raised exception, internal state, or any execution behaviour -- it only
+    sanitises the string that is written to the log.
+    """
+    s = _SENSITIVE_SPACE_FLAG_RE.sub(r'\1 ***REDACTED***', str(text))
+    s = _AMBIGUOUS_LOG_FLAG_RE.sub(_redact_ambiguous_log_flag, s)
+    return _redact_inline_secrets(s)
+
+
 def _result_size_bytes(result: Dict[str, Any]) -> int:
     """Estimate serialized result size for cache decisions."""
     try:
@@ -3225,7 +3266,7 @@ class IntelligentErrorHandler:
         }
 
         # Log escalation with enhanced formatting
-        logger.error(f"{ModernVisualEngine.format_error_card('CRITICAL', context.tool_name, context.error_message, 'HUMAN ESCALATION REQUIRED')}")
+        logger.error(f"{ModernVisualEngine.format_error_card('CRITICAL', context.tool_name, _redact_log_text(context.error_message), 'HUMAN ESCALATION REQUIRED')}")
         logger.error(f"{ModernVisualEngine.format_highlighted_text('ESCALATION DETAILS', 'RED')}")
         logger.error(f"{json.dumps(escalation_data, indent=2)}")
 
@@ -6113,7 +6154,7 @@ class ProcessPool:
                         if task_id in self.active_tasks:
                             del self.active_tasks[task_id]
 
-                    logger.error(f"❌ Task failed: {task_id} - {str(e)}")
+                    logger.error(f"❌ Task failed: {task_id} - {_redact_error_message(e)}")
 
                 self.task_queue.task_done()
 
@@ -6121,7 +6162,7 @@ class ProcessPool:
                 # No tasks available, continue waiting
                 continue
             except Exception as e:
-                logger.error(f"💥 Worker {worker_id} error: {str(e)}")
+                logger.error(f"💥 Worker {worker_id} error: {_redact_error_message(e)}")
 
     def _monitor_performance(self):
         """Monitor pool performance and auto-scale"""
@@ -8189,13 +8230,13 @@ class EnhancedCommandExecutor:
             self.end_time = time.time()
             execution_time = self.end_time - self.start_time if self.start_time else 0
 
-            logger.error(f"💥 ERROR: Command execution failed: {str(e)}")
-            logger.error(f"🔍 TRACEBACK: {traceback.format_exc()}")
+            logger.error(f"💥 ERROR: Command execution failed: {_redact_error_message(e)}")
+            logger.error(f"🔍 TRACEBACK: {_redact_log_text(traceback.format_exc())}")
             telemetry.record_execution(False, execution_time)
 
             return {
                 "stdout": self.stdout_data,
-                "stderr": f"Error executing command: {str(e)}\n{self.stderr_data}",
+                "stderr": f"Error executing command: {_redact_error_message(e)}\n{self.stderr_data}",
                 "return_code": -1,
                 "success": False,
                 "timed_out": False,
@@ -9882,17 +9923,17 @@ def execute_command(command: str, use_cache: bool = True) -> Dict[str, Any]:
 
         return result
     except Exception as e:
-        logger.error(f"💥 ERROR: Command execution setup failed: {str(e)}")
+        logger.error(f"💥 ERROR: Command execution setup failed: {_redact_error_message(e)}")
         return {
             "stdout": "",
-            "stderr": str(e),
+            "stderr": _redact_error_message(e),
             "return_code": -1,
             "success": False,
             "timed_out": False,
             "partial_results": False,
             "execution_time": 0,
             "timestamp": datetime.now().isoformat(),
-            "error": str(e)
+            "error": _redact_error_message(e)
         }
 
 def execute_command_with_recovery(tool_name: str, command: str, parameters: Dict[str, Any] = None,
@@ -10067,7 +10108,7 @@ def execute_command_with_recovery(tool_name: str, command: str, parameters: Dict
 
         except Exception as e:
             last_error = e
-            logger.error(f"💥 Unexpected error in recovery attempt {attempt_count}: {str(e)}")
+            logger.error(f"💥 Unexpected error in recovery attempt {attempt_count}: {_redact_error_message(e)}")
 
             # If this is the last attempt, escalate to human
             if attempt_count >= max_attempts:
@@ -10087,7 +10128,7 @@ def execute_command_with_recovery(tool_name: str, command: str, parameters: Dict
 
                 return {
                     "success": False,
-                    "error": str(e),
+                    "error": _redact_error_message(e),
                     "human_escalation": escalation_data,
                     "recovery_info": {
                         "attempts_made": attempt_count,
@@ -10419,10 +10460,10 @@ def generic_command():
         result = execute_command(argv, use_cache=use_cache)
         return jsonify(result)
     except Exception as e:
-        logger.error(f"💥 Error in command endpoint: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error(f"💥 Error in command endpoint: {_redact_error_message(e)}")
+        logger.error(_redact_log_text(traceback.format_exc()))
         return jsonify({
-            "error": f"Server error: {str(e)}"
+            "error": f"Server error: {_redact_error_message(e)}"
         }), 500
 
 # File Operations API Endpoints
@@ -10579,7 +10620,7 @@ def list_processes():
             "total_count": len(processes)
         })
     except Exception as e:
-        logger.error(f"💥 Error listing processes: {str(e)}")
+        logger.error(f"💥 Error listing processes: {_redact_error_message(e)}")
         return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/processes/status/<int:pid>", methods=["GET"])
@@ -10613,7 +10654,7 @@ def get_process_status(pid):
             }), 404
 
     except Exception as e:
-        logger.error(f"💥 Error getting process status: {str(e)}")
+        logger.error(f"💥 Error getting process status: {_redact_error_message(e)}")
         return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/processes/terminate/<int:pid>", methods=["POST"])
@@ -10635,7 +10676,7 @@ def terminate_process(pid):
             }), 404
 
     except Exception as e:
-        logger.error(f"💥 Error terminating process {pid}: {str(e)}")
+        logger.error(f"💥 Error terminating process {pid}: {_redact_error_message(e)}")
         return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/processes/pause/<int:pid>", methods=["POST"])
@@ -10657,7 +10698,7 @@ def pause_process(pid):
             }), 404
 
     except Exception as e:
-        logger.error(f"💥 Error pausing process {pid}: {str(e)}")
+        logger.error(f"💥 Error pausing process {pid}: {_redact_error_message(e)}")
         return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/processes/resume/<int:pid>", methods=["POST"])
@@ -10679,7 +10720,7 @@ def resume_process(pid):
             }), 404
 
     except Exception as e:
-        logger.error(f"💥 Error resuming process {pid}: {str(e)}")
+        logger.error(f"💥 Error resuming process {pid}: {_redact_error_message(e)}")
         return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/processes/dashboard", methods=["GET"])
@@ -10734,7 +10775,7 @@ def process_dashboard():
         return jsonify(dashboard)
 
     except Exception as e:
-        logger.error(f"💥 Error getting process dashboard: {str(e)}")
+        logger.error(f"💥 Error getting process dashboard: {_redact_error_message(e)}")
         return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/visual/vulnerability-card", methods=["POST"])
@@ -18290,7 +18331,7 @@ def execute_command_async():
         })
 
     except Exception as e:
-        logger.error(f"💥 Error in async command execution: {str(e)}")
+        logger.error(f"💥 Error in async command execution: {_redact_error_message(e)}")
         return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/process/get-task-result/<task_id>", methods=["GET"])
@@ -18311,7 +18352,7 @@ def get_async_task_result(task_id):
         })
 
     except Exception as e:
-        logger.error(f"💥 Error getting task result: {str(e)}")
+        logger.error(f"💥 Error getting task result: {_redact_error_message(e)}")
         return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/process/pool-stats", methods=["GET"])
@@ -18328,7 +18369,7 @@ def get_process_pool_stats():
         })
 
     except Exception as e:
-        logger.error(f"💥 Error getting pool stats: {str(e)}")
+        logger.error(f"💥 Error getting pool stats: {_redact_error_message(e)}")
         return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/process/cache-stats", methods=["GET"])
@@ -18345,7 +18386,7 @@ def get_cache_stats():
         })
 
     except Exception as e:
-        logger.error(f"💥 Error getting cache stats: {str(e)}")
+        logger.error(f"💥 Error getting cache stats: {_redact_error_message(e)}")
         return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/process/clear-cache", methods=["POST"])
@@ -18362,8 +18403,8 @@ def clear_process_cache():
         })
 
     except Exception as e:
-        logger.error(f"💥 Error clearing cache: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        logger.error(f"💥 Error clearing cache: {_redact_error_message(e)}")
+        return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/process/resource-usage", methods=["GET"])
 def get_resource_usage():
@@ -18381,8 +18422,8 @@ def get_resource_usage():
         })
 
     except Exception as e:
-        logger.error(f"💥 Error getting resource usage: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        logger.error(f"💥 Error getting resource usage: {_redact_error_message(e)}")
+        return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/process/performance-dashboard", methods=["GET"])
 def get_performance_dashboard():
@@ -18414,7 +18455,7 @@ def get_performance_dashboard():
         })
 
     except Exception as e:
-        logger.error(f"💥 Error getting performance dashboard: {str(e)}")
+        logger.error(f"💥 Error getting performance dashboard: {_redact_error_message(e)}")
         return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/process/terminate-gracefully/<int:pid>", methods=["POST"])
@@ -18443,7 +18484,7 @@ def terminate_process_gracefully(pid):
             }), 400
 
     except Exception as e:
-        logger.error(f"💥 Error terminating process {pid}: {str(e)}")
+        logger.error(f"💥 Error terminating process {pid}: {_redact_error_message(e)}")
         return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/process/auto-scaling", methods=["POST"])
@@ -18469,8 +18510,8 @@ def configure_auto_scaling():
         })
 
     except Exception as e:
-        logger.error(f"💥 Error configuring auto-scaling: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        logger.error(f"💥 Error configuring auto-scaling: {_redact_error_message(e)}")
+        return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/process/scale-pool", methods=["POST"])
 def manual_scale_pool():
@@ -18513,7 +18554,7 @@ def manual_scale_pool():
         })
 
     except Exception as e:
-        logger.error(f"💥 Error scaling pool: {str(e)}")
+        logger.error(f"💥 Error scaling pool: {_redact_error_message(e)}")
         return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 @app.route("/api/process/health-check", methods=["GET"])
@@ -18605,7 +18646,7 @@ def process_health_check():
         })
 
     except Exception as e:
-        logger.error(f"💥 Error in health check: {str(e)}")
+        logger.error(f"💥 Error in health check: {_redact_error_message(e)}")
         return jsonify({"error": f"Server error: {_redact_error_message(e)}"}), 500
 
 # ============================================================================

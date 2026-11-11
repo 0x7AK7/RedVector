@@ -661,6 +661,209 @@ def test_task_result_findings_are_preserved(monkeypatch):
     assert finding in body
 
 
+# ── Exception-LOGGING credential redaction (Kali-confirmed gap) ──────────────
+# The process API *responses* were already redacted; these tests assert that
+# the server LOG records emitted by the same exception handlers (logger.error,
+# including full stack traces) never contain the synthetic credential either.
+# Every test is fully isolated: no real tool runs and no socket is opened.
+class _ServerLogCapture:
+    """Capture every record emitted on the 'redvector_server' logger."""
+
+    def __init__(self, level=logging.DEBUG):
+        self._level = level
+        self.records = []
+
+    def __enter__(self):
+        self._logger = logging.getLogger("redvector_server")
+        parent = self
+
+        class _Handler(logging.Handler):
+            def emit(self, record):
+                try:
+                    parent.records.append(record.getMessage())
+                except Exception:
+                    parent.records.append(str(record.msg))
+
+        self._handler = _Handler()
+        self._logger.addHandler(self._handler)
+        self._old_level = self._logger.level
+        self._logger.setLevel(self._level)
+        return self.records
+
+    def __exit__(self, *exc):
+        self._logger.removeHandler(self._handler)
+        self._logger.setLevel(self._old_level)
+        return False
+
+
+_LOG_LEAK = "LOGLEAKPW123"
+_LOG_LEAK_PAYLOADS = {
+    "password_flag": f"hydra -l admin -p {_LOG_LEAK} ssh://10.0.0.1",
+    "ambiguous_p": f"medusa -p {_LOG_LEAK} -h host",
+    "auth_header": f"httpx -H Authorization: Bearer {_LOG_LEAK}",
+    "api_token": f"wpscan --url http://t --api-token {_LOG_LEAK}",
+    "url_userinfo": f"curl http://admin:{_LOG_LEAK}@host/",
+    "cookie": f"sqlmap -u http://t --cookie SESSION={_LOG_LEAK}",
+}
+
+
+def test_pool_stats_exception_log_is_redacted(monkeypatch):
+    """Regression for the Kali finding: the /api/process/pool-stats exception
+    handler logged the raw exception. For every credential format, no captured
+    server-log record may contain the secret, while the response stays a
+    redacted HTTP 500 and a diagnostic line is still emitted."""
+    for fmt, payload in _LOG_LEAK_PAYLOADS.items():
+        def _raise(p=payload):
+            raise RuntimeError(f"pool failure while processing {p}")
+
+        monkeypatch.setattr(rv.enhanced_process_manager,
+                            "get_comprehensive_stats", _raise)
+        with _ServerLogCapture() as records:
+            resp = _client().get("/api/process/pool-stats", headers=AUTH_HEADER)
+
+        assert resp.status_code == 500
+        assert _LOG_LEAK not in resp.get_data(as_text=True), fmt
+        leaks = [m for m in records if _LOG_LEAK in m]
+        assert not leaks, f"[{fmt}] credential leaked in server log: {leaks}"
+        # Redacted, not suppressed: the handler still recorded the event.
+        assert any("Error getting pool stats" in m for m in records), fmt
+
+
+def test_process_endpoint_exception_logs_are_redacted(monkeypatch):
+    """The same guarantee for another /api/process/* handler that logs on
+    error (resource-usage), covering a password flag and an auth header."""
+    secret = "ENDPOINTLEAK456"
+
+    def _raise():
+        raise RuntimeError(f"boom: hydra -p {secret} ssh://h "
+                           f"-H Authorization: Bearer {secret}")
+
+    monkeypatch.setattr(rv.enhanced_process_manager.resource_monitor,
+                        "get_current_usage", _raise)
+    with _ServerLogCapture() as records:
+        resp = _client().get("/api/process/resource-usage", headers=AUTH_HEADER)
+    assert resp.status_code == 500
+    assert secret not in resp.get_data(as_text=True)
+    assert not [m for m in records if secret in m], \
+        [m for m in records if secret in m]
+
+
+def test_command_endpoint_exception_log_and_traceback_redacted(monkeypatch):
+    """/api/command logs both an error line and a full traceback on failure;
+    neither the log nor the response may contain the credential."""
+    secret = "CMDLEAK789"
+
+    def _raise(*a, **k):
+        raise RuntimeError(f"endpoint boom: sqlmap -u http://t --cookie S={secret}")
+
+    monkeypatch.setattr(rv, "execute_command", _raise)
+    with _ServerLogCapture() as records:
+        resp = _client().post("/api/command",
+                             json={"command": "echo diagnostic"},
+                             headers=AUTH_HEADER)
+    assert resp.status_code == 500
+    assert secret not in resp.get_data(as_text=True)
+    assert not [m for m in records if secret in m], [m for m in records if secret in m]
+    # A traceback record was emitted (redaction, not suppression).
+    assert any("Traceback (most recent call last)" in m for m in records)
+
+
+def test_executor_exception_logs_and_result_redacted(monkeypatch):
+    """When the (mocked) subprocess raises, the executor's error + TRACEBACK log
+    lines and the returned stderr/error fields are all redacted. No real tool
+    runs and no socket is opened."""
+    _install_mock_execution(monkeypatch)
+    secret = "EXECLEAK321"
+
+    def _boom(*a, **k):
+        raise RuntimeError(f"exec failed: hydra -l admin -p {secret} ssh://127.0.0.1")
+
+    monkeypatch.setattr(rv.subprocess, "Popen", _boom)
+    with _ServerLogCapture() as records:
+        result = rv.execute_command(
+            ["hydra", "-l", "admin", "-p", secret, "ssh://127.0.0.1"],
+            use_cache=False,
+        )
+    assert not [m for m in records if secret in m], [m for m in records if secret in m]
+    assert any("TRACEBACK" in m for m in records)
+    assert secret not in (result.get("stderr", "") + str(result.get("error", "")))
+
+
+def test_redact_log_text_redacts_multiline_traceback():
+    """_redact_log_text masks credentials across a multi-line traceback while
+    preserving the diagnostic structure (file, line, function)."""
+    secret = "TBLEAKPW123"
+    tb = (
+        "Traceback (most recent call last):\n"
+        '  File "redvector_server.py", line 8200, in execute\n'
+        "    proc = subprocess.Popen(['hydra', '-p', '%s'])\n"
+        "RuntimeError: auth http://admin:%s@h/ via Authorization: Bearer %s\n"
+        % (secret, secret, secret)
+    )
+    out = rv._redact_log_text(tb)
+    assert secret not in out, out
+    assert "Traceback (most recent call last):" in out
+    assert "line 8200, in execute" in out
+    assert ("***REDACTED***" in out) or ("***:***@" in out)
+
+
+def test_logging_handler_encoding_failure_does_not_leak(monkeypatch):
+    """Redaction happens BEFORE any handler sees the record, so a handler that
+    hits a Unicode/encoding error (e.g. a cp1252 Windows console choking on the
+    log emojis) or formats the full record cannot resurface the secret. Drives
+    the executor error + multiline TRACEBACK path with a mocked subprocess and
+    no network, covering passwords, auth headers and URL-embedded credentials."""
+    _install_mock_execution(monkeypatch)
+    secret = "ENCLEAKPW123"
+
+    def _boom(*a, **k):
+        raise RuntimeError(
+            f"exec failed: hydra -l admin -p {secret} ssh://127.0.0.1 "
+            f"-H Authorization: Bearer {secret} via http://admin:{secret}@h/"
+        )
+
+    monkeypatch.setattr(rv.subprocess, "Popen", _boom)
+
+    srv_logger = logging.getLogger("redvector_server")
+    seen = []
+    enc_failures = {"n": 0}
+
+    class _StrictConsoleHandler(logging.Handler):
+        def emit(self, record):
+            formatted = self.format(record)          # full formatted record
+            seen.append(formatted)
+            try:
+                formatted.encode("cp1252")           # emoji -> UnicodeEncodeError
+            except UnicodeEncodeError:
+                enc_failures["n"] += 1
+                # The diagnostic fallbacks logging would use must also be clean.
+                seen.append(formatted.encode("cp1252", "backslashreplace").decode("cp1252"))
+                seen.append(formatted.encode("ascii", "backslashreplace").decode("ascii"))
+
+    handler = _StrictConsoleHandler()
+    srv_logger.addHandler(handler)
+    old_level = srv_logger.level
+    srv_logger.setLevel(logging.DEBUG)
+    try:
+        result = rv.execute_command(
+            ["hydra", "-l", "admin", "-p", secret, "ssh://127.0.0.1"],
+            use_cache=False,
+        )
+    finally:
+        srv_logger.removeHandler(handler)
+        srv_logger.setLevel(old_level)
+
+    assert seen, "no log records were formatted"
+    # A real encoding failure occurred (emoji on cp1252), exercising the fallback.
+    assert enc_failures["n"] > 0, "expected a Unicode encoding failure to exercise the fallback path"
+    leaks = [m for m in seen if secret in m]
+    assert not leaks, f"credential leaked through a failing/formatting handler: {leaks}"
+    # Diagnostic value preserved: the redaction marker survives the fallbacks.
+    assert any("***REDACTED***" in m for m in seen)
+    # The returned payload is redacted too (internal behaviour unchanged).
+    assert secret not in (result.get("stderr", "") + str(result.get("error", "")))
+
+
 def _main():
     import types
 

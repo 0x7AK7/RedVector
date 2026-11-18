@@ -172,6 +172,70 @@ def test_unexpected_termination_is_distinct_and_leaks_no_credential():
     assert token not in (out + err), "credential leaked during unexpected termination"
 
 
+async def _session_server_health(port, token, calls=1):
+    """Open one stdio session, initialize, and call server_health `calls` times;
+    return how many returned a healthy result."""
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=[MCP_SCRIPT, "--server", f"http://127.0.0.1:{port}"],
+        env={**os.environ, "REDVECTOR_API_TOKEN": token},
+    )
+    ok = 0
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            for _ in range(calls):
+                res = await session.call_tool("server_health", {})
+                is_err = bool(getattr(res, "isError", False))
+                text = "".join(getattr(c, "text", "") for c in (getattr(res, "content", None) or []))
+                if (not is_err) and ("healthy" in text):
+                    ok += 1
+    return ok
+
+
+def test_stdio_server_health_tool_call_succeeds():
+    """A real tools/call for server_health over stdio returns a healthy result
+    (the exact operation that fails in the live Claude Desktop session)."""
+    token = cred.generate_token()
+    with _stub_backend() as port:
+        ok = asyncio.run(asyncio.wait_for(_session_server_health(port, token, 1), timeout=120))
+    assert ok == 1
+
+
+def test_stdio_repeated_server_health_same_session():
+    """Repeated server_health calls on ONE long-lived session all succeed."""
+    token = cred.generate_token()
+    with _stub_backend() as port:
+        ok = asyncio.run(asyncio.wait_for(_session_server_health(port, token, 5), timeout=120))
+    assert ok == 5
+
+
+def test_stdio_sequential_reconnect_sessions():
+    """Independent sessions opened and closed in sequence each handshake and
+    call server_health successfully (reconnection across sessions)."""
+    token = cred.generate_token()
+    with _stub_backend() as port:
+        async def _seq():
+            total = 0
+            for _ in range(4):
+                total += await _session_server_health(port, token, 1)
+            return total
+        ok = asyncio.run(asyncio.wait_for(_seq(), timeout=240))
+    assert ok == 4
+
+
+def test_stdio_concurrent_sessions():
+    """Multiple independent sessions open in PARALLEL and call server_health at
+    the same time; the shared backend serves them all."""
+    token = cred.generate_token()
+    with _stub_backend() as port:
+        async def _conc():
+            res = await asyncio.gather(*[_session_server_health(port, token, 1) for _ in range(3)])
+            return sum(res)
+        ok = asyncio.run(asyncio.wait_for(_conc(), timeout=240))
+    assert ok == 3
+
+
 def _main():
     if not HAVE_MCP:
         print(f"SKIP  (all) — {SKIP_REASON}")

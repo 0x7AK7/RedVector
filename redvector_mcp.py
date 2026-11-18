@@ -3728,7 +3728,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
         logger.info(f"🏥 Checking RedVector AI server health")
         result = redvector_client.check_health()
         if result.get("status") == "healthy":
-            logger.info(f"✅ Server is healthy - {result.get('total_tools_available', 0)} tools available")
+            logger.info(f"✅ Server is healthy")
         else:
             logger.warning(f"⚠️  Server health check returned: {result.get('status', 'unknown')}")
         return result

@@ -184,6 +184,16 @@ claude_configure_mcp() {
   if ! claude_installed; then
     err 'Claude Desktop is not installed. Choose "Install Claude Desktop" first.'; return 1
   fi
+
+  # Never modify the configuration while Claude Desktop is running: a live
+  # instance can overwrite the change when it exits, and can spawn a duplicate
+  # MCP server from the reloaded config (a known cause of a stale/closed MCP
+  # session). Claude Desktop is never terminated automatically.
+  if command -v pgrep >/dev/null 2>&1 && pgrep -f 'claude-desktop/claude-desktop' >/dev/null 2>&1; then
+    err 'Claude Desktop is currently running. Fully quit it first (close all windows and let it exit completely), then re-run "Configure RedVector MCP". No changes were made.'
+    return 1
+  fi
+
   local real; real="$(redvector_project_ok)" || return 1
 
   if [[ ! -x "$real/.venv/bin/python3" && ! -x "$real/.venv/bin/python" ]]; then
@@ -417,40 +427,59 @@ claude_start() {
   # instance instead of spawning a duplicate. Used ONLY when the claude:// URL
   # scheme has a registered handler; otherwise we launch the binary directly.
   # No invented flags, no binary patching: this is the vendor-documented route.
-  local chat_link='claude://claude.ai/new' handler=''
-  command -v xdg-mime >/dev/null 2>&1 && handler="$(xdg-mime query default x-scheme-handler/claude 2>/dev/null || true)"
+  # Prioritise the vendor-documented Chat deep link and attempt it whenever
+  # xdg-open exists, regardless of what xdg-mime reports (handler detection is
+  # advisory and is often empty even when the claude:// scheme is registered —
+  # requiring it previously forced the direct-binary fallback, which restores
+  # the last-used view, e.g. Claude Code). A real dispatch FAILURE (non-zero,
+  # non-timeout exit) falls through to the fallback instead of being ignored.
+  # Dispatch is never treated as proof that the Chat view opened: the user is
+  # always told to select the Chat tab.
+  local chat_link='claude://claude.ai/new'
 
-  if command -v xdg-open >/dev/null 2>&1 && [[ -n "$handler" ]]; then
+  if command -v xdg-open >/dev/null 2>&1; then
     info 'Opening Claude Desktop to a new Chat (claude://claude.ai/new)...'
-    nohup xdg-open "$chat_link" >/dev/null 2>&1 </dev/null &
-    if command -v pgrep >/dev/null 2>&1; then
-      local i
-      for i in 1 2 3 4 5; do
-        pgrep -f 'claude-desktop/claude-desktop' >/dev/null 2>&1 && break
-        sleep 1
-      done
-      if pgrep -f 'claude-desktop/claude-desktop' >/dev/null 2>&1; then
-        ok 'Claude Desktop is running; requested the Chat interface via the official deep link.'
-      else
-        warn 'Claude Desktop did not appear within a few seconds. If no Chat window opens, run: xdg-open "claude://claude.ai/new"'
-        claude_log 'WARN deep link dispatched but no claude-desktop process detected within timeout'
-      fi
+    local xdg_rc=0
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 10 xdg-open "$chat_link" >/dev/null 2>&1 || xdg_rc=$?
     else
-      sleep 2
-      ok 'Requested Claude Desktop to open a new Chat (claude://claude.ai/new).'
+      xdg-open "$chat_link" >/dev/null 2>&1 || xdg_rc=$?
     fi
-    return 0
+    # 0 = dispatched; 124 = xdg-open still running at the timeout (handed off to
+    # the app and blocking), which also means the link was delivered.
+    if [[ "$xdg_rc" -eq 0 || "$xdg_rc" -eq 124 ]]; then
+      local appeared=0
+      if command -v pgrep >/dev/null 2>&1; then
+        local i
+        for i in 1 2 3 4 5; do
+          pgrep -f 'claude-desktop/claude-desktop' >/dev/null 2>&1 && { appeared=1; break; }
+          sleep 1
+        done
+      else
+        sleep 2; appeared=1
+      fi
+      if [[ "$appeared" -eq 1 ]]; then
+        ok 'Dispatched the Chat deep link (claude://claude.ai/new) to Claude Desktop.'
+        info 'If Claude Desktop does not open on Chat, select the Chat tab: RedVector MCP tools are verified in Chat. Code-mode tool execution currently fails with CONNECTION_CLOSED (a Claude Code limitation, not RedVector).'
+        return 0
+      fi
+      warn 'Claude Desktop did not appear after dispatching the Chat deep link; falling back to a direct launch.'
+      claude_log 'WARN chat deep link dispatched but no claude-desktop process detected; falling back to direct launch'
+    else
+      warn 'Could not dispatch the claude:// Chat deep link (no registered handler?); falling back to a direct launch.'
+      claude_log "INFO xdg-open could not dispatch claude://claude.ai/new (rc=$xdg_rc); using direct launch"
+    fi
   fi
 
-  # Fallback: no claude:// handler registered, or xdg-open unavailable. Launch
-  # the graphical executable directly. This does NOT force Chat; Claude Desktop
-  # restores whatever interface (Chat or Code) it last used.
-  warn 'claude:// Chat deep link unavailable; launching Claude Desktop directly (it will open in its last-used view).'
-  claude_log 'INFO deep link unavailable (no xdg-open or no claude:// handler); using direct claude-desktop launch'
+  # Fallback: xdg-open is unavailable, or the Chat deep link could not be
+  # dispatched. A direct binary launch restores the LAST-USED view (possibly
+  # Code), so instruct the user explicitly to select the Chat tab.
+  warn 'Launching Claude Desktop directly; it opens in its last-used view. Select the Chat tab - RedVector MCP tools are verified in Chat. Code-mode tool execution currently fails with CONNECTION_CLOSED (a Claude Code limitation, not RedVector).'
+  claude_log 'INFO direct claude-desktop launch (last-used view); advised user to select the Chat tab'
 
   # Avoid spawning a duplicate when an instance is already running.
   if command -v pgrep >/dev/null 2>&1 && pgrep -f 'claude-desktop/claude-desktop' >/dev/null 2>&1; then
-    ok 'Claude Desktop is already running; not starting a second instance.'
+    ok 'Claude Desktop is already running; not starting a second instance. Select the Chat tab if it is not already active.'
     return 0
   fi
 
@@ -458,7 +487,7 @@ claude_start() {
   nohup claude-desktop >/dev/null 2>&1 </dev/null &
   local pid=$!
   sleep 1
-  if kill -0 "$pid" 2>/dev/null; then ok "Launch requested (PID $pid)."
+  if kill -0 "$pid" 2>/dev/null; then ok "Launch requested (PID $pid). Select the Chat tab in Claude Desktop."
   else warn 'The launch process exited quickly. Run "claude-desktop" in a terminal to see any error.'; claude_log 'WARN direct launch exited quickly; run claude-desktop in a terminal to see the error'; fi
 }
 

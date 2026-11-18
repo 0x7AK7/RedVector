@@ -197,6 +197,19 @@ Inspect the `redvector-ai` log through **View logs** in Claude Desktop. Ensure t
 
 This setup is for **Claude Desktop**. Claude Code launched independently with the `claude` terminal command may require separate MCP registration.
 
+### Automatic secure credentials
+
+RedVector configures its own API authentication token — **no manual token generation or JSON editing is required**, and there is no hard-coded default.
+
+- **Automatic generation.** On first launch, `start_redvector.sh` (and `start_redvector.ps1` on Windows) calls `redvector_credentials.py`, which creates a cryptographically secure token with Python's `secrets` module.
+- **Secure storage and persistence.** The token is stored in a protected, user-local file **outside the Git repository** — `${XDG_CONFIG_HOME:-$HOME/.config}/redvector/api_token` on Linux (`%LOCALAPPDATA%\redvector\api_token` on Windows) — with `0600` file permissions inside a `0700` directory. Because it persists, the backend and the MCP client always share the **same** token across restarts and reboots. Generated tokens are never written to Git, logs, stdout diagnostics or error messages.
+- **Automatic migration of the revoked development token.** Earlier builds shipped the published development token `redvector-dev-token`, which is now revoked. If an existing Claude Desktop configuration still carries it, re-run **Configure RedVector MCP** in the AI Desktop Manager: it removes that token from the RedVector entry (migrating it), so the launcher generates a strong persisted token instead of refusing to start. Unrelated environment variables, other MCP servers and Claude Desktop preferences are preserved, with a timestamped backup and an atomic write.
+- **Custom launchers are never modified silently.** If you point `redvector-ai` at your own hardened launcher, the manager leaves its command, arguments and environment untouched. If such a launcher still sets the revoked token, the manager reports it rather than editing your launcher.
+- **Advanced users can supply their own token.** Set `REDVECTOR_API_TOKEN` to a strong value (in your shell, or in the `env` of the `redvector-ai` entry). A valid user-provided token is honoured as-is and never rotated or overwritten; the credential file is not touched.
+- **Avoid exposing credentials publicly.** Never commit a token or paste one into issues, logs or screenshots. When sharing a configuration for support, redact any `env` values. The credential file lives outside the repository specifically so it cannot be committed by accident.
+
+A healthy `/health` response is **not** proof that authentication works. **Check installation and MCP connection** in the manager performs an authenticated probe with the persisted token and reports whether the running backend actually accepts it.
+
 ### Windows PowerShell
 
 ```powershell
@@ -225,7 +238,7 @@ Common environment variables used by the project include:
 |---|---|
 | `REDVECTOR_HOST` / `HOST` | Backend bind address, depending on launcher/runtime path |
 | `REDVECTOR_PORT` / `PORT` | Backend port |
-| `REDVECTOR_API_TOKEN` | Bearer token used to protect API access |
+| `REDVECTOR_API_TOKEN` | Bearer token used to protect API access. **Optional** — generated and persisted automatically on first launch (see [Automatic secure credentials](#automatic-secure-credentials)); set it only to supply your own token. The revoked `redvector-dev-token` is always rejected |
 | `REDVECTOR_ENABLE_PYTHON_EXEC` | Opt-in switch for the Python execution/installation endpoints (see below). Disabled unless set to `1`/`true`/`yes`/`on` |
 | `COMMAND_TIMEOUT` | Maximum command execution time where supported |
 | `CACHE_TTL` | Cache lifetime |
@@ -1043,6 +1056,29 @@ Check that:
 3. The client uses the intended Python environment.
 4. The configured backend host and port match the running server.
 5. The AI client has been restarted after changing MCP configuration.
+
+### `Connection closed` right after Claude Desktop launches RedVector
+
+This almost always means the launcher refused to start because the MCP entry's `env` still sets the **revoked** `REDVECTOR_API_TOKEN=redvector-dev-token` (the backend log shows `Refusing to start`). Fix it automatically:
+
+1. Run `./redvector_ai_desktop_manager.sh` → **Configure RedVector MCP**. This migrates the revoked token out of the RedVector entry (your other settings and MCP servers are preserved, with a backup).
+2. Fully quit and restart Claude Desktop.
+
+Alternatively, remove `REDVECTOR_API_TOKEN` from the `redvector-ai` `env` in `~/.config/Claude/claude_desktop_config.json`, or set it to a strong value of your own. See [Automatic secure credentials](#automatic-secure-credentials).
+
+### `401 Unauthorized` from the backend
+
+The MCP client and the running backend are using **different** tokens. With the persisted credential this should not happen, but it can if a backend from an older build (with an ephemeral per-launch token) is still running, or if `REDVECTOR_API_TOKEN` is set to different values in different places.
+
+1. In the manager, choose **Check installation and MCP connection** — it probes the running backend with the persisted token and reports `ACCEPTS` or a `REJECTS` credential conflict, without stopping any process.
+2. If it reports a conflict, stop the stale backend you started earlier and relaunch so a single persisted token is used:
+   ```bash
+   curl -fsS http://127.0.0.1:8888/health   # confirm a backend is listening
+   # stop the stale RedVector backend, then relaunch via Claude Desktop
+   ```
+3. If you set `REDVECTOR_API_TOKEN` manually, use the same value for both the backend and the MCP client, or unset it everywhere to use the persisted token.
+
+RedVector never stops or kills a conflicting process for you.
 
 ---
 

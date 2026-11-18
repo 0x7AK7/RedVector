@@ -1,2 +1,8 @@
+# Bash scripts must always check out with LF line endings. With core.autocrlf
+# enabled on Windows, a .sh checked out as CRLF fails on Linux ("bad
+# interpreter" / stray \r), so enforce LF regardless of platform settings.
+*.sh text eol=lf
 
-# Bash entry points must remain executable from Linux-managed or Windows-managed checkouts.
+# Bash entry points must remain executable from Linux-managed or Windows-managed
+# checkouts. The executable bit is tracked in the git index (mode 100755); keep
+# it set for the launcher and the desktop manager.

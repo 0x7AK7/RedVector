@@ -522,6 +522,39 @@ class _InertProcess:
 _SECRET = "REGISTRYSECRET123"
 
 
+class _ManagerDouble:
+    """Test stand-in for the module-level ``enhanced_process_manager``: it
+    overrides a few methods and delegates everything else to the real manager.
+
+    It is installed by replacing the module NAME (``rv.enhanced_process_manager``)
+    rather than by setting attributes on the live lazy proxy. The proxy's
+    ``__setattr__`` forwards writes to the underlying instance, so a
+    ``monkeypatch.setattr(proxy, name, ...)`` left nothing on the proxy itself;
+    ``MonkeyPatch.undo()`` then tried to ``delattr`` that name from the proxy and
+    raised ``AttributeError`` during teardown. Replacing the module name is a
+    plain, reversible ``setattr`` on an attribute that already exists, so undo is
+    clean. Production proxy behaviour is unchanged."""
+
+    def __init__(self, real, overrides):
+        object.__setattr__(self, "_real", real)
+        object.__setattr__(self, "_overrides", overrides)
+
+    def __getattr__(self, name):
+        overrides = object.__getattribute__(self, "_overrides")
+        if name in overrides:
+            return overrides[name]
+        return getattr(object.__getattribute__(self, "_real"), name)
+
+
+def _patch_manager(monkeypatch, **overrides):
+    """Reversibly install a manager double exposing the given method overrides,
+    delegating all other attributes to the real manager."""
+    monkeypatch.setattr(
+        rv, "enhanced_process_manager",
+        _ManagerDouble(rv.enhanced_process_manager, overrides),
+    )
+
+
 def _sample_process_entry(pid=4242):
     return {
         "pid": pid,
@@ -578,8 +611,8 @@ def test_dashboard_visual_string_redacts():
 
 def test_async_submit_response_redacts(monkeypatch):
     # No execution: the pool submit is stubbed so nothing runs.
-    monkeypatch.setattr(rv.enhanced_process_manager, "execute_command_async",
-                        lambda argv, context=None: "task_stub")
+    _patch_manager(monkeypatch,
+                   execute_command_async=lambda argv, context=None: "task_stub")
     resp = _client().post(
         "/api/process/execute-async",
         json={"command": f"wpscan --url http://t --api-token {_SECRET}"},
@@ -591,10 +624,10 @@ def test_async_submit_response_redacts(monkeypatch):
 
 
 def test_task_result_response_redacts(monkeypatch):
-    monkeypatch.setattr(rv.enhanced_process_manager, "get_task_result",
-                        lambda task_id: {"status": "completed",
-                                          "command": f"hydra -p {_SECRET} ssh://t",
-                                          "result": {"stdout": "ok", "return_code": 0}})
+    _patch_manager(monkeypatch, get_task_result=lambda task_id: {
+        "status": "completed",
+        "command": f"hydra -p {_SECRET} ssh://t",
+        "result": {"stdout": "ok", "return_code": 0}})
     resp = _client().get("/api/process/get-task-result/task_stub", headers=AUTH_HEADER)
     assert resp.status_code == 200
     body = resp.get_data(as_text=True)
@@ -604,12 +637,13 @@ def test_task_result_response_redacts(monkeypatch):
 
 
 def test_pool_stats_response_redacts_nested_history(monkeypatch):
-    monkeypatch.setattr(
-        rv.enhanced_process_manager, "get_comprehensive_stats",
-        lambda: {"process_pool": {"active_workers": 4},
-                 "cache": {"hit_rate": 50},
-                 "history": [{"command": f"sqlmap -u http://t --tamper x --cookie S={_SECRET}",
-                              "success": True}]},
+    _patch_manager(
+        monkeypatch,
+        get_comprehensive_stats=lambda: {
+            "process_pool": {"active_workers": 4},
+            "cache": {"hit_rate": 50},
+            "history": [{"command": f"sqlmap -u http://t --tamper x --cookie S={_SECRET}",
+                         "success": True}]},
     )
     resp = _client().get("/api/process/pool-stats", headers=AUTH_HEADER)
     assert resp.status_code == 200
@@ -627,7 +661,7 @@ def test_process_error_response_redacts_credentials(monkeypatch):
     def _raise():
         raise RuntimeError(err)
 
-    monkeypatch.setattr(rv.enhanced_process_manager, "get_comprehensive_stats", _raise)
+    _patch_manager(monkeypatch, get_comprehensive_stats=_raise)
     resp = _client().get("/api/process/pool-stats", headers=AUTH_HEADER)
     assert resp.status_code == 500
     body = resp.get_data(as_text=True)
@@ -646,11 +680,12 @@ def test_task_result_findings_are_preserved(monkeypatch):
     """stdout/stderr carry real security-tool findings and must NOT be silently
     removed. Only command/metadata fields are redacted."""
     finding = "VULN: login form accepts password=admin123 at /admin"
-    monkeypatch.setattr(
-        rv.enhanced_process_manager, "get_task_result",
-        lambda task_id: {"status": "completed",
-                         "command": f"hydra -p {_SECRET} ssh://t",
-                         "result": {"stdout": finding, "stderr": "", "return_code": 0}},
+    _patch_manager(
+        monkeypatch,
+        get_task_result=lambda task_id: {
+            "status": "completed",
+            "command": f"hydra -p {_SECRET} ssh://t",
+            "result": {"stdout": finding, "stderr": "", "return_code": 0}},
     )
     resp = _client().get("/api/process/get-task-result/t", headers=AUTH_HEADER)
     assert resp.status_code == 200
@@ -716,8 +751,7 @@ def test_pool_stats_exception_log_is_redacted(monkeypatch):
         def _raise(p=payload):
             raise RuntimeError(f"pool failure while processing {p}")
 
-        monkeypatch.setattr(rv.enhanced_process_manager,
-                            "get_comprehensive_stats", _raise)
+        _patch_manager(monkeypatch, get_comprehensive_stats=_raise)
         with _ServerLogCapture() as records:
             resp = _client().get("/api/process/pool-stats", headers=AUTH_HEADER)
 
@@ -862,6 +896,46 @@ def test_logging_handler_encoding_failure_does_not_leak(monkeypatch):
     assert any("***REDACTED***" in m for m in seen)
     # The returned payload is redacted too (internal behaviour unchanged).
     assert secret not in (result.get("stderr", "") + str(result.get("error", "")))
+
+
+def test_backend_accepts_lifecycle_token_and_rejects_others(monkeypatch):
+    """Controlled in-process authentication check (NOT a real MCP stdio
+    handshake): a token produced by the shared credential lifecycle is accepted
+    by the backend on a protected endpoint, while any other token — including
+    the revoked development token and an empty one — is rejected 401. This is
+    the exact backend<->MCP-client token consistency that the persisted
+    credential fixes. /health stays open and must not be read as proof of auth."""
+    import importlib
+    import tempfile as _tempfile
+    cred = importlib.import_module("redvector_credentials")
+    token = cred.ensure_token(os.path.join(_tempfile.mkdtemp(prefix="rv-auth-"), "api_token"))
+
+    monkeypatch.setattr(rv, "API_TOKEN", token)
+    monkeypatch.setattr(rv, "AUTH_CONFIGURED", True)
+    client = _client()
+
+    good = client.get("/api/processes/list", headers={"Authorization": f"Bearer {token}"})
+    assert good.status_code == 200, good.get_data(as_text=True)
+    for bad in ("redvector-dev-token", "some-other-token", ""):
+        r = client.get("/api/processes/list", headers={"Authorization": f"Bearer {bad}"})
+        assert r.status_code == 401, (bad, r.status_code)
+    assert client.get("/health").status_code == 200  # open, not proof of auth
+
+
+def test_launchers_detect_credential_conflict_without_killing():
+    """Both launchers verify a running backend ACCEPTS this session's token via
+    an authenticated probe (not just /health), report a credential conflict, and
+    never stop an unrelated process to resolve it."""
+    sh = (REPO / "start_redvector.sh").read_text(encoding="utf-8")
+    ps = (REPO / "start_redvector.ps1").read_text(encoding="utf-8")
+    for text, name in ((sh, "start_redvector.sh"), (ps, "start_redvector.ps1")):
+        assert "/api/processes/list" in text, name  # authenticated endpoint, not /health
+        assert ("Authorization: Bearer" in text) or ('Authorization = @{ Authorization = "Bearer' in text) \
+            or ('Bearer $Tok' in text), name
+        assert "credential conflict" in text, name
+        assert "No process was stopped" in text, name
+        for forbidden in ("pkill", "kill -9", "Stop-Process", "taskkill"):
+            assert forbidden not in text, (name, forbidden)
 
 
 def _main():

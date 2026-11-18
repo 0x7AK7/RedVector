@@ -27,23 +27,25 @@ fi
 export PATH="$VENV_DIR/bin:$PATH"
 
 # ── Authentication token (CWE-798) ────────────────────────────────────────────
-# There is no hard-coded default credential. Use an explicitly provided token
-# when present, reject the known published development token, and otherwise
-# generate a strong ephemeral per-session token shared by the backend and the
-# MCP client (both inherit REDVECTOR_API_TOKEN from this process).
-if [ -n "${REDVECTOR_API_TOKEN:-}" ]; then
-    if [ "$REDVECTOR_API_TOKEN" = "redvector-dev-token" ]; then
-        echo "[RedVector] ERROR: REDVECTOR_API_TOKEN is set to the insecure published development token. Refusing to start. Set a strong, unique token." >&2
-        exit 1
-    fi
-    TOKEN="$REDVECTOR_API_TOKEN"
-else
-    TOKEN="$("$PYTHON" -c 'import secrets; print(secrets.token_urlsafe(32))')"
-    if [ -z "$TOKEN" ]; then
-        echo "[RedVector] ERROR: Unable to generate a secure API token. Set REDVECTOR_API_TOKEN explicitly." >&2
-        exit 1
-    fi
-    echo "[RedVector] No REDVECTOR_API_TOKEN set; generated a strong ephemeral per-session token. Set REDVECTOR_API_TOKEN to use a persistent credential." >&2
+# No hard-coded default credential exists. An explicitly provided token is
+# honoured and never rotated; the revoked published development token is
+# rejected; otherwise a strong token is generated ONCE and PERSISTED in a
+# protected, user-local file by redvector_credentials.py, so the backend and the
+# MCP client share the SAME credential across restarts and reboots. This removes
+# the per-launch ephemeral token that previously caused 401 / "Connection
+# closed" when a detached backend outlived the launcher that started it.
+if [ -n "${REDVECTOR_API_TOKEN:-}" ] && [ "$REDVECTOR_API_TOKEN" = "redvector-dev-token" ]; then
+    echo "[RedVector] ERROR: REDVECTOR_API_TOKEN is set to the insecure published development token. Refusing to start. Unset it (the Claude Desktop manager migrates it automatically) or set a strong, unique token." >&2
+    exit 1
+fi
+
+TOKEN="$("$PYTHON" "$SCRIPT_DIR/redvector_credentials.py" ensure)" || TOKEN=""
+if [ -z "$TOKEN" ] || [ "$TOKEN" = "redvector-dev-token" ]; then
+    echo "[RedVector] ERROR: Unable to establish a secure API token. Set REDVECTOR_API_TOKEN explicitly or check the credential store under \${XDG_CONFIG_HOME:-\$HOME/.config}/redvector." >&2
+    exit 1
+fi
+if [ -z "${REDVECTOR_API_TOKEN:-}" ]; then
+    echo "[RedVector] Using a persisted per-user API token (generated automatically on first run). No manual token setup or JSON editing is required." >&2
 fi
 
 export REDVECTOR_API_TOKEN="$TOKEN"
@@ -58,6 +60,17 @@ port_error() {
 }
 healthy() {
     curl --noproxy '*' --connect-timeout 1 --max-time 2 -sf "http://${SERVER_HOST}:${SERVER_PORT}/health" >/dev/null 2>&1
+}
+# Authenticated probe: confirms a RUNNING backend accepts THIS session's token.
+# A healthy /health response (unauthenticated) is NOT proof the MCP connection
+# will authenticate, so credential conflicts are detected here without stopping
+# any process.
+auth_ok() {
+    local code
+    code="$(curl --noproxy '*' --connect-timeout 1 --max-time 3 -s -o /dev/null \
+        -H "Authorization: Bearer ${TOKEN}" -w '%{http_code}' \
+        "http://${SERVER_HOST}:${SERVER_PORT}/api/processes/list" 2>/dev/null)" || return 1
+    [ "$code" = "200" ]
 }
 STATE=0
 backend_state || STATE=$?
@@ -81,8 +94,8 @@ if [ "$STATE" = 1 ]; then
     # Wait up to 30 seconds for the server to become healthy
     SERVER_HEALTHY=false
     for i in $(seq 1 30); do
-        if healthy && backend_state; then
-            echo "[RedVector] Server is healthy after ${i}s" >&2
+        if healthy && backend_state && auth_ok; then
+            echo "[RedVector] Server is healthy and authenticating after ${i}s" >&2
             SERVER_HEALTHY=true
             break
         fi
@@ -100,7 +113,11 @@ else
         exit 1
     fi
     backend_state || port_error
-    echo "[RedVector] Backend already running on ${SERVER_HOST}:${SERVER_PORT}" >&2
+    if ! auth_ok; then
+        echo "[RedVector] ERROR: A RedVector backend is already running on ${SERVER_HOST}:${SERVER_PORT}, but it does not accept this session's API token (credential conflict). No process was stopped. Stop that backend and relaunch, or set REDVECTOR_API_TOKEN to the credential it was started with." >&2
+        exit 1
+    fi
+    echo "[RedVector] Backend already running on ${SERVER_HOST}:${SERVER_PORT} (authenticated)" >&2
 fi
 
 # The original artwork is terminal-only; stdout remains exclusively MCP stdio.

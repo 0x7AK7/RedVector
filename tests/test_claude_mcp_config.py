@@ -169,6 +169,65 @@ def test_idempotent_secure_launcher():
         assert first == second == secure, "re-running changed a preserved secure entry"
 
 
+def test_migrates_revoked_dev_token_from_default_launcher():
+    """The revoked development token in the manager's own launcher env is
+    migrated away (so the launcher auto-generates a strong persisted token),
+    while the launcher is repointed and unrelated env vars are preserved."""
+    with tempfile.TemporaryDirectory() as d:
+        d = pathlib.Path(d)
+        cfg = d / "cfg.json"
+        existing = {
+            "command": "/bin/bash",
+            "args": ["/old/start_redvector.sh"],
+            "env": {"REDVECTOR_API_TOKEN": "redvector-dev-token",
+                    "HTTP_PROXY": "http://proxy:8080"},
+        }
+        cfg.write_text(json.dumps({"mcpServers": {"redvector-ai": existing}}), encoding="utf-8")
+        proc = _run(d, cfg)
+        assert proc.returncode == 0, proc.stderr
+        rv = _load(cfg)["mcpServers"]["redvector-ai"]
+        assert rv["args"] == [str(d / "start_redvector.sh")], "launcher not repointed"
+        assert rv.get("env", {}).get("REDVECTOR_API_TOKEN") is None, "dev token not migrated"
+        assert rv["env"]["HTTP_PROXY"] == "http://proxy:8080", "unrelated env dropped"
+        assert "redvector-dev-token" not in cfg.read_text(encoding="utf-8")
+        assert "Migrated" in proc.stdout
+
+
+def test_custom_launcher_dev_token_is_reported_not_modified():
+    """A custom launcher with unknown auth behaviour is never silently modified:
+    its revoked token is reported, not stripped."""
+    with tempfile.TemporaryDirectory() as d:
+        d = pathlib.Path(d)
+        cfg = d / "cfg.json"
+        custom = {
+            "command": "/bin/bash",
+            "args": [SECURE_LAUNCHER],
+            "env": {"REDVECTOR_API_TOKEN": "redvector-dev-token"},
+        }
+        cfg.write_text(json.dumps({"mcpServers": {"redvector-ai": custom}}), encoding="utf-8")
+        proc = _run(d, cfg)
+        assert proc.returncode == 0, proc.stderr
+        rv = _load(cfg)["mcpServers"]["redvector-ai"]
+        assert rv["args"] == [SECURE_LAUNCHER], "custom launcher args changed"
+        assert rv["env"]["REDVECTOR_API_TOKEN"] == "redvector-dev-token", "custom env silently modified"
+        assert "WARN" in proc.stdout
+
+
+def test_dev_token_migration_is_idempotent():
+    with tempfile.TemporaryDirectory() as d:
+        d = pathlib.Path(d)
+        cfg = d / "cfg.json"
+        existing = {"command": "/bin/bash", "args": [str(d / "start_redvector.sh")],
+                    "env": {"REDVECTOR_API_TOKEN": "redvector-dev-token"}}
+        cfg.write_text(json.dumps({"mcpServers": {"redvector-ai": existing}}), encoding="utf-8")
+        assert _run(d, cfg).returncode == 0
+        first = _load(cfg)["mcpServers"]["redvector-ai"]
+        assert "redvector-dev-token" not in cfg.read_text(encoding="utf-8")
+        assert _run(d, cfg).returncode == 0
+        second = _load(cfg)["mcpServers"]["redvector-ai"]
+        assert first == second, "second migration run changed the entry"
+
+
 def _main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

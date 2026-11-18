@@ -50,7 +50,7 @@ PROMPT_USER='user'; PROMPT_HOST='host'
 #   * redvector_tool_manager.py EXISTS and is part of the runtime tool system.
 # start_redvector.sh directly invokes redvector_banner.py, redvector_server.py and
 # redvector_mcp.py; redvector_tool_manager.py is required by the runtime.
-REDVECTOR_REQUIRED_FILES=(start_redvector.sh redvector_mcp.py redvector_server.py redvector_banner.py redvector_tool_manager.py)
+REDVECTOR_REQUIRED_FILES=(start_redvector.sh redvector_mcp.py redvector_server.py redvector_banner.py redvector_tool_manager.py redvector_credentials.py)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  UI helpers
@@ -184,6 +184,16 @@ claude_configure_mcp() {
   if ! claude_installed; then
     err 'Claude Desktop is not installed. Choose "Install Claude Desktop" first.'; return 1
   fi
+
+  # Never modify the configuration while Claude Desktop is running: a live
+  # instance can overwrite the change when it exits, and can spawn a duplicate
+  # MCP server from the reloaded config (a known cause of a stale/closed MCP
+  # session). Claude Desktop is never terminated automatically.
+  if command -v pgrep >/dev/null 2>&1 && pgrep -f 'claude-desktop/claude-desktop' >/dev/null 2>&1; then
+    err 'Claude Desktop is currently running. Fully quit it first (close all windows and let it exit completely), then re-run "Configure RedVector MCP". No changes were made.'
+    return 1
+  fi
+
   local real; real="$(redvector_project_ok)" || return 1
 
   if [[ ! -x "$real/.venv/bin/python3" && ! -x "$real/.venv/bin/python" ]]; then
@@ -246,8 +256,28 @@ else:
     entry['args'] = [str(project / 'start_redvector.sh')]
     launcher_mode = 'registered-default'
 
-# No development token is ever added or restored here; any existing 'env' mapping
-# (including a real user token) is preserved untouched by the dict(old) copy above.
+# No development token is ever added or restored here. Any existing 'env' mapping
+# (including a real user token) is preserved untouched by the dict(old) copy
+# above, with ONE exception: migrate away the revoked published development
+# token so the launcher auto-generates a strong persisted credential instead of
+# refusing to start ("Connection closed"). For the manager's own launcher this
+# migration is applied automatically; for an unknown custom launcher the entry
+# is never modified silently and the condition is only reported.
+migrated_dev_token = False
+custom_launcher_dev_token = False
+_env = entry.get('env')
+if isinstance(_env, dict) and _env.get('REDVECTOR_API_TOKEN') == 'redvector-dev-token':
+    if launcher_mode == 'registered-default':
+        _env = dict(_env)
+        _env.pop('REDVECTOR_API_TOKEN', None)
+        if _env:
+            entry['env'] = _env
+        else:
+            entry.pop('env', None)
+        migrated_dev_token = True
+    else:
+        custom_launcher_dev_token = True
+
 servers['redvector-ai'] = entry
 
 backup = None
@@ -272,6 +302,13 @@ print('RedVector project:', project)
 print('Config file:', config)
 if launcher_mode == 'preserved-custom':
     print('Existing custom redvector-ai launcher preserved (command and args unchanged).')
+if migrated_dev_token:
+    print('Migrated the revoked published development token out of the RedVector env; '
+          'a strong per-user token is now generated and persisted automatically on launch.')
+if custom_launcher_dev_token:
+    print('[WARN] The existing CUSTOM redvector-ai launcher sets REDVECTOR_API_TOKEN to the '
+          'revoked development token. It was NOT modified (custom launcher). Update that '
+          'launcher to use a strong token, or unset REDVECTOR_API_TOKEN to use the persisted one.')
 if backup:
     print('Backup created:', backup)
 print('Other MCP servers and any existing RedVector environment variables were preserved.')
@@ -322,15 +359,36 @@ if 'env' in srv:
     print('     env keys:', ', '.join(sorted(srv['env'])), '(values hidden)')
 PY
 
-  # Optional live check: the launcher auto-starts a local backend on this port.
+  # Live checks, in order of strength: (a) backend /health (unauthenticated),
+  # (b) whether the running backend ACCEPTS the persisted API token — a healthy
+  # /health is NOT proof the authenticated MCP connection works — and (c) the
+  # real MCP stdio handshake, which only Claude Desktop performs. The token
+  # value is read into a shell variable and used only as a request header; it is
+  # never printed.
   local host="${REDVECTOR_HOST:-127.0.0.1}" port="${REDVECTOR_PORT:-8888}"
   if command -v curl >/dev/null 2>&1 \
      && curl --noproxy '*' --connect-timeout 1 --max-time 2 -sf "http://${host}:${port}/health" >/dev/null 2>&1; then
     ok "RedVector backend is responding on ${host}:${port}/health (started by the launcher)."
+    local pybin='python3' token code
+    [[ -x "$real/.venv/bin/python3" ]] && pybin="$real/.venv/bin/python3"
+    if command -v "$pybin" >/dev/null 2>&1 \
+       && token="$("$pybin" "$real/redvector_credentials.py" read 2>/dev/null)" && [[ -n "$token" ]]; then
+      code="$(curl --noproxy '*' --connect-timeout 1 --max-time 3 -s -o /dev/null \
+              -H "Authorization: Bearer ${token}" -w '%{http_code}' \
+              "http://${host}:${port}/api/processes/list" 2>/dev/null || printf '000')"
+      unset token
+      case "$code" in
+        200) ok 'Backend ACCEPTS the persisted API token (an authenticated MCP connection should succeed).' ;;
+        401) warn 'Backend is running but REJECTS the persisted API token (credential conflict). It was started with a different token; stop that backend and relaunch so a consistent token is used. No process was stopped.' ;;
+        *)   info "Authenticated probe inconclusive (HTTP ${code}); the live MCP handshake is performed by Claude Desktop." ;;
+      esac
+    else
+      info 'No persisted RedVector credential found yet; it is created automatically on first launch.'
+    fi
   else
     info "RedVector backend is not currently listening on ${host}:${port}. It starts automatically when Claude Desktop launches the MCP server."
   fi
-  info 'The live MCP handshake is performed by Claude Desktop itself; this check confirms registration, not an active session.'
+  info 'The live MCP handshake is performed by Claude Desktop itself; this check confirms registration and token acceptance, not an active chat session.'
 }
 
 # ── Best-effort Claude Desktop startup diagnostics ─────────────────────────────
@@ -369,40 +427,59 @@ claude_start() {
   # instance instead of spawning a duplicate. Used ONLY when the claude:// URL
   # scheme has a registered handler; otherwise we launch the binary directly.
   # No invented flags, no binary patching: this is the vendor-documented route.
-  local chat_link='claude://claude.ai/new' handler=''
-  command -v xdg-mime >/dev/null 2>&1 && handler="$(xdg-mime query default x-scheme-handler/claude 2>/dev/null || true)"
+  # Prioritise the vendor-documented Chat deep link and attempt it whenever
+  # xdg-open exists, regardless of what xdg-mime reports (handler detection is
+  # advisory and is often empty even when the claude:// scheme is registered —
+  # requiring it previously forced the direct-binary fallback, which restores
+  # the last-used view, e.g. Claude Code). A real dispatch FAILURE (non-zero,
+  # non-timeout exit) falls through to the fallback instead of being ignored.
+  # Dispatch is never treated as proof that the Chat view opened: the user is
+  # always told to select the Chat tab.
+  local chat_link='claude://claude.ai/new'
 
-  if command -v xdg-open >/dev/null 2>&1 && [[ -n "$handler" ]]; then
+  if command -v xdg-open >/dev/null 2>&1; then
     info 'Opening Claude Desktop to a new Chat (claude://claude.ai/new)...'
-    nohup xdg-open "$chat_link" >/dev/null 2>&1 </dev/null &
-    if command -v pgrep >/dev/null 2>&1; then
-      local i
-      for i in 1 2 3 4 5; do
-        pgrep -f 'claude-desktop/claude-desktop' >/dev/null 2>&1 && break
-        sleep 1
-      done
-      if pgrep -f 'claude-desktop/claude-desktop' >/dev/null 2>&1; then
-        ok 'Claude Desktop is running; requested the Chat interface via the official deep link.'
-      else
-        warn 'Claude Desktop did not appear within a few seconds. If no Chat window opens, run: xdg-open "claude://claude.ai/new"'
-        claude_log 'WARN deep link dispatched but no claude-desktop process detected within timeout'
-      fi
+    local xdg_rc=0
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 10 xdg-open "$chat_link" >/dev/null 2>&1 || xdg_rc=$?
     else
-      sleep 2
-      ok 'Requested Claude Desktop to open a new Chat (claude://claude.ai/new).'
+      xdg-open "$chat_link" >/dev/null 2>&1 || xdg_rc=$?
     fi
-    return 0
+    # 0 = dispatched; 124 = xdg-open still running at the timeout (handed off to
+    # the app and blocking), which also means the link was delivered.
+    if [[ "$xdg_rc" -eq 0 || "$xdg_rc" -eq 124 ]]; then
+      local appeared=0
+      if command -v pgrep >/dev/null 2>&1; then
+        local i
+        for i in 1 2 3 4 5; do
+          pgrep -f 'claude-desktop/claude-desktop' >/dev/null 2>&1 && { appeared=1; break; }
+          sleep 1
+        done
+      else
+        sleep 2; appeared=1
+      fi
+      if [[ "$appeared" -eq 1 ]]; then
+        ok 'Dispatched the Chat deep link (claude://claude.ai/new) to Claude Desktop.'
+        info 'If Claude Desktop does not open on Chat, select the Chat tab: RedVector MCP tools are verified in Chat. Code-mode tool execution currently fails with CONNECTION_CLOSED (a Claude Code limitation, not RedVector).'
+        return 0
+      fi
+      warn 'Claude Desktop did not appear after dispatching the Chat deep link; falling back to a direct launch.'
+      claude_log 'WARN chat deep link dispatched but no claude-desktop process detected; falling back to direct launch'
+    else
+      warn 'Could not dispatch the claude:// Chat deep link (no registered handler?); falling back to a direct launch.'
+      claude_log "INFO xdg-open could not dispatch claude://claude.ai/new (rc=$xdg_rc); using direct launch"
+    fi
   fi
 
-  # Fallback: no claude:// handler registered, or xdg-open unavailable. Launch
-  # the graphical executable directly. This does NOT force Chat; Claude Desktop
-  # restores whatever interface (Chat or Code) it last used.
-  warn 'claude:// Chat deep link unavailable; launching Claude Desktop directly (it will open in its last-used view).'
-  claude_log 'INFO deep link unavailable (no xdg-open or no claude:// handler); using direct claude-desktop launch'
+  # Fallback: xdg-open is unavailable, or the Chat deep link could not be
+  # dispatched. A direct binary launch restores the LAST-USED view (possibly
+  # Code), so instruct the user explicitly to select the Chat tab.
+  warn 'Launching Claude Desktop directly; it opens in its last-used view. Select the Chat tab - RedVector MCP tools are verified in Chat. Code-mode tool execution currently fails with CONNECTION_CLOSED (a Claude Code limitation, not RedVector).'
+  claude_log 'INFO direct claude-desktop launch (last-used view); advised user to select the Chat tab'
 
   # Avoid spawning a duplicate when an instance is already running.
   if command -v pgrep >/dev/null 2>&1 && pgrep -f 'claude-desktop/claude-desktop' >/dev/null 2>&1; then
-    ok 'Claude Desktop is already running; not starting a second instance.'
+    ok 'Claude Desktop is already running; not starting a second instance. Select the Chat tab if it is not already active.'
     return 0
   fi
 
@@ -410,7 +487,7 @@ claude_start() {
   nohup claude-desktop >/dev/null 2>&1 </dev/null &
   local pid=$!
   sleep 1
-  if kill -0 "$pid" 2>/dev/null; then ok "Launch requested (PID $pid)."
+  if kill -0 "$pid" 2>/dev/null; then ok "Launch requested (PID $pid). Select the Chat tab in Claude Desktop."
   else warn 'The launch process exited quickly. Run "claude-desktop" in a terminal to see any error.'; claude_log 'WARN direct launch exited quickly; run claude-desktop in a terminal to see the error'; fi
 }
 

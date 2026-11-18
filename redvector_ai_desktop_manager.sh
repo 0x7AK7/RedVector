@@ -50,7 +50,7 @@ PROMPT_USER='user'; PROMPT_HOST='host'
 #   * redvector_tool_manager.py EXISTS and is part of the runtime tool system.
 # start_redvector.sh directly invokes redvector_banner.py, redvector_server.py and
 # redvector_mcp.py; redvector_tool_manager.py is required by the runtime.
-REDVECTOR_REQUIRED_FILES=(start_redvector.sh redvector_mcp.py redvector_server.py redvector_banner.py redvector_tool_manager.py)
+REDVECTOR_REQUIRED_FILES=(start_redvector.sh redvector_mcp.py redvector_server.py redvector_banner.py redvector_tool_manager.py redvector_credentials.py)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  UI helpers
@@ -246,8 +246,28 @@ else:
     entry['args'] = [str(project / 'start_redvector.sh')]
     launcher_mode = 'registered-default'
 
-# No development token is ever added or restored here; any existing 'env' mapping
-# (including a real user token) is preserved untouched by the dict(old) copy above.
+# No development token is ever added or restored here. Any existing 'env' mapping
+# (including a real user token) is preserved untouched by the dict(old) copy
+# above, with ONE exception: migrate away the revoked published development
+# token so the launcher auto-generates a strong persisted credential instead of
+# refusing to start ("Connection closed"). For the manager's own launcher this
+# migration is applied automatically; for an unknown custom launcher the entry
+# is never modified silently and the condition is only reported.
+migrated_dev_token = False
+custom_launcher_dev_token = False
+_env = entry.get('env')
+if isinstance(_env, dict) and _env.get('REDVECTOR_API_TOKEN') == 'redvector-dev-token':
+    if launcher_mode == 'registered-default':
+        _env = dict(_env)
+        _env.pop('REDVECTOR_API_TOKEN', None)
+        if _env:
+            entry['env'] = _env
+        else:
+            entry.pop('env', None)
+        migrated_dev_token = True
+    else:
+        custom_launcher_dev_token = True
+
 servers['redvector-ai'] = entry
 
 backup = None
@@ -272,6 +292,13 @@ print('RedVector project:', project)
 print('Config file:', config)
 if launcher_mode == 'preserved-custom':
     print('Existing custom redvector-ai launcher preserved (command and args unchanged).')
+if migrated_dev_token:
+    print('Migrated the revoked published development token out of the RedVector env; '
+          'a strong per-user token is now generated and persisted automatically on launch.')
+if custom_launcher_dev_token:
+    print('[WARN] The existing CUSTOM redvector-ai launcher sets REDVECTOR_API_TOKEN to the '
+          'revoked development token. It was NOT modified (custom launcher). Update that '
+          'launcher to use a strong token, or unset REDVECTOR_API_TOKEN to use the persisted one.')
 if backup:
     print('Backup created:', backup)
 print('Other MCP servers and any existing RedVector environment variables were preserved.')
@@ -322,15 +349,36 @@ if 'env' in srv:
     print('     env keys:', ', '.join(sorted(srv['env'])), '(values hidden)')
 PY
 
-  # Optional live check: the launcher auto-starts a local backend on this port.
+  # Live checks, in order of strength: (a) backend /health (unauthenticated),
+  # (b) whether the running backend ACCEPTS the persisted API token — a healthy
+  # /health is NOT proof the authenticated MCP connection works — and (c) the
+  # real MCP stdio handshake, which only Claude Desktop performs. The token
+  # value is read into a shell variable and used only as a request header; it is
+  # never printed.
   local host="${REDVECTOR_HOST:-127.0.0.1}" port="${REDVECTOR_PORT:-8888}"
   if command -v curl >/dev/null 2>&1 \
      && curl --noproxy '*' --connect-timeout 1 --max-time 2 -sf "http://${host}:${port}/health" >/dev/null 2>&1; then
     ok "RedVector backend is responding on ${host}:${port}/health (started by the launcher)."
+    local pybin='python3' token code
+    [[ -x "$real/.venv/bin/python3" ]] && pybin="$real/.venv/bin/python3"
+    if command -v "$pybin" >/dev/null 2>&1 \
+       && token="$("$pybin" "$real/redvector_credentials.py" read 2>/dev/null)" && [[ -n "$token" ]]; then
+      code="$(curl --noproxy '*' --connect-timeout 1 --max-time 3 -s -o /dev/null \
+              -H "Authorization: Bearer ${token}" -w '%{http_code}' \
+              "http://${host}:${port}/api/processes/list" 2>/dev/null || printf '000')"
+      unset token
+      case "$code" in
+        200) ok 'Backend ACCEPTS the persisted API token (an authenticated MCP connection should succeed).' ;;
+        401) warn 'Backend is running but REJECTS the persisted API token (credential conflict). It was started with a different token; stop that backend and relaunch so a consistent token is used. No process was stopped.' ;;
+        *)   info "Authenticated probe inconclusive (HTTP ${code}); the live MCP handshake is performed by Claude Desktop." ;;
+      esac
+    else
+      info 'No persisted RedVector credential found yet; it is created automatically on first launch.'
+    fi
   else
     info "RedVector backend is not currently listening on ${host}:${port}. It starts automatically when Claude Desktop launches the MCP server."
   fi
-  info 'The live MCP handshake is performed by Claude Desktop itself; this check confirms registration, not an active session.'
+  info 'The live MCP handshake is performed by Claude Desktop itself; this check confirms registration and token acceptance, not an active chat session.'
 }
 
 # ── Best-effort Claude Desktop startup diagnostics ─────────────────────────────

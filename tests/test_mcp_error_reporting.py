@@ -203,6 +203,111 @@ def test_check_health_reachable_false_when_backend_unreachable():
     assert health.get("success") is False
 
 
+# --- R4: safe connection recovery for read-only diagnostics ----------------
+
+class _FakeResp:
+    def __init__(self, code=200, payload=None):
+        self.status_code = code
+        self._payload = payload if payload is not None else {"status": "healthy", "version": "8.0-stub"}
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.exceptions.HTTPError(f"{self.status_code}", response=self)
+
+    def json(self):
+        return self._payload
+
+
+def _install_router(client, *, health_ok, diag_exc):
+    """Replace client.session.get with a URL-aware fake: the diagnostic endpoint
+    raises ``diag_exc``; ``/health`` returns healthy when ``health_ok`` else
+    raises ConnectionError. Returns a list recording every requested URL and a
+    counter of _probe_health_once invocations."""
+    urls = []
+
+    def _get(url, params=None, timeout=None, **k):
+        urls.append(url)
+        if url.rstrip("/").endswith("/health"):
+            if health_ok:
+                return _FakeResp(200, {"status": "healthy", "version": "8.0-stub"})
+            raise requests.exceptions.ConnectionError("health probe: connection refused")
+        if diag_exc is not None:
+            raise diag_exc
+        return _FakeResp(200, {"ok": True})
+
+    client.session.get = _get  # type: ignore[assignment]
+
+    probes = {"n": 0}
+    orig_probe = client._probe_health_once
+
+    def _counted_probe():
+        probes["n"] += 1
+        return orig_probe()
+
+    client._probe_health_once = _counted_probe  # type: ignore[assignment]
+    return urls, probes
+
+
+def test_read_only_diagnostic_backend_down_reports_unreachable():
+    with _client() as (client, _tok):
+        urls, probes = _install_router(
+            client, health_ok=False,
+            diag_exc=requests.exceptions.ConnectionError("connection refused"))
+        r = client.read_only_diagnostic("api/telemetry")
+    assert r["error_type"] == "connection_error"
+    assert r["reachable"] is False
+    assert "relaunch Claude Desktop" in r["recovery_hint"]
+    # exactly one diagnostic GET (no retry) + at most one /health re-probe.
+    diag_hits = [u for u in urls if u.rstrip("/").endswith("api/telemetry")]
+    health_hits = [u for u in urls if u.rstrip("/").endswith("/health")]
+    assert len(diag_hits) == 1, urls
+    assert len(health_hits) == 1, urls
+    assert probes["n"] == 1
+
+
+def test_read_only_diagnostic_backend_reachable_hint():
+    with _client() as (client, _tok):
+        urls, probes = _install_router(
+            client, health_ok=True,
+            diag_exc=requests.exceptions.ConnectionError("transient reset"))
+        r = client.read_only_diagnostic("api/processes/list")
+    assert r["error_type"] == "connection_error"
+    assert r["reachable"] is True
+    assert "reachable again" in r["recovery_hint"]
+    assert probes["n"] == 1  # at most one re-probe
+
+
+def test_read_only_diagnostic_client_timeout_hint():
+    with _client() as (client, _tok):
+        _install_router(client, health_ok=False,
+                        diag_exc=requests.exceptions.ReadTimeout("read timed out"))
+        r = client.read_only_diagnostic("api/cache/stats")
+    assert r["error_type"] == "client_timeout"
+    assert r["reachable"] is False
+    assert "client timeout" in r["recovery_hint"] or "busy" in r["recovery_hint"]
+
+
+def test_read_only_diagnostic_success_adds_no_fields_and_no_probe():
+    with _client() as (client, _tok):
+        _urls, probes = _install_router(client, health_ok=True, diag_exc=None)
+        r = client.read_only_diagnostic("api/telemetry")
+    assert r == {"ok": True}, "success path must be returned unchanged"
+    assert "reachable" not in r and "recovery_hint" not in r
+    assert probes["n"] == 0, "no health re-probe on a successful diagnostic"
+
+
+def test_check_health_unreachable_includes_recovery_hint_without_extra_probe():
+    with _client() as (client, _tok):
+        _urls, probes = _install_router(
+            client, health_ok=False,
+            diag_exc=requests.exceptions.ConnectionError("down"))
+        health = client.check_health()
+    assert health["reachable"] is False
+    assert "recovery_hint" in health
+    # check_health's own GET /health IS the probe; it must not call the extra re-probe.
+    assert probes["n"] == 0
+
+
 def _main():
     if not HAVE_MCP:
         print(f"SKIP  (all) — {SKIP_REASON}")

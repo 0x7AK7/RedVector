@@ -417,10 +417,56 @@ class RedVectorClient:
         """
         result = self.safe_get("health")
         if isinstance(result, dict):
-            result.setdefault(
-                "reachable",
-                ("error_type" not in result) and ("error" not in result),
-            )
+            reachable = ("error_type" not in result) and ("error" not in result)
+            result.setdefault("reachable", reachable)
+            if not reachable:
+                # /health itself WAS the probe, so no extra re-probe is made here.
+                result.setdefault(
+                    "recovery_hint",
+                    self._recovery_hint(False, result.get("error_type", "")),
+                )
+        return result
+
+    def _probe_health_once(self) -> bool:
+        """At most ONE short, read-only GET /health used by connection recovery to
+        decide whether the backend is reachable. It never retries, never touches
+        any offensive endpoint, and never raises."""
+        try:
+            resp = self.session.get(f"{self.server_url}/health", timeout=5)
+            resp.raise_for_status()
+            return True
+        except Exception:
+            return False
+
+    def _recovery_hint(self, reachable: bool, error_type: str) -> str:
+        """Actionable, credential-free guidance for a read-only diagnostic that
+        hit a connection problem. It describes what the operator can do; it does
+        NOT trigger any automatic action."""
+        if reachable:
+            return ("backend is reachable again — re-issue this read-only call; "
+                    "any earlier long tool call that timed out was not auto-retried")
+        if error_type == "client_timeout":
+            return ("no response within the client timeout — the backend may be busy; "
+                    "check backend status, then re-issue the read-only call")
+        return ("backend unreachable — ensure the RedVector backend is running; "
+                "if MCP tools have disappeared from the session, fully quit and "
+                "relaunch Claude Desktop (the backend keeps running and reconnects)")
+
+    def read_only_diagnostic(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """GET a READ-ONLY diagnostic endpoint with safe connection-error handling
+        (R4). On a connection_error/client_timeout it performs AT MOST ONE
+        read-only /health re-probe and annotates the result with an additive
+        ``reachable`` flag and an actionable ``recovery_hint``.
+
+        It never retries the diagnostic call itself, never affects offensive
+        execution, and makes no change to any input schema — the extra fields
+        appear only on the error path. The success path returns the backend
+        response unchanged."""
+        result = self.safe_get(endpoint, params)
+        if isinstance(result, dict) and result.get("error_type") in ("connection_error", "client_timeout"):
+            reachable = self._probe_health_once()
+            result.setdefault("reachable", reachable)
+            result.setdefault("recovery_hint", self._recovery_hint(reachable, result.get("error_type", "")))
         return result
 
 def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
@@ -3836,7 +3882,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             Cache performance statistics
         """
         logger.info(f"💾 Getting cache statistics")
-        result = redvector_client.safe_get("api/cache/stats")
+        result = redvector_client.read_only_diagnostic("api/cache/stats")
         if "hit_rate" in result:
             logger.info(f"📊 Cache hit rate: {result.get('hit_rate', 'unknown')}")
         return result
@@ -3866,7 +3912,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             System performance and usage telemetry
         """
         logger.info(f"📈 Getting system telemetry")
-        result = redvector_client.safe_get("api/telemetry")
+        result = redvector_client.read_only_diagnostic("api/telemetry")
         if "commands_executed" in result:
             logger.info(f"📊 Commands executed: {result.get('commands_executed', 0)}")
         return result
@@ -3884,7 +3930,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             List of active processes with their status and progress
         """
         logger.info("📊 Listing active processes")
-        result = redvector_client.safe_get("api/processes/list")
+        result = redvector_client.read_only_diagnostic("api/processes/list")
         if result.get("success"):
             logger.info(f"✅ Found {result.get('total_count', 0)} active processes")
         else:
@@ -3903,7 +3949,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             Process status information including progress and runtime
         """
         logger.info(f"🔍 Checking status of process {pid}")
-        result = redvector_client.safe_get(f"api/processes/status/{pid}")
+        result = redvector_client.read_only_diagnostic(f"api/processes/status/{pid}")
         if result.get("success"):
             logger.info(f"✅ Process {pid} status retrieved")
         else:
@@ -3976,7 +4022,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             Real-time dashboard with progress bars, system metrics, and process status
         """
         logger.info("📊 Getting process dashboard")
-        result = redvector_client.safe_get("api/processes/dashboard")
+        result = redvector_client.read_only_diagnostic("api/processes/dashboard")
         if result.get("success", True) and "total_processes" in result:
             total = result.get("total_processes", 0)
             logger.info(f"✅ Dashboard retrieved: {total} active processes")
@@ -4454,7 +4500,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             Live dashboard with visual process monitoring and system metrics
         """
         logger.info("📊 Fetching live process dashboard")
-        result = redvector_client.safe_get("api/processes/dashboard")
+        result = redvector_client.read_only_diagnostic("api/processes/dashboard")
         if result.get("success", True):
             logger.info("✅ Live dashboard retrieved successfully")
         else:
@@ -4590,7 +4636,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
         logger.info("📈 Fetching system metrics")
 
         # Get telemetry data
-        telemetry_result = redvector_client.safe_get("api/telemetry")
+        telemetry_result = redvector_client.read_only_diagnostic("api/telemetry")
 
         if telemetry_result.get("success", True):
             logger.info("✅ System metrics retrieved successfully")
@@ -5343,7 +5389,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             Error handling statistics and patterns
         """
         logger.info(f"{RedVectorColors.ELECTRIC_PURPLE}📊 Retrieving error handling statistics{RedVectorColors.RESET}")
-        result = redvector_client.safe_get("api/error-handling/statistics")
+        result = redvector_client.read_only_diagnostic("api/error-handling/statistics")
 
         if result.get("success"):
             stats = result.get("statistics", {})

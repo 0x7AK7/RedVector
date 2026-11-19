@@ -6,3 +6,12 @@
 # Bash entry points must remain executable from Linux-managed or Windows-managed
 # checkouts. The executable bit is tracked in the git index (mode 100755); keep
 # it set for the launcher and the desktop manager.
+
+# Release packaging: keep development-only material OUT of `git archive` output
+# (GitHub release tarballs and the "Download ZIP" button use git archive). These
+# files remain fully present in the repository and in any `git clone` — this
+# only trims the archived release download so the official package is clean.
+# Regression tests are preserved in the repository for future maintenance.
+/tests export-ignore
+/docs/superpowers export-ignore
+/docs/w7_vmware_acceptance_checklist.md export-ignore

@@ -286,7 +286,9 @@ class RedVectorClient:
             detail = "backend unreachable (connection refused/reset)"
         elif isinstance(exc, requests.exceptions.Timeout):
             error_type = "client_timeout"
-            detail = f"no response within the client timeout of {self.timeout}s"
+            detail = (f"the client stopped waiting after {self.timeout}s; the "
+                      f"backend operation status is UNKNOWN and may still be "
+                      f"running — this is NOT a confirmed backend failure")
         elif isinstance(exc, requests.exceptions.RequestException):
             error_type = "request_error"
             detail = "request failed"
@@ -305,6 +307,20 @@ class RedVectorClient:
         result = {"success": False, "error_type": error_type, "error": message}
         if status_code is not None:
             result["status_code"] = status_code
+        if error_type == "client_timeout":
+            # Reporting-only (no execution change): a client timeout is NOT a
+            # confirmed backend failure. The request's own wait elapsed, but the
+            # backend may still be running the operation. These additive fields
+            # make that explicit and warn against blindly re-issuing (which could
+            # launch a DUPLICATE of an operation that is still in progress).
+            # `success` stays False for backward compatibility with callers.
+            result["backend_status"] = "unknown"
+            result["operation_outcome"] = "indeterminate"
+            result["duplicate_warning"] = (
+                "the operation may still be running on the backend; check the "
+                "read-only process status before re-issuing to avoid launching a "
+                "duplicate operation"
+            )
         return result
 
     def safe_get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

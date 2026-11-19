@@ -308,6 +308,51 @@ def test_check_health_unreachable_includes_recovery_hint_without_extra_probe():
     assert probes["n"] == 0
 
 
+# --- Point-3: a client timeout is not a confirmed backend failure ----------
+
+def test_client_timeout_is_not_reported_as_backend_failure():
+    with _client() as (client, _tok):
+        r = client._error_response(requests.exceptions.ReadTimeout("read timed out"))
+    assert r["error_type"] == "client_timeout"
+    assert r["backend_status"] == "unknown"
+    assert r["operation_outcome"] == "indeterminate"
+    # The message must state it is NOT a confirmed failure and status is unknown.
+    low = r["error"].lower()
+    assert "not a confirmed backend failure" in low
+    assert "unknown" in low
+    # success stays False for backward compatibility, but that is the CALL, not a
+    # proven backend failure — which the fields above make explicit.
+    assert r["success"] is False
+
+
+def test_client_timeout_warns_against_duplicate_execution():
+    with _client() as (client, _tok):
+        r = client._error_response(requests.exceptions.ReadTimeout("read timed out"))
+    warn = r.get("duplicate_warning", "").lower()
+    assert "duplicate" in warn
+    assert "re-issu" in warn          # "re-issuing"
+    assert "process status" in warn   # points to the read-only status check
+
+
+def test_non_timeout_errors_carry_no_unknown_backend_status():
+    """The reporting fields are specific to client_timeout; other error types
+    (which have different, clearer meanings) must not gain them."""
+    resp = requests.Response()
+    resp.status_code = 503
+    cases = [
+        requests.exceptions.ConnectionError("refused"),
+        requests.exceptions.HTTPError("503", response=resp),
+        requests.exceptions.TooManyRedirects("too many"),
+        ValueError("other"),
+    ]
+    with _client() as (client, _tok):
+        for exc in cases:
+            r = client._error_response(exc)
+            assert "backend_status" not in r, r
+            assert "operation_outcome" not in r, r
+            assert "duplicate_warning" not in r, r
+
+
 def _main():
     if not HAVE_MCP:
         print(f"SKIP  (all) — {SKIP_REASON}")

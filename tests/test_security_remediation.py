@@ -938,6 +938,78 @@ def test_launchers_detect_credential_conflict_without_killing():
             assert forbidden not in text, (name, forbidden)
 
 
+# ---------------------------------------------------------------------------
+# C2 — timeout safety: a timed-out execution is never auto-retried.
+# ---------------------------------------------------------------------------
+def test_timeout_result_is_not_auto_retried(monkeypatch):
+    """C2: ``execute_command_with_recovery`` must return a timed-out result
+    as-is after exactly ONE execution — no backoff, no re-run. Re-running a
+    scan/exploit that already hit its own deadline would duplicate the work and
+    its side effects and push the call past the MCP-host deadline (the very
+    failure that makes the tool disappear from the session)."""
+    calls = {"n": 0}
+    slept = {"n": 0}
+
+    def _fake_execute(command, use_cache=True):
+        calls["n"] += 1
+        return {
+            "success": False, "timed_out": True, "partial_results": False,
+            "stdout": "", "stderr": "", "return_code": -1, "execution_time": 999,
+        }
+
+    monkeypatch.setattr(rv, "execute_command", _fake_execute)
+    monkeypatch.setattr(rv.time, "sleep", lambda *a, **k: slept.__setitem__("n", slept["n"] + 1))
+
+    result = rv.execute_command_with_recovery(
+        "nmap", "nmap -sV scanme.example", {"target": "scanme.example"},
+        use_cache=False, max_attempts=3,
+    )
+
+    assert calls["n"] == 1, "a timed-out command must execute exactly once (no auto-retry)"
+    assert slept["n"] == 0, "no backoff/sleep may occur on a timeout"
+    assert result.get("timed_out") is True
+    info = result.get("recovery_info", {})
+    assert info.get("retried") is False, info
+    assert info.get("no_retry_reason") == "timeout", info
+    assert info.get("attempts_made") == 1, info
+
+
+def test_non_timeout_failure_still_enters_recovery(monkeypatch):
+    """The C2 guard is timeout-specific: an ordinary (non-timeout) failure must
+    still flow into the error handler for recovery, exactly as before — the
+    guard must not swallow non-timeout failures."""
+    seen = {"handled": 0}
+
+    def _fake_execute(command, use_cache=True):
+        return {
+            "success": False, "timed_out": False, "partial_results": False,
+            "stdout": "", "stderr": "boom", "return_code": 1, "execution_time": 1,
+        }
+
+    class _Strat:
+        action = rv.RecoveryAction.SWITCH_TO_ALTERNATIVE_TOOL
+        parameters = {}
+        backoff_multiplier = 2
+
+    def _fake_handle(tool_name, exception, context):
+        seen["handled"] += 1
+        return _Strat()
+
+    monkeypatch.setattr(rv, "execute_command", _fake_execute)
+    monkeypatch.setattr(rv.error_handler, "handle_tool_failure", _fake_handle)
+    monkeypatch.setattr(rv.error_handler, "get_alternative_tool", lambda *a, **k: "alt-tool")
+
+    result = rv.execute_command_with_recovery(
+        "nmap", "nmap -sV scanme.example", {"target": "scanme.example"},
+        use_cache=False, max_attempts=2,
+    )
+
+    assert seen["handled"] == 1, "a non-timeout failure must reach the recovery handler"
+    info = result.get("recovery_info", {})
+    assert info.get("final_action") == "tool_switch_suggested", info
+    assert "no_retry_reason" not in info, "the timeout guard must not fire on a non-timeout failure"
+
+
 def _main():
     import types
 

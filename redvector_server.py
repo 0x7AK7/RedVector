@@ -9975,6 +9975,26 @@ def execute_command_with_recovery(tool_name: str, command: str, parameters: Dict
                 }
                 return result
 
+            # C2: never auto-retry a command that TIMED OUT. Re-running a long
+            # scan/exploit that already hit its own deadline would duplicate the
+            # work (and any side effects) and extend the wall-clock time well
+            # past the client/MCP-host deadline, which is what makes the tool
+            # call disappear. A timeout is reported back as-is so the caller can
+            # decide whether to re-issue it; recovery (parameter adjustment,
+            # alternative tooling) is only for non-timeout failures below.
+            if result.get("timed_out"):
+                result["recovery_info"] = {
+                    "attempts_made": attempt_count,
+                    "recovery_applied": len(recovery_history) > 0,
+                    "recovery_history": recovery_history,
+                    "retried": False,
+                    "no_retry_reason": "timeout",
+                }
+                logger.warning(
+                    f"{ModernVisualEngine.format_tool_status(tool_name, 'TIMEOUT', 'timed out — not auto-retried')}"
+                )
+                return result
+
             # Command failed, determine if we should attempt recovery
             error_message = result.get("stderr", "Unknown error")
             exception = Exception(error_message)

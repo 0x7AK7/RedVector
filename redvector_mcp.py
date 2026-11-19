@@ -25,6 +25,7 @@ import os
 import argparse
 import json
 import logging
+import re
 from typing import Dict, Any, Optional
 import urllib.parse
 import requests
@@ -48,6 +49,30 @@ def _redact_sensitive_mapping(data: Dict[str, Any]) -> Dict[str, Any]:
         else:
             redacted[key] = value
     return redacted
+
+
+def _redact_error_text(text: Any) -> str:
+    """Return a credential-scrubbed string form of an error/exception (C5).
+
+    The classification messages built by ``RedVectorClient._error_response`` are
+    already credential-free, but the underlying exception text could embed a
+    credential — e.g. a URL carrying an inline token, a reflected
+    ``Authorization`` header, or a ``token=...`` query fragment. This masks the
+    common credential shapes before the text is logged or returned to the MCP
+    host. It is defensive-in-depth; the live token is additionally stripped by
+    the caller, which knows its exact value."""
+    s = str(text)
+    # "Authorization: Bearer <tok>" / "authorization=<tok>"
+    s = re.sub(r'(?i)(authorization\s*[:=]\s*)(?:bearer\s+)?\S+', r'\1***REDACTED***', s)
+    # standalone "Bearer <tok>"
+    s = re.sub(r'(?i)(bearer\s+)[A-Za-z0-9._\-]+', r'\1***REDACTED***', s)
+    # key/value credential pairs: api_key=, token=, secret=, password=, access_token=
+    s = re.sub(
+        r'(?i)((?:api[_-]?key|access[_-]?token|token|secret|password|passwd)["\']?\s*[:=]\s*["\']?)[^\s,;&"\'}]+',
+        r'\1***REDACTED***', s)
+    # URL userinfo:  scheme://user:pass@host  ->  scheme://user:***REDACTED***@host
+    s = re.sub(r'(://[^/\s:@]+:)[^/\s:@]+@', r'\1***REDACTED***@', s)
+    return s
 
 class RedVectorColors:
     """Enhanced color palette matching the server's ModernVisualEngine.COLORS"""
@@ -229,6 +254,59 @@ class RedVectorClient:
             logger.error(error_msg)
             # We'll continue anyway to allow the MCP server to start, but tools will likely fail
 
+    def _error_response(self, exc: Exception) -> Dict[str, Any]:
+        """Classify a request failure into a typed, credential-safe result (C1/C5).
+
+        The returned dict always carries:
+          * ``success``: ``False`` (unchanged, for backward compatibility)
+          * ``error``: a human-readable, credential-scrubbed message
+          * ``error_type``: one of
+              - ``connection_error``   backend unreachable (refused/reset/DNS,
+                                       including a timed-out connect)
+              - ``client_timeout``     the client's own read timeout elapsed
+                                       (the long-scan case) — distinct from the
+                                       backend failing
+              - ``backend_http_error`` backend answered with a non-2xx status
+                                       (``status_code`` is included)
+              - ``request_error``      any other requests-layer failure
+              - ``unexpected_error``   a non-requests exception
+        This lets the caller/host tell a slow-but-alive backend apart from one
+        that is actually down, WITHOUT changing any tool's input schema and
+        WITHOUT triggering a retry here (retry policy is the backend's).
+        """
+        status_code = None
+        if isinstance(exc, requests.exceptions.HTTPError):
+            error_type = "backend_http_error"
+            resp = getattr(exc, "response", None)
+            status_code = getattr(resp, "status_code", None)
+            detail = (f"backend returned HTTP {status_code}" if status_code
+                      else "backend returned an error status")
+        elif isinstance(exc, requests.exceptions.ConnectionError):
+            error_type = "connection_error"
+            detail = "backend unreachable (connection refused/reset)"
+        elif isinstance(exc, requests.exceptions.Timeout):
+            error_type = "client_timeout"
+            detail = f"no response within the client timeout of {self.timeout}s"
+        elif isinstance(exc, requests.exceptions.RequestException):
+            error_type = "request_error"
+            detail = "request failed"
+        else:
+            error_type = "unexpected_error"
+            detail = "unexpected client error"
+
+        # Defence-in-depth redaction: scrub common credential shapes from the
+        # raw exception text, then strip the live token by exact value.
+        raw = _redact_error_text(exc)
+        if self.api_token:
+            raw = raw.replace(self.api_token, "***REDACTED***")
+        raw = raw.strip()
+        message = f"{detail}: {raw}" if raw and raw not in detail else detail
+
+        result = {"success": False, "error_type": error_type, "error": message}
+        if status_code is not None:
+            result["status_code"] = status_code
+        return result
+
     def safe_get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Perform a GET request with optional query parameters.
@@ -251,11 +329,13 @@ class RedVectorClient:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            logger.error(f"🚫 Request failed: {str(e)}")
-            return {"error": f"Request failed: {str(e)}", "success": False}
+            result = self._error_response(e)
+            logger.error(f"🚫 Request failed [{result['error_type']}]: {result['error']}")
+            return result
         except Exception as e:
-            logger.error(f"💥 Unexpected error: {str(e)}")
-            return {"error": f"Unexpected error: {str(e)}", "success": False}
+            result = self._error_response(e)
+            logger.error(f"💥 Unexpected error [{result['error_type']}]: {result['error']}")
+            return result
 
     def safe_post(self, endpoint: str, json_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -276,11 +356,13 @@ class RedVectorClient:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            logger.error(f"🚫 Request failed: {str(e)}")
-            return {"error": f"Request failed: {str(e)}", "success": False}
+            result = self._error_response(e)
+            logger.error(f"🚫 Request failed [{result['error_type']}]: {result['error']}")
+            return result
         except Exception as e:
-            logger.error(f"💥 Unexpected error: {str(e)}")
-            return {"error": f"Unexpected error: {str(e)}", "success": False}
+            result = self._error_response(e)
+            logger.error(f"💥 Unexpected error [{result['error_type']}]: {result['error']}")
+            return result
 
     def safe_delete(self, endpoint: str, json_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -301,11 +383,13 @@ class RedVectorClient:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            logger.error(f"🚫 Request failed: {str(e)}")
-            return {"error": f"Request failed: {str(e)}", "success": False}
+            result = self._error_response(e)
+            logger.error(f"🚫 Request failed [{result['error_type']}]: {result['error']}")
+            return result
         except Exception as e:
-            logger.error(f"💥 Unexpected error: {str(e)}")
-            return {"error": f"Unexpected error: {str(e)}", "success": False}
+            result = self._error_response(e)
+            logger.error(f"💥 Unexpected error [{result['error_type']}]: {result['error']}")
+            return result
 
     def execute_command(self, command: str, use_cache: bool = True) -> Dict[str, Any]:
         """
@@ -325,9 +409,19 @@ class RedVectorClient:
         Check the health of the RedVector AI API Server
 
         Returns:
-            Health status information
+            Health status information, with an additive ``reachable`` flag (C4):
+            ``True`` when the backend answered ``/health`` without a transport
+            error or error payload, ``False`` otherwise. This is a read-only
+            report derived from the existing health probe — it adds no new tool,
+            changes no input schema, and performs no extra backend call.
         """
-        return self.safe_get("health")
+        result = self.safe_get("health")
+        if isinstance(result, dict):
+            result.setdefault(
+                "reachable",
+                ("error_type" not in result) and ("error" not in result),
+            )
+        return result
 
 def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
     """

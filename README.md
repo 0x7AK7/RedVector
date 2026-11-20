@@ -2,7 +2,7 @@
 
 <img src="assets/Redvector-logo4.png" alt="RedVector Logo" width="360"/>
 
-# RedVector AI v8.0
+# RedVector AI v8.1.0
 
 ### Official Website
 
@@ -23,6 +23,40 @@ RedVector connects MCP-compatible AI clients with a large collection of real cyb
 [Overview](#overview) • [Architecture](#architecture) • [Installation](#installation) • [Security Tools](#security-tools) • [AI Systems](#ai-systems-and-workflow-components) • [Workflow](#how-redvector-works) • [MCP Tools](#complete-mcp-tool-index) • [License](#license)
 
 </div>
+
+---
+
+## What's New in v8.1.0 — MCP Reliability & Stability Update
+
+Reliability, error-reporting, installation and distribution improvements. All 328
+MCP tools and their exact input schemas are preserved, and authentication,
+authorization, ownership validation and permission controls are unchanged.
+
+- **MCP reliability & stability** — typed request-error classification, no
+  automatic retry after a tool-call timeout (prevents duplicate operations), and
+  additive backend-health reachability reporting.
+- **Enhanced security & error reporting** — credential-scrubbed error messages;
+  a client timeout is reported as *status unknown — not a confirmed backend
+  failure*, with a warning against re-issuing a possibly-running operation.
+- **Safe process cleanup** — a timed-out command's process group is reaped on
+  POSIX so helper processes are not orphaned; unrelated processes are untouched.
+- **Streamlined installation** — one-command setup (`./install.sh`) with
+  automated virtualenv creation and dependency installation, clear dependency
+  validation, and a consent-gated Claude Desktop registration that preserves
+  existing servers and never grants permissions automatically.
+- **Read-only MCP tool metadata** — `readOnlyHint` on genuinely read-only
+  diagnostics, so Claude Desktop can offer a persistent "always allow" that the
+  user still approves once (verified on Kali Linux). No permission is ever
+  auto-granted.
+- **Clean production distribution** — development-only files are excluded from
+  release archives; third-party attribution is included.
+
+### Known limitation (not resolved in this release)
+The Claude Desktop MCP host cancels any single tool call after ~55–60 seconds and
+does not auto-reconnect a dropped stdio transport. **This is a Claude Desktop
+limitation, not a RedVector defect, and is not resolved by v8.1.0.** RedVector
+mitigates and reports it clearly (see `docs/MCP-RELIABILITY.md`); scope long
+operations to complete within the host deadline.
 
 ---
 
@@ -1117,7 +1151,7 @@ GitHub: [0x7AK7](https://github.com/0x7AK7)
 
 <div align="center">
 
-**RedVector AI v8.0**  
+**RedVector AI v8.1.0**  
 AI-Assisted Cybersecurity Automation and Red Team Orchestration
 
 </div>

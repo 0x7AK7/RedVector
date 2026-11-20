@@ -10403,7 +10403,7 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "message": "RedVector AI Tools API Server is operational",
-        "version": "8.0.0",
+        "version": "8.1.0",
         "uptime": time.time() - telemetry.stats["start_time"]
     })
 
@@ -10504,7 +10504,7 @@ def health_check_details():
     return jsonify({
         "status": "healthy",
         "message": "RedVector AI Tools API Server is operational",
-        "version": "8.0.0",
+        "version": "8.1.0",
         "tools_status": tools_status,
         "all_essential_tools_available": all_essential_tools_available,
         "total_tools_available": sum(1 for tool, available in tools_status.items() if available),

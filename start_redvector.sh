@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════════════
-#  RedVector AI v8.0 - Unified Launcher
+#  RedVector AI v8.1.0 - Unified Launcher
 #  Auto-starts the backend server (if not running) then launches the MCP client.
 #  Used by Claude Desktop / AI agents via redvector-mcp.json.
 # ═══════════════════════════════════════════════════════════════════════════════

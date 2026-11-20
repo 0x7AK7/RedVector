@@ -41,7 +41,7 @@ OS_ID=''; OS_VERSION=''; OS_LIKE=''
 IS_WSL=0
 PROMPT_USER='user'; PROMPT_HOST='host'
 
-# ── RedVector v8.0 runtime files required to register the MCP server ───────────
+# ── RedVector v8.1.0 runtime files required to register the MCP server ─────────
 # Verified against github.com/0x7AK7/RedVector @ db644a0 (main). In v8.0:
 #   * redvector_backend_check.py was DELETED; its Linux socket/process ownership
 #     check migrated into redvector_banner.py, which start_redvector.sh now calls
@@ -605,7 +605,7 @@ DESCRIPTION:
                           a timestamped backup and atomic config writes.
 
 ARGUMENTS:
-  REDVECTOR_PROJECT_DIR  Path to the RedVector v8.0 project. Defaults to the
+  REDVECTOR_PROJECT_DIR  Path to the RedVector v8.1.0 project. Defaults to the
                          directory containing this script.
 
 OPTIONS:

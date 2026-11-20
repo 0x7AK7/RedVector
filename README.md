@@ -26,37 +26,22 @@ RedVector connects MCP-compatible AI clients with a large collection of real cyb
 
 ---
 
-## What's New in v8.1.0 — MCP Reliability & Stability Update
+## What's New in v8.1.0 | MCP Reliability & Stability Update
 
-Reliability, error-reporting, installation and distribution improvements. All 328
-MCP tools and their exact input schemas are preserved, and authentication,
-authorization, ownership validation and permission controls are unchanged.
+This release focuses on improving reliability, security, error handling and installation. All 328 MCP tools and their original input schemas remain unchanged, along with existing authentication, authorization and permission controls.
 
-- **MCP reliability & stability** — typed request-error classification, no
-  automatic retry after a tool-call timeout (prevents duplicate operations), and
-  additive backend-health reachability reporting.
-- **Enhanced security & error reporting** — credential-scrubbed error messages;
-  a client timeout is reported as *status unknown — not a confirmed backend
-  failure*, with a warning against re-issuing a possibly-running operation.
-- **Safe process cleanup** — a timed-out command's process group is reaped on
-  POSIX so helper processes are not orphaned; unrelated processes are untouched.
-- **Streamlined installation** — one-command setup (`./install.sh`) with
-  automated virtualenv creation and dependency installation, clear dependency
-  validation, and a consent-gated Claude Desktop registration that preserves
-  existing servers and never grants permissions automatically.
-- **Read-only MCP tool metadata** — `readOnlyHint` on genuinely read-only
-  diagnostics, so Claude Desktop can offer a persistent "always allow" that the
-  user still approves once (verified on Kali Linux). No permission is ever
-  auto-granted.
-- **Clean production distribution** — development-only files are excluded from
-  release archives; third-party attribution is included.
+- **MCP Reliability and Stability:** Improved connection diagnostics, backend health reporting and timeout handling to reduce the risk of duplicate operations.
+- **Enhanced Security and Error Reporting:** Sensitive credentials are removed from error messages. When a client timeout occurs, RedVector clearly reports that the backend operation status is unknown.
+- **Safe Process Cleanup:** Improved the handling of timed-out processes on Linux, preventing orphaned child processes without affecting unrelated processes.
+- **Streamlined Installation:** Simplified installation, automated dependency management and secure Claude Desktop configuration. Existing MCP servers are preserved, and permissions require user approval.
+- **Read-Only Tool Metadata:** Improved metadata for read-only diagnostic tools. All permission decisions remain under the user's control.
+- **Clean Production Distribution:** Release archives contain the required production files without unnecessary development files. Third-party license notices are preserved.
 
-### Known limitation (not resolved in this release)
-The Claude Desktop MCP host cancels any single tool call after ~55–60 seconds and
-does not auto-reconnect a dropped stdio transport. **This is a Claude Desktop
-limitation, not a RedVector defect, and is not resolved by v8.1.0.** RedVector
-mitigates and reports it clearly (see `docs/MCP-RELIABILITY.md`); scope long
-operations to complete within the host deadline.
+### Known Limitation
+
+Testing on Kali Linux identified a Claude Desktop MCP timeout of approximately 55 to 60 seconds. This limitation remains unresolved in v8.1.0. RedVector now provides clearer error reporting and warnings about potentially unfinished operations.
+
+For more information, see [MCP Reliability Documentation](docs/MCP-RELIABILITY.md).
 
 ---
 

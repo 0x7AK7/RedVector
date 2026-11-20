@@ -497,6 +497,25 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
     """
     mcp = FastMCP("redvector-ai-mcp")
 
+    # ── readOnlyHint annotations for genuinely read-only diagnostics (P3) ──────
+    # Metadata only: it does NOT change a tool's inputs, outputs or execution,
+    # NEVER populates alwaysAllow, and NEVER bypasses a permission dialog. Used
+    # with the ordinary @mcp.tool decorator so tool registration and the input
+    # schema are exactly as before. It may let Claude Desktop offer a persistent
+    # "always allow" for read-only tools, which the user still approves once.
+    try:
+        from mcp.types import ToolAnnotations as _ToolAnnotations
+    except Exception:  # pragma: no cover - older SDKs
+        _ToolAnnotations = None
+
+    def _read_only(title):
+        if _ToolAnnotations is not None:
+            try:
+                return {"annotations": _ToolAnnotations(readOnlyHint=True, title=title)}
+            except Exception:
+                pass
+        return {"annotations": {"readOnlyHint": True, "title": title}}
+
     # ============================================================================
     # CORE NETWORK SCANNING TOOLS
     # ============================================================================
@@ -3873,7 +3892,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
     # SYSTEM MONITORING & TELEMETRY
     # ============================================================================
 
-    @mcp.tool()
+    @mcp.tool(**_read_only("Server Health"))
     def server_health() -> Dict[str, Any]:
         """
         Check the health status of the RedVector AI server.
@@ -3889,7 +3908,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             logger.warning(f"⚠️  Server health check returned: {result.get('status', 'unknown')}")
         return result
 
-    @mcp.tool()
+    @mcp.tool(**_read_only("Cache Stats"))
     def get_cache_stats() -> Dict[str, Any]:
         """
         Get cache statistics from the RedVector AI server.
@@ -3919,7 +3938,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             logger.error(f"❌ Failed to clear cache")
         return result
 
-    @mcp.tool()
+    @mcp.tool(**_read_only("Telemetry"))
     def get_telemetry() -> Dict[str, Any]:
         """
         Get system telemetry from the RedVector AI server.
@@ -3937,7 +3956,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
     # PROCESS MANAGEMENT TOOLS (v5.0 ENHANCEMENT)
     # ============================================================================
 
-    @mcp.tool()
+    @mcp.tool(**_read_only("List Active Processes"))
     def list_active_processes() -> Dict[str, Any]:
         """
         List all active processes on the RedVector AI server.
@@ -3953,7 +3972,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             logger.error("❌ Failed to list processes")
         return result
 
-    @mcp.tool()
+    @mcp.tool(**_read_only("Process Status"))
     def get_process_status(pid: int) -> Dict[str, Any]:
         """
         Get the status of a specific process.
@@ -4029,7 +4048,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             logger.error(f"❌ Failed to resume process {pid}")
         return result
 
-    @mcp.tool()
+    @mcp.tool(**_read_only("Process Dashboard"))
     def get_process_dashboard() -> Dict[str, Any]:
         """
         Get enhanced process dashboard with visual status indicators.
@@ -4507,7 +4526,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
     # ENHANCED VISUAL OUTPUT TOOLS
     # ============================================================================
 
-    @mcp.tool()
+    @mcp.tool(**_read_only("Live Dashboard"))
     def get_live_dashboard() -> Dict[str, Any]:
         """
         Get a beautiful live dashboard showing all active processes with enhanced visual formatting.

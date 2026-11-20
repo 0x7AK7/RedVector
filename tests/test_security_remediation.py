@@ -217,6 +217,43 @@ def test_all_328_mcp_tools_registered():
     assert len(_collect_mcp_tools()) == 328
 
 
+def _read_only_hint_tools():
+    """Names of tools decorated with @mcp.tool(**_read_only(...)) (P3)."""
+    tree = ast.parse((REPO / "redvector_mcp.py").read_text(encoding="utf-8"))
+    names = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for dec in node.decorator_list:
+                if not isinstance(dec, ast.Call):
+                    continue
+                target = dec.func
+                if not (isinstance(target, ast.Attribute) and target.attr == "tool"):
+                    continue
+                for kw in dec.keywords:
+                    if kw.arg is None and isinstance(kw.value, ast.Call) \
+                            and isinstance(kw.value.func, ast.Name) and kw.value.func.id == "_read_only":
+                        names.append(node.name)
+    return names
+
+
+def test_readonly_hint_only_on_genuine_read_only_diagnostics():
+    """P3: readOnlyHint annotations are present on exactly the 7 genuinely
+    read-only diagnostic tools, and on NO offensive tool. Metadata only — this
+    adds no tool, changes no input schema, and grants no permission."""
+    got = sorted(_read_only_hint_tools())
+    expected = sorted([
+        "server_health", "get_cache_stats", "get_telemetry",
+        "list_active_processes", "get_process_status",
+        "get_process_dashboard", "get_live_dashboard",
+    ])
+    assert got == expected, got
+    # offensive tools must never be annotated read-only
+    for offensive in ("nmap_scan", "gobuster_scan", "nuclei_scan"):
+        assert offensive not in got, offensive
+    # total tool count is unchanged
+    assert len(_collect_mcp_tools()) == 328
+
+
 def test_mcp_tool_input_schemas_intact():
     """FastMCP derives each tool's input schema from its annotated signature,
     so every tool must keep a docstring and fully type-annotated parameters."""

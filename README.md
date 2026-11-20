@@ -142,79 +142,122 @@ RedVector also contains specialized workflow managers and autonomous engines for
 
 ### Kali Linux / Linux
 
-Clone RedVector and install its Python dependencies:
+Choose one of the two installation methods below. **Option 1 is recommended** for most users. Run the installation only once. Afterwards, use the Desktop Manager to start RedVector.
+
+#### Option 1: Automatic installation (recommended)
+
+**Step 1. Download RedVector**
 
 ```bash
 git clone https://github.com/0x7AK7/RedVector.git
 cd RedVector
+```
+
+**Step 2. Install**
+
+```bash
+bash install.sh
+```
+
+The installer creates `.venv`, installs and checks the Python dependencies, and sets up a secure per-user API token. When asked whether to register RedVector in Claude Desktop, type `y` and press Enter. **Close Claude Desktop completely before registration.** Other configured MCP servers are preserved, and no tool permissions are granted automatically.
+
+**Step 3. Start RedVector and Claude Desktop**
+
+```bash
+bash redvector_ai_desktop_manager.sh
+```
+
+Choose **4. Start RedVector + Claude Desktop** from the manager menu. If Claude Desktop is not yet installed, use the manager's Claude Desktop installation option first.
+
+**Next time you want to use RedVector**, you do not need to run `install.sh` again:
+
+```bash
+cd ~/RedVector
+bash redvector_ai_desktop_manager.sh
+```
+
+Choose **4. Start RedVector + Claude Desktop**.
+
+#### Option 2: Manual Python installation (advanced users)
+
+Use this method if you prefer to set up the Python environment yourself.
+
+**Step 1. Download RedVector**
+
+```bash
+git clone https://github.com/0x7AK7/RedVector.git
+cd RedVector
+```
+
+**Step 2. Install dependencies**
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-**Choose how to run RedVector:**
-
-- **Claude Desktop integration (recommended for desktop users):** Follow [Claude Desktop automatic setup](#claude-desktop-automatic-setup-kali-linux) below. Do not start `start_redvector.sh` separately when Claude Desktop is configured to launch it.
-- **Standalone or another MCP client:** Run `bash start_redvector.sh` in a dedicated terminal. This starts the backend if necessary and launches the MCP client using stdio. For a backend-only session, see below.
-
-Or start the backend directly:
+**Step 3. Configure and start Claude Desktop**
 
 ```bash
-python redvector_server.py
+bash redvector_ai_desktop_manager.sh
 ```
 
-### AI Desktop Manager (Claude Desktop)
+In the manager, configure the **RedVector MCP** entry for Claude Desktop if it has not been registered yet. Quit Claude Desktop before changing its configuration. Then choose **4. Start RedVector + Claude Desktop**.
 
-`redvector_ai_desktop_manager.sh` is a menu-driven manager that installs and manages Claude Desktop with its RedVector MCP integration. Run it after cloning and installing the Python dependencies above:
+**For subsequent sessions:**
 
 ```bash
-chmod +x redvector_ai_desktop_manager.sh
-./redvector_ai_desktop_manager.sh
+cd ~/RedVector
+bash redvector_ai_desktop_manager.sh
 ```
+
+Choose **4. Start RedVector + Claude Desktop**. You do not need to reactivate `.venv` for the manager to use the installed project environment.
+
+### Verify the connection
+
+In Claude Desktop, ask:
 
 ```text
-REDVECTOR  —  AI DESKTOP MANAGER
-
-  [1] Claude Desktop    Install Claude and register the RedVector MCP server
-  [0] Exit
+Check RedVector server health.
 ```
 
-- **Claude Desktop** — installs from the verified official APT repository (signing-key fingerprint checked) and registers RedVector as an MCP server by launching `start_redvector.sh`. Existing MCP servers and any existing RedVector environment variables are preserved, a timestamped backup is written, and the configuration is updated atomically.
+A healthy result should report that the backend is reachable and identify the installed version. This verifies connectivity, not that every MCP tool has been individually tested.
 
-Run the manager as your normal desktop user (it uses `sudo` only for package steps). Use `--status` for a non-interactive summary and `--help` for usage. This manager is an optional convenience; the manual Claude Desktop setup below remains fully supported.
+### Advanced startup options
 
-### Claude Desktop automatic setup (Kali Linux)
+- **`bash redvector_ai_desktop_manager.sh`** is the recommended way to manage and launch RedVector with Claude Desktop.
+- **`bash start_redvector.sh`** starts the backend as needed and runs the MCP client over standard input/output. Use it for direct MCP integration; do not start a second copy when Claude Desktop already manages the MCP connection.
+- **`python redvector_server.py`** runs the backend directly. Use it only when you specifically need a backend-only session.
 
-Claude Desktop on Linux is currently a beta release. Kali Linux is Debian-based, but it is not among Anthropic's officially tested distributions. An x86_64 or arm64 Debian-based desktop is required. If you use **Kali through WSL2**, Anthropic recommends installing Claude Desktop on **Windows** and running sessions in WSL rather than installing the Linux desktop app inside WSL.
+The Claude Desktop MCP entry normally launches `start_redvector.sh` automatically. The launcher checks `http://127.0.0.1:8888/health` and verifies backend ownership before reusing an existing listener. It does not stop unrelated processes. You normally do not need to start the backend separately.
 
-**One-time setup:** use the **AI Desktop Manager** described above (`./redvector_ai_desktop_manager.sh`). Choose **Install Claude Desktop**, then **Configure RedVector MCP**. The manager creates or updates `~/.config/Claude/claude_desktop_config.json`, backs up an existing configuration, and **preserves other MCP server entries**. The generated `redvector-ai` entry launches `start_redvector.sh` using an absolute path. Use your existing API token configuration when applicable; avoid publishing secrets in Git.
+To troubleshoot a failed connection, inspect Claude Desktop's **Settings > Developer > Local MCP servers** and its `redvector-ai` log. Do not share API tokens or the full MCP configuration publicly without redacting secrets.
 
-**Everyday use**, after fully quitting and restarting Claude Desktop once to load the configuration:
+**Linux note:** Claude Desktop for Linux may have distribution-specific requirements. Kali Linux is Debian-based. For WSL2, use Claude Desktop on Windows and connect to your WSL environment using an appropriate supported setup.
+
+### Windows PowerShell
+
+```powershell
+git clone https://github.com/0x7AK7/RedVector.git
+cd RedVector
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+.\start_redvector.ps1
+```
+
+### Verify the backend
 
 ```bash
-claude-desktop
+curl http://127.0.0.1:8888/health
 ```
 
-Claude Desktop is expected to launch RedVector's `start_redvector.sh` automatically through MCP. The launcher resolves its own installation directory (including symbolic links), uses that project's `.venv` Python when available, and verifies the listening process through Linux `/proc` before reusing a backend. It checks `http://127.0.0.1:8888/health`, starts the RedVector backend when the port is free, and runs `redvector_mcp.py` via stdio. A foreign process or unverifiable owner causes a clear error; no process is stopped automatically. You normally **do not need to execute `start_redvector.sh` manually**. The backend may remain running after Claude Desktop closes because the launcher detaches it.
+---
 
-The MCP client obtains tool availability from `/health/details`, including the essential count (for example, `8/8`). Missing or invalid availability fields are reported as `Unknown`. Launcher and MCP diagnostics go to stderr; backend output goes to `server.log`, keeping MCP stdout reserved for the protocol. If ownership cannot be read (for example, restricted `/proc` access or a different user), run the backend under the same user with visible process metadata or resolve the port conflict manually.
 
-When run manually with `bash start_redvector.sh` from an interactive terminal, the launcher also displays the original red logo and startup panel on stderr, including when it reuses this installation's running backend. The server and launcher share the same renderer; displaying the banner does not start another server. The MCP tool count is read from the current registrations. Claude Desktop's piped MCP launch suppresses the banner and keeps stdout exclusively for the protocol.
-
-**Verify the connection:** Open **Claude Desktop → Settings → Developer → Local MCP servers** and check that `redvector-ai` is running. In a Claude chat, request a read-only `server_health` check. Do not assume a reported scan was executed unless the corresponding MCP tool call and output are visible.
-
-**If `redvector-ai` shows Failed:**
-
-```bash
-curl -fsS http://127.0.0.1:8888/health
-cat ~/.config/Claude/claude_desktop_config.json
-ls -lah ~/.config/Claude/logs/
-```
-
-Inspect the `redvector-ai` log through **View logs** in Claude Desktop. Ensure the configured project path exists and `start_redvector.sh` is present. Avoid sharing API tokens when pasting configuration or logs publicly.
-
-This setup is for **Claude Desktop**. Claude Code launched independently with the `claude` terminal command may require separate MCP registration.
 
 ### Automatic secure credentials
 

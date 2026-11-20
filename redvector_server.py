@@ -8100,6 +8100,73 @@ class EnhancedCommandExecutor:
                 if elapsed > self.timeout:
                     break
 
+    def _terminate_process_tree(self):
+        """Terminate the timed-out child and, on POSIX, its whole process group
+        so helper processes it spawned are not orphaned; then reap the child to
+        avoid a zombie. Windows keeps the existing terminate()/kill() behaviour.
+
+        Safety: this only ever targets THIS executor's own child. On POSIX a
+        group signal is sent ONLY when the child leads its own process group
+        (``pgid == pid``) and that group is not the server's own group — so the
+        server and unrelated processes are never signalled. It adds no new
+        capability and never raises out of cleanup."""
+        proc = self.process
+        if proc is None:
+            return
+        pid = proc.pid
+
+        if os.name != 'nt':
+            try:
+                pgid = os.getpgid(pid)
+            except OSError:
+                pgid = None
+            try:
+                own_pgid = os.getpgid(0)
+            except OSError:
+                own_pgid = None
+            # Only group-kill the child's OWN new group, never the server's.
+            group_kill = (pgid is not None and pgid == pid and pgid != own_pgid)
+
+            try:
+                if group_kill:
+                    os.killpg(pgid, signal.SIGTERM)
+                else:
+                    proc.terminate()
+            except (ProcessLookupError, OSError):
+                pass
+
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                logger.error(f"🔪 FORCE KILL: {'process group' if group_kill else 'process'} {pid} not responding to SIGTERM")
+                try:
+                    if group_kill:
+                        os.killpg(pgid, signal.SIGKILL)
+                    else:
+                        proc.kill()
+                except (ProcessLookupError, OSError):
+                    pass
+        else:
+            # Windows: terminate the child, force-kill if it does not stop.
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                logger.error(f"🔪 FORCE KILL: Process {pid} not responding to termination")
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+
+        # Final reap so a killed child does not linger as a zombie (POSIX).
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+
     def execute(self) -> Dict[str, Any]:
         """Execute the command with enhanced monitoring and output"""
         self.start_time = time.time()
@@ -8108,13 +8175,23 @@ class EnhancedCommandExecutor:
         logger.info(f"⏱️  TIMEOUT: {self.timeout}s | PID: Starting...")
 
         try:
+            # R5 (POSIX only): start the child in its own session/process group
+            # so that, on timeout, helper processes it spawns can be signalled as
+            # a group and are not orphaned. On Windows this kwarg is omitted and
+            # behaviour is unchanged. This confines the group strictly to THIS
+            # command's own descendants — never the server or unrelated processes.
+            popen_kwargs = {}
+            if os.name != 'nt':
+                popen_kwargs["start_new_session"] = True
+
             self.process = subprocess.Popen(
                 self.command,
                 shell=False,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                bufsize=1
+                bufsize=1,
+                **popen_kwargs
             )
 
             pid = self.process.pid
@@ -8165,14 +8242,10 @@ class EnhancedCommandExecutor:
                 self.timed_out = True
                 logger.warning(f"⏰ TIMEOUT: Command timed out after {self.timeout}s | Terminating PID {self.process.pid}")
 
-                # Try to terminate gracefully first
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    # Force kill if it doesn't terminate
-                    logger.error(f"🔪 FORCE KILL: Process {self.process.pid} not responding to termination")
-                    self.process.kill()
+                # R5: terminate the child AND (POSIX) its process group so helper
+                # processes it spawned are not orphaned, then reap to avoid a
+                # zombie. Windows keeps the existing terminate()/kill() path.
+                self._terminate_process_tree()
 
                 self.return_code = -1
                 ProcessManager.cleanup_process(pid)
@@ -9975,6 +10048,26 @@ def execute_command_with_recovery(tool_name: str, command: str, parameters: Dict
                 }
                 return result
 
+            # C2: never auto-retry a command that TIMED OUT. Re-running a long
+            # scan/exploit that already hit its own deadline would duplicate the
+            # work (and any side effects) and extend the wall-clock time well
+            # past the client/MCP-host deadline, which is what makes the tool
+            # call disappear. A timeout is reported back as-is so the caller can
+            # decide whether to re-issue it; recovery (parameter adjustment,
+            # alternative tooling) is only for non-timeout failures below.
+            if result.get("timed_out"):
+                result["recovery_info"] = {
+                    "attempts_made": attempt_count,
+                    "recovery_applied": len(recovery_history) > 0,
+                    "recovery_history": recovery_history,
+                    "retried": False,
+                    "no_retry_reason": "timeout",
+                }
+                logger.warning(
+                    f"{ModernVisualEngine.format_tool_status(tool_name, 'TIMEOUT', 'timed out — not auto-retried')}"
+                )
+                return result
+
             # Command failed, determine if we should attempt recovery
             error_message = result.get("stderr", "Unknown error")
             exception = Exception(error_message)
@@ -10310,7 +10403,7 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "message": "RedVector AI Tools API Server is operational",
-        "version": "8.0.0",
+        "version": "8.1.0",
         "uptime": time.time() - telemetry.stats["start_time"]
     })
 
@@ -10411,7 +10504,7 @@ def health_check_details():
     return jsonify({
         "status": "healthy",
         "message": "RedVector AI Tools API Server is operational",
-        "version": "8.0.0",
+        "version": "8.1.0",
         "tools_status": tools_status,
         "all_essential_tools_available": all_essential_tools_available,
         "total_tools_available": sum(1 for tool, available in tools_status.items() if available),

@@ -25,6 +25,7 @@ import os
 import argparse
 import json
 import logging
+import re
 from typing import Dict, Any, Optional
 import urllib.parse
 import requests
@@ -48,6 +49,30 @@ def _redact_sensitive_mapping(data: Dict[str, Any]) -> Dict[str, Any]:
         else:
             redacted[key] = value
     return redacted
+
+
+def _redact_error_text(text: Any) -> str:
+    """Return a credential-scrubbed string form of an error/exception (C5).
+
+    The classification messages built by ``RedVectorClient._error_response`` are
+    already credential-free, but the underlying exception text could embed a
+    credential — e.g. a URL carrying an inline token, a reflected
+    ``Authorization`` header, or a ``token=...`` query fragment. This masks the
+    common credential shapes before the text is logged or returned to the MCP
+    host. It is defensive-in-depth; the live token is additionally stripped by
+    the caller, which knows its exact value."""
+    s = str(text)
+    # "Authorization: Bearer <tok>" / "authorization=<tok>"
+    s = re.sub(r'(?i)(authorization\s*[:=]\s*)(?:bearer\s+)?\S+', r'\1***REDACTED***', s)
+    # standalone "Bearer <tok>"
+    s = re.sub(r'(?i)(bearer\s+)[A-Za-z0-9._\-]+', r'\1***REDACTED***', s)
+    # key/value credential pairs: api_key=, token=, secret=, password=, access_token=
+    s = re.sub(
+        r'(?i)((?:api[_-]?key|access[_-]?token|token|secret|password|passwd)["\']?\s*[:=]\s*["\']?)[^\s,;&"\'}]+',
+        r'\1***REDACTED***', s)
+    # URL userinfo:  scheme://user:pass@host  ->  scheme://user:***REDACTED***@host
+    s = re.sub(r'(://[^/\s:@]+:)[^/\s:@]+@', r'\1***REDACTED***@', s)
+    return s
 
 class RedVectorColors:
     """Enhanced color palette matching the server's ModernVisualEngine.COLORS"""
@@ -229,6 +254,75 @@ class RedVectorClient:
             logger.error(error_msg)
             # We'll continue anyway to allow the MCP server to start, but tools will likely fail
 
+    def _error_response(self, exc: Exception) -> Dict[str, Any]:
+        """Classify a request failure into a typed, credential-safe result (C1/C5).
+
+        The returned dict always carries:
+          * ``success``: ``False`` (unchanged, for backward compatibility)
+          * ``error``: a human-readable, credential-scrubbed message
+          * ``error_type``: one of
+              - ``connection_error``   backend unreachable (refused/reset/DNS,
+                                       including a timed-out connect)
+              - ``client_timeout``     the client's own read timeout elapsed
+                                       (the long-scan case) — distinct from the
+                                       backend failing
+              - ``backend_http_error`` backend answered with a non-2xx status
+                                       (``status_code`` is included)
+              - ``request_error``      any other requests-layer failure
+              - ``unexpected_error``   a non-requests exception
+        This lets the caller/host tell a slow-but-alive backend apart from one
+        that is actually down, WITHOUT changing any tool's input schema and
+        WITHOUT triggering a retry here (retry policy is the backend's).
+        """
+        status_code = None
+        if isinstance(exc, requests.exceptions.HTTPError):
+            error_type = "backend_http_error"
+            resp = getattr(exc, "response", None)
+            status_code = getattr(resp, "status_code", None)
+            detail = (f"backend returned HTTP {status_code}" if status_code
+                      else "backend returned an error status")
+        elif isinstance(exc, requests.exceptions.ConnectionError):
+            error_type = "connection_error"
+            detail = "backend unreachable (connection refused/reset)"
+        elif isinstance(exc, requests.exceptions.Timeout):
+            error_type = "client_timeout"
+            detail = (f"the client stopped waiting after {self.timeout}s; the "
+                      f"backend operation status is UNKNOWN and may still be "
+                      f"running — this is NOT a confirmed backend failure")
+        elif isinstance(exc, requests.exceptions.RequestException):
+            error_type = "request_error"
+            detail = "request failed"
+        else:
+            error_type = "unexpected_error"
+            detail = "unexpected client error"
+
+        # Defence-in-depth redaction: scrub common credential shapes from the
+        # raw exception text, then strip the live token by exact value.
+        raw = _redact_error_text(exc)
+        if self.api_token:
+            raw = raw.replace(self.api_token, "***REDACTED***")
+        raw = raw.strip()
+        message = f"{detail}: {raw}" if raw and raw not in detail else detail
+
+        result = {"success": False, "error_type": error_type, "error": message}
+        if status_code is not None:
+            result["status_code"] = status_code
+        if error_type == "client_timeout":
+            # Reporting-only (no execution change): a client timeout is NOT a
+            # confirmed backend failure. The request's own wait elapsed, but the
+            # backend may still be running the operation. These additive fields
+            # make that explicit and warn against blindly re-issuing (which could
+            # launch a DUPLICATE of an operation that is still in progress).
+            # `success` stays False for backward compatibility with callers.
+            result["backend_status"] = "unknown"
+            result["operation_outcome"] = "indeterminate"
+            result["duplicate_warning"] = (
+                "the operation may still be running on the backend; check the "
+                "read-only process status before re-issuing to avoid launching a "
+                "duplicate operation"
+            )
+        return result
+
     def safe_get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Perform a GET request with optional query parameters.
@@ -251,11 +345,13 @@ class RedVectorClient:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            logger.error(f"🚫 Request failed: {str(e)}")
-            return {"error": f"Request failed: {str(e)}", "success": False}
+            result = self._error_response(e)
+            logger.error(f"🚫 Request failed [{result['error_type']}]: {result['error']}")
+            return result
         except Exception as e:
-            logger.error(f"💥 Unexpected error: {str(e)}")
-            return {"error": f"Unexpected error: {str(e)}", "success": False}
+            result = self._error_response(e)
+            logger.error(f"💥 Unexpected error [{result['error_type']}]: {result['error']}")
+            return result
 
     def safe_post(self, endpoint: str, json_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -276,11 +372,13 @@ class RedVectorClient:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            logger.error(f"🚫 Request failed: {str(e)}")
-            return {"error": f"Request failed: {str(e)}", "success": False}
+            result = self._error_response(e)
+            logger.error(f"🚫 Request failed [{result['error_type']}]: {result['error']}")
+            return result
         except Exception as e:
-            logger.error(f"💥 Unexpected error: {str(e)}")
-            return {"error": f"Unexpected error: {str(e)}", "success": False}
+            result = self._error_response(e)
+            logger.error(f"💥 Unexpected error [{result['error_type']}]: {result['error']}")
+            return result
 
     def safe_delete(self, endpoint: str, json_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -301,11 +399,13 @@ class RedVectorClient:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            logger.error(f"🚫 Request failed: {str(e)}")
-            return {"error": f"Request failed: {str(e)}", "success": False}
+            result = self._error_response(e)
+            logger.error(f"🚫 Request failed [{result['error_type']}]: {result['error']}")
+            return result
         except Exception as e:
-            logger.error(f"💥 Unexpected error: {str(e)}")
-            return {"error": f"Unexpected error: {str(e)}", "success": False}
+            result = self._error_response(e)
+            logger.error(f"💥 Unexpected error [{result['error_type']}]: {result['error']}")
+            return result
 
     def execute_command(self, command: str, use_cache: bool = True) -> Dict[str, Any]:
         """
@@ -325,9 +425,65 @@ class RedVectorClient:
         Check the health of the RedVector AI API Server
 
         Returns:
-            Health status information
+            Health status information, with an additive ``reachable`` flag (C4):
+            ``True`` when the backend answered ``/health`` without a transport
+            error or error payload, ``False`` otherwise. This is a read-only
+            report derived from the existing health probe — it adds no new tool,
+            changes no input schema, and performs no extra backend call.
         """
-        return self.safe_get("health")
+        result = self.safe_get("health")
+        if isinstance(result, dict):
+            reachable = ("error_type" not in result) and ("error" not in result)
+            result.setdefault("reachable", reachable)
+            if not reachable:
+                # /health itself WAS the probe, so no extra re-probe is made here.
+                result.setdefault(
+                    "recovery_hint",
+                    self._recovery_hint(False, result.get("error_type", "")),
+                )
+        return result
+
+    def _probe_health_once(self) -> bool:
+        """At most ONE short, read-only GET /health used by connection recovery to
+        decide whether the backend is reachable. It never retries, never touches
+        any offensive endpoint, and never raises."""
+        try:
+            resp = self.session.get(f"{self.server_url}/health", timeout=5)
+            resp.raise_for_status()
+            return True
+        except Exception:
+            return False
+
+    def _recovery_hint(self, reachable: bool, error_type: str) -> str:
+        """Actionable, credential-free guidance for a read-only diagnostic that
+        hit a connection problem. It describes what the operator can do; it does
+        NOT trigger any automatic action."""
+        if reachable:
+            return ("backend is reachable again — re-issue this read-only call; "
+                    "any earlier long tool call that timed out was not auto-retried")
+        if error_type == "client_timeout":
+            return ("no response within the client timeout — the backend may be busy; "
+                    "check backend status, then re-issue the read-only call")
+        return ("backend unreachable — ensure the RedVector backend is running; "
+                "if MCP tools have disappeared from the session, fully quit and "
+                "relaunch Claude Desktop (the backend keeps running and reconnects)")
+
+    def read_only_diagnostic(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """GET a READ-ONLY diagnostic endpoint with safe connection-error handling
+        (R4). On a connection_error/client_timeout it performs AT MOST ONE
+        read-only /health re-probe and annotates the result with an additive
+        ``reachable`` flag and an actionable ``recovery_hint``.
+
+        It never retries the diagnostic call itself, never affects offensive
+        execution, and makes no change to any input schema — the extra fields
+        appear only on the error path. The success path returns the backend
+        response unchanged."""
+        result = self.safe_get(endpoint, params)
+        if isinstance(result, dict) and result.get("error_type") in ("connection_error", "client_timeout"):
+            reachable = self._probe_health_once()
+            result.setdefault("reachable", reachable)
+            result.setdefault("recovery_hint", self._recovery_hint(reachable, result.get("error_type", "")))
+        return result
 
 def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
     """
@@ -340,6 +496,25 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
         Configured FastMCP instance
     """
     mcp = FastMCP("redvector-ai-mcp")
+
+    # ── readOnlyHint annotations for genuinely read-only diagnostics (P3) ──────
+    # Metadata only: it does NOT change a tool's inputs, outputs or execution,
+    # NEVER populates alwaysAllow, and NEVER bypasses a permission dialog. Used
+    # with the ordinary @mcp.tool decorator so tool registration and the input
+    # schema are exactly as before. It may let Claude Desktop offer a persistent
+    # "always allow" for read-only tools, which the user still approves once.
+    try:
+        from mcp.types import ToolAnnotations as _ToolAnnotations
+    except Exception:  # pragma: no cover - older SDKs
+        _ToolAnnotations = None
+
+    def _read_only(title):
+        if _ToolAnnotations is not None:
+            try:
+                return {"annotations": _ToolAnnotations(readOnlyHint=True, title=title)}
+            except Exception:
+                pass
+        return {"annotations": {"readOnlyHint": True, "title": title}}
 
     # ============================================================================
     # CORE NETWORK SCANNING TOOLS
@@ -3717,7 +3892,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
     # SYSTEM MONITORING & TELEMETRY
     # ============================================================================
 
-    @mcp.tool()
+    @mcp.tool(**_read_only("Server Health"))
     def server_health() -> Dict[str, Any]:
         """
         Check the health status of the RedVector AI server.
@@ -3733,7 +3908,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             logger.warning(f"⚠️  Server health check returned: {result.get('status', 'unknown')}")
         return result
 
-    @mcp.tool()
+    @mcp.tool(**_read_only("Cache Stats"))
     def get_cache_stats() -> Dict[str, Any]:
         """
         Get cache statistics from the RedVector AI server.
@@ -3742,7 +3917,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             Cache performance statistics
         """
         logger.info(f"💾 Getting cache statistics")
-        result = redvector_client.safe_get("api/cache/stats")
+        result = redvector_client.read_only_diagnostic("api/cache/stats")
         if "hit_rate" in result:
             logger.info(f"📊 Cache hit rate: {result.get('hit_rate', 'unknown')}")
         return result
@@ -3763,7 +3938,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             logger.error(f"❌ Failed to clear cache")
         return result
 
-    @mcp.tool()
+    @mcp.tool(**_read_only("Telemetry"))
     def get_telemetry() -> Dict[str, Any]:
         """
         Get system telemetry from the RedVector AI server.
@@ -3772,7 +3947,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             System performance and usage telemetry
         """
         logger.info(f"📈 Getting system telemetry")
-        result = redvector_client.safe_get("api/telemetry")
+        result = redvector_client.read_only_diagnostic("api/telemetry")
         if "commands_executed" in result:
             logger.info(f"📊 Commands executed: {result.get('commands_executed', 0)}")
         return result
@@ -3781,7 +3956,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
     # PROCESS MANAGEMENT TOOLS (v5.0 ENHANCEMENT)
     # ============================================================================
 
-    @mcp.tool()
+    @mcp.tool(**_read_only("List Active Processes"))
     def list_active_processes() -> Dict[str, Any]:
         """
         List all active processes on the RedVector AI server.
@@ -3790,14 +3965,14 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             List of active processes with their status and progress
         """
         logger.info("📊 Listing active processes")
-        result = redvector_client.safe_get("api/processes/list")
+        result = redvector_client.read_only_diagnostic("api/processes/list")
         if result.get("success"):
             logger.info(f"✅ Found {result.get('total_count', 0)} active processes")
         else:
             logger.error("❌ Failed to list processes")
         return result
 
-    @mcp.tool()
+    @mcp.tool(**_read_only("Process Status"))
     def get_process_status(pid: int) -> Dict[str, Any]:
         """
         Get the status of a specific process.
@@ -3809,7 +3984,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             Process status information including progress and runtime
         """
         logger.info(f"🔍 Checking status of process {pid}")
-        result = redvector_client.safe_get(f"api/processes/status/{pid}")
+        result = redvector_client.read_only_diagnostic(f"api/processes/status/{pid}")
         if result.get("success"):
             logger.info(f"✅ Process {pid} status retrieved")
         else:
@@ -3873,7 +4048,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             logger.error(f"❌ Failed to resume process {pid}")
         return result
 
-    @mcp.tool()
+    @mcp.tool(**_read_only("Process Dashboard"))
     def get_process_dashboard() -> Dict[str, Any]:
         """
         Get enhanced process dashboard with visual status indicators.
@@ -3882,7 +4057,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             Real-time dashboard with progress bars, system metrics, and process status
         """
         logger.info("📊 Getting process dashboard")
-        result = redvector_client.safe_get("api/processes/dashboard")
+        result = redvector_client.read_only_diagnostic("api/processes/dashboard")
         if result.get("success", True) and "total_processes" in result:
             total = result.get("total_processes", 0)
             logger.info(f"✅ Dashboard retrieved: {total} active processes")
@@ -4351,7 +4526,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
     # ENHANCED VISUAL OUTPUT TOOLS
     # ============================================================================
 
-    @mcp.tool()
+    @mcp.tool(**_read_only("Live Dashboard"))
     def get_live_dashboard() -> Dict[str, Any]:
         """
         Get a beautiful live dashboard showing all active processes with enhanced visual formatting.
@@ -4360,7 +4535,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             Live dashboard with visual process monitoring and system metrics
         """
         logger.info("📊 Fetching live process dashboard")
-        result = redvector_client.safe_get("api/processes/dashboard")
+        result = redvector_client.read_only_diagnostic("api/processes/dashboard")
         if result.get("success", True):
             logger.info("✅ Live dashboard retrieved successfully")
         else:
@@ -4496,7 +4671,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
         logger.info("📈 Fetching system metrics")
 
         # Get telemetry data
-        telemetry_result = redvector_client.safe_get("api/telemetry")
+        telemetry_result = redvector_client.read_only_diagnostic("api/telemetry")
 
         if telemetry_result.get("success", True):
             logger.info("✅ System metrics retrieved successfully")
@@ -5249,7 +5424,7 @@ def setup_mcp_server(redvector_client: RedVectorClient) -> FastMCP:
             Error handling statistics and patterns
         """
         logger.info(f"{RedVectorColors.ELECTRIC_PURPLE}📊 Retrieving error handling statistics{RedVectorColors.RESET}")
-        result = redvector_client.safe_get("api/error-handling/statistics")
+        result = redvector_client.read_only_diagnostic("api/error-handling/statistics")
 
         if result.get("success"):
             stats = result.get("statistics", {})

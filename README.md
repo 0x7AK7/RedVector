@@ -693,10 +693,12 @@ GDB, Radare2, Ghidra, Binwalk, ROP tooling, Pwntools, angr, Volatility, ExifTool
 
 ## Complete MCP Tool Index
 
-The supplied `redvector_mcp.py` registers **328 MCP tools**. The complete function-level tool surface is listed below so users can discover exactly what the AI client can call.
+RedVector provides **328 MCP tools**, organized by area to make the index easier to browse. Expand a category to view the exact tool names. Availability depends on the tools installed on your system.
+
+**15 categories | 328 tools**
 
 <details>
-<summary><b>Show all 328 MCP tools</b></summary>
+<summary><strong>🔍 Core Scanning and Cloud Security (15 tools)</strong></summary>
 
 - `nmap_scan`
 - `gobuster_scan`
@@ -713,6 +715,12 @@ The supplied `redvector_mcp.py` registers **328 MCP tools**. The complete functi
 - `falco_runtime_monitoring`
 - `checkov_iac_scan`
 - `terrascan_iac_scan`
+
+</details>
+
+<details>
+<summary><strong>🗂️ Files and Runtime Utilities (7 tools)</strong></summary>
+
 - `create_file`
 - `modify_file`
 - `delete_file`
@@ -720,6 +728,12 @@ The supplied `redvector_mcp.py` registers **328 MCP tools**. The complete functi
 - `generate_payload`
 - `install_python_package`
 - `execute_python_script`
+
+</details>
+
+<details>
+<summary><strong>🌐 Network, Web and Credential Testing (24 tools)</strong></summary>
+
 - `dirb_scan`
 - `nikto_scan`
 - `sqlmap_scan`
@@ -744,6 +758,12 @@ The supplied `redvector_mcp.py` registers **328 MCP tools**. The complete functi
 - `responder_credential_harvest`
 - `volatility_analyze`
 - `msfvenom_generate`
+
+</details>
+
+<details>
+<summary><strong>🔬 Binary Analysis and Reverse Engineering (16 tools)</strong></summary>
+
 - `gdb_analyze`
 - `radare2_analyze`
 - `binwalk_analyze`
@@ -760,6 +780,12 @@ The supplied `redvector_mcp.py` registers **328 MCP tools**. The complete functi
 - `angr_symbolic_execution`
 - `ropper_gadget_search`
 - `pwninit_setup`
+
+</details>
+
+<details>
+<summary><strong>🧪 Web, API and Forensic Analysis (37 tools)</strong></summary>
+
 - `feroxbuster_scan`
 - `dotdotpwn_scan`
 - `xsser_scan`
@@ -797,6 +823,12 @@ The supplied `redvector_mcp.py` registers **328 MCP tools**. The complete functi
 - `fierce_scan`
 - `dnsenum_scan`
 - `autorecon_scan`
+
+</details>
+
+<details>
+<summary><strong>📊 Server Health and Process Management (11 tools)</strong></summary>
+
 - `server_health`
 - `get_cache_stats`
 - `clear_cache`
@@ -808,6 +840,12 @@ The supplied `redvector_mcp.py` registers **328 MCP tools**. The complete functi
 - `resume_process`
 - `get_process_dashboard`
 - `execute_command`
+
+</details>
+
+<details>
+<summary><strong>🧠 Security Intelligence and AI Workflows (21 tools)</strong></summary>
+
 - `monitor_cve_feeds`
 - `generate_exploit_from_cve`
 - `discover_attack_chains`
@@ -829,6 +867,12 @@ The supplied `redvector_mcp.py` registers **328 MCP tools**. The complete functi
 - `detect_technologies_ai`
 - `ai_reconnaissance_workflow`
 - `ai_vulnerability_assessment`
+
+</details>
+
+<details>
+<summary><strong>🛡️ Bug Bounty and Browser Testing (16 tools)</strong></summary>
+
 - `bugbounty_reconnaissance_workflow`
 - `bugbounty_vulnerability_hunting`
 - `bugbounty_business_logic_testing`
@@ -845,6 +889,12 @@ The supplied `redvector_mcp.py` registers **328 MCP tools**. The complete functi
 - `burpsuite_alternative_scan`
 - `error_handling_statistics`
 - `test_error_recovery`
+
+</details>
+
+<details>
+<summary><strong>🏆 CTF and Challenge Workflows (7 tools)</strong></summary>
+
 - `ctf_create_challenge_workflow`
 - `ctf_auto_solve`
 - `ctf_team_strategy`
@@ -852,6 +902,12 @@ The supplied `redvector_mcp.py` registers **328 MCP tools**. The complete functi
 - `ctf_crypto_solver`
 - `ctf_forensics_analyzer`
 - `ctf_binary_analyzer`
+
+</details>
+
+<details>
+<summary><strong>💻 Host, Enterprise and Security Utilities (39 tools)</strong></summary>
+
 - `linpeas_scan`
 - `winpeas_scan`
 - `linux_exploit_suggester_scan`
@@ -891,6 +947,12 @@ The supplied `redvector_mcp.py` registers **328 MCP tools**. The complete functi
 - `tshark_capture`
 - `tcpdump_capture`
 - `powersploit_execute`
+
+</details>
+
+<details>
+<summary><strong>⚙️ Automated Assessment Modules (18 tools)</strong></summary>
+
 - `autonomous_recon_to_shell`
 - `evasion_analyze_defenses`
 - `evasion_generate_payload`
@@ -909,6 +971,12 @@ The supplied `redvector_mcp.py` registers **328 MCP tools**. The complete functi
 - `sqlmap_dump_table`
 - `sqlmap_extract_credentials`
 - `sqlmap_manipulate_records`
+
+</details>
+
+<details>
+<summary><strong>☁️ Advanced Workflows, Cloud and Fuzzing (35 tools)</strong></summary>
+
 - `autonomous_rce_pipeline`
 - `autonomous_rce_detect`
 - `autonomous_rce_shells`
@@ -944,6 +1012,12 @@ The supplied `redvector_mcp.py` registers **328 MCP tools**. The complete functi
 - `autonomous_fuzz_crashes`
 - `autonomous_fuzz_protocols`
 - `autonomous_fuzz_analyze`
+
+</details>
+
+<details>
+<summary><strong>📷 CCTV Security Assessment (57 tools)</strong></summary>
+
 - `cctv_discovery`
 - `cctv_default_creds`
 - `cctv_rtsp_probe`
@@ -1001,6 +1075,12 @@ The supplied `redvector_mcp.py` registers **328 MCP tools**. The complete functi
 - `autonomous_cctv_overflow_scan`
 - `autonomous_cctv_overflow_rce_cve`
 - `autonomous_cctv_overflow_vectors`
+
+</details>
+
+<details>
+<summary><strong>🐧 Linux and Full-Lifecycle Modules (18 tools)</strong></summary>
+
 - `autonomous_linux_privesc_scan`
 - `autonomous_linux_privesc_suid`
 - `autonomous_linux_privesc_sudo`
@@ -1019,6 +1099,12 @@ The supplied `redvector_mcp.py` registers **328 MCP tools**. The complete functi
 - `autonomous_offensive_backdoor`
 - `autonomous_offensive_cleanup`
 - `autonomous_offensive_lifecycle`
+
+</details>
+
+<details>
+<summary><strong>🤖 LLM Integration and Reporting (7 tools)</strong></summary>
+
 - `llm_list_models`
 - `llm_chat`
 - `llm_analyze_scan`

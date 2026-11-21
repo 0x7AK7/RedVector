@@ -570,92 +570,41 @@ RedVector exposes a broad security-tool surface through MCP and REST integration
 
 ## AI Systems and Workflow Components
 
-RedVector's AI-facing behavior is built around MCP tool exposure plus backend workflow, decision, recovery and autonomous execution components. The AI model itself remains outside the security-tool execution boundary: the client selects structured MCP tools, while RedVector performs the actual backend execution.
+RedVector combines AI-assisted analysis with structured workflows, process management, and specialized security assessment components.
 
-### Core decision, workflow, recovery and analysis components
+The AI client handles planning and result interpretation, while RedVector manages tool execution, validation, monitoring, and reporting through its MCP interface and backend.
 
-- **`ModernVisualEngine`**
-- **`IntelligentDecisionEngine`**
-- **`RecoveryAction`**
-- **`RecoveryStrategy`**
-- **`BugBountyWorkflowManager`**
-- **`CTFWorkflowManager`**
-- **`CTFToolManager`**
-- **`CTFChallengeAutomator`**
-- **`CTFTeamCoordinator`**
-- **`TechnologyDetector`**
-- **`RateLimitDetector`**
-- **`FailureRecoverySystem`**
-- **`PerformanceMonitor`**
-- **`ParameterOptimizer`**
-- **`EnhancedProcessManager`**
-- **`ResourceMonitor`**
-- **`_LazyEnhancedProcessManagerProxy`**
-- **`ProcessManager`**
-- **`PythonEnvironmentManager`**
-- **`CVEIntelligenceManager`**
-- **`VulnerabilityCorrelator`**
-- **`FileOperationsManager`**
-- **`BrowserAgent`**
-- **`AdaptiveEvasionEngine`**
+### Core Components
 
-### Autonomous assessment and red-team engines
+| Area | Description |
+|---|---|
+| 🧠 **Decision and Analysis** | Technology detection, vulnerability correlation, and intelligent tool selection. |
+| ⚙️ **Workflow and Recovery** | Workflow coordination, error recovery, and execution management. |
+| 📊 **Process Monitoring and Resource Management** | Process monitoring, resource usage, performance tracking, and execution control. |
+| 🏆 **CTF Workflows and Vulnerability Intelligence** | CTF challenge automation, forensic analysis, and vulnerability intelligence. |
+| 🛡️ **Security Assessment Engines** | Specialized components for authorized network, web, cloud, and enterprise security assessments. |
+| 📷 **CCTV Security Assessment** | Components for CCTV discovery, configuration auditing, vulnerability assessment, and security validation. |
 
-- **`AutonomousExecutionBridge`**
-- **`AutonomousReconToShell`**
-- **`AutonomousADDomination`**
-- **`AutonomousSQLiScanner`**
-- **`AutonomousWebVulnChaining`**
-- **`AutonomousPersistenceC2`**
-- **`AutonomousExploitEngine`**
-- **`AutonomousSQLMapExfiltrator`**
-- **`AutonomousRCEEngine`**
-- **`AutonomousPrivEscPersistenceEngine`**
-- **`AutonomousDataExfilEngine`**
-- **`AutonomousLateralMovementEngine`**
-- **`AutonomousOWASPTop10Engine`**
-- **`AutonomousCloudAttackEngine`**
-- **`AutonomousZeroDayFuzzEngine`**
-- **`AutonomousCCTVFullAssessment`**
-- **`AutonomousCCTVNetworkSegmentation`**
-- **`AutonomousCCTVOnvifEnum`**
-- **`AutonomousCCTVExposureScorecard`**
-- **`AutonomousCCTVStreamInterceptor`**
-- **`AutonomousCCTVAntiLockout`**
-- **`AutonomousCCTVFirmwareBackdoor`**
-- **`AutonomousCCTVCloudP2P`**
-- **`AutonomousCCTVVideoTamper`**
-- **`AutonomousCCTVZeroDayDiscovery`**
-- **`AutonomousCCTVShodanDiscovery`**
-- **`AutonomousCCTVProxyBruteForce`**
-- **`AutonomousCCTVHydraRTSP`**
-- **`AutonomousCCTVFingerprint`**
-- **`AutonomousCCTVAuthBypass`**
-- **`AutonomousCCTVBufferOverflowRCE`**
-- **`AutonomousLinuxPrivEsc`**
-- **`AutonomousOffensiveChainEngine`**
+### AI Client Integration
 
-### AI client and local-model workflows
-
-RedVector can be driven by any compatible MCP client. The typical pattern is:
+RedVector connects compatible AI clients to its MCP interface and backend services.
 
 ```text
-AI model / AI client
-        |
-        v
-MCP client runtime
-        |
-        v
-redvector_mcp.py
-        |
-        v
-redvector_server.py
-        |
-        v
-Authorized security tools and workflow engines
+AI Client
+    |
+    v
+MCP Interface
+    |
+    v
+RedVector Backend
+    |
+    v
+Security Tools and Workflow Components
 ```
 
-This separation lets the AI handle natural-language planning and interpretation while RedVector keeps tool invocation, parameters, execution and results in a structured interface.
+The AI client selects structured MCP tools, while RedVector handles backend execution and returns the results.
+
+For the complete list of callable tools, see the [Complete MCP Tool Index](#complete-mcp-tool-index).
 
 ---
 
